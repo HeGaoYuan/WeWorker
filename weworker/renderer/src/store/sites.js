@@ -1,0 +1,138 @@
+import { create } from 'zustand'
+import { fetchSites, setWelcomeVisibility } from '../api/sites-api.js'
+import { backendFetch } from '../api/http.js'
+
+const API = 'http://127.0.0.1:8765'
+
+async function reloadSites(set) {
+  set({ sites: await fetchSites() })
+}
+
+export const useSitesStore = create((set) => ({
+  sites: [],
+  systemTools: [],
+  loading: false,
+  refreshSites: async () => {
+    try {
+      await reloadSites(set)
+    } catch {
+      // Keep the current list if the backend is temporarily unavailable.
+    }
+  },
+
+  load: async () => {
+    set({ loading: true })
+    try {
+      const [sites, sysRes] = await Promise.all([
+        fetchSites(),
+        backendFetch(`${API}/system-tools`),
+      ])
+      const systemTools = sysRes.ok ? await sysRes.json() : []
+      set({ sites, systemTools, loading: false })
+    } catch {
+      set({ loading: false })
+    }
+  },
+
+  setAllWelcomeVisibility: async (visible) => {
+    const targetVisible = visible === true
+    const enabledIds = useSitesStore.getState().sites.filter((s) => s.enabled).map((s) => s.id)
+    set((s) => ({
+      sites: s.sites.map((site) =>
+        site.enabled ? { ...site, visible: targetVisible } : site
+      ),
+    }))
+    try {
+      await setWelcomeVisibility(targetVisible, enabledIds)
+      await reloadSites(set)
+    } catch {
+      await reloadSites(set)
+    }
+  },
+
+  toggle: async (id) => {
+    // Optimistic update
+    set((s) => ({
+      sites: s.sites.map((site) =>
+        site.id === id ? { ...site, enabled: !site.enabled, visible: !site.enabled ? site.visible : false } : site
+      ),
+    }))
+    try {
+      await backendFetch(`${API}/sites/${encodeURIComponent(id)}/toggle`, { method: 'POST' })
+      // Reconcile with server response — reload full list to get correct visible state
+      await reloadSites(set)
+    } catch {
+      // Revert on error — reload from server
+      await reloadSites(set)
+    }
+  },
+
+  toggleVisibility: async (id) => {
+    // Optimistic update
+    set((s) => ({
+      sites: s.sites.map((site) =>
+        site.id === id ? { ...site, visible: !site.visible } : site
+      ),
+    }))
+    try {
+      const site = useSitesStore.getState().sites.find(s => s.id === id)
+      await backendFetch(`${API}/sites/${encodeURIComponent(id)}/visibility`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visible: site?.visible ?? false }),
+      })
+    } catch {
+      await reloadSites(set)
+    }
+  },
+
+  addTestPrompt: async (siteId, prompt) => {
+    try {
+      await backendFetch(`${API}/sites/${encodeURIComponent(siteId)}/test-prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      })
+      await reloadSites(set)
+    } catch (e) {
+      console.error('addTestPrompt failed:', e)
+    }
+  },
+
+  updateTestPrompt: async (siteId, index, prompt) => {
+    try {
+      await backendFetch(`${API}/sites/${encodeURIComponent(siteId)}/test-prompts/${index}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      })
+      await reloadSites(set)
+    } catch (e) {
+      console.error('updateTestPrompt failed:', e)
+    }
+  },
+
+  deleteTestPrompt: async (siteId, index) => {
+    try {
+      await backendFetch(`${API}/sites/${encodeURIComponent(siteId)}/test-prompts/${index}`, {
+        method: 'DELETE',
+      })
+      await reloadSites(set)
+    } catch (e) {
+      console.error('deleteTestPrompt failed:', e)
+    }
+  },
+
+  resetPrompts: async (siteId, type) => {
+    try {
+      await backendFetch(`${API}/sites/${encodeURIComponent(siteId)}/reset-prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+      })
+      await reloadSites(set)
+    } catch (e) {
+      console.error('resetPrompts failed:', e)
+    }
+  },
+}))

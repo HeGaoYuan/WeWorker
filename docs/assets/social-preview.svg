@@ -1,0 +1,82 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#16213e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0f3460;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#533483;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bgGradient)"/>
+
+  <!-- Decorative elements -->
+  <circle cx="100" cy="100" r="300" fill="#0f3460" opacity="0.3"/>
+  <circle cx="1180" cy="540" r="250" fill="#533483" opacity="0.2"/>
+
+  <!-- Main content container -->
+  <rect x="80" y="120" width="1120" height="400" rx="20" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="2"/>
+
+  <!-- Logo area -->
+  <rect x="120" y="180" width="200" height="200" rx="20" fill="white"/>
+  <text x="220" y="310"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="700"
+        font-size="48"
+        fill="#1a1a2e"
+        text-anchor="middle">WeWorker</text>
+
+  <!-- Title -->
+  <text x="380" y="240"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="700"
+        font-size="72"
+        fill="white">WeWorker</text>
+
+  <!-- Subtitle -->
+  <text x="380" y="310"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="400"
+        font-size="32"
+        fill="#a0a0a0">AI 驱动的网页自动化工具</text>
+
+  <!-- Description -->
+  <text x="380" y="370"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="400"
+        font-size="24"
+        fill="#808080">通过浏览器扩展将网站操作封装为工具</text>
+  <text x="380" y="410"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="400"
+        font-size="24"
+        fill="#808080">供 AI Agent 调用，实现对任意网站的自动化操控</text>
+
+  <!-- Badges -->
+  <rect x="120" y="520" width="120" height="30" rx="15" fill="#28a745"/>
+  <text x="180" y="541"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="600"
+        font-size="14"
+        fill="white"
+        text-anchor="middle">Apache 2.0</text>
+
+  <rect x="260" y="520" width="100" height="30" rx="15" fill="#0366d6"/>
+  <text x="310" y="541"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="600"
+        font-size="14"
+        fill="white"
+        text-anchor="middle">GitHub</text>
+
+  <!-- Footer -->
+  <text x="1160" y="600"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+        font-weight="400"
+        font-size="18"
+        fill="#606060"
+        text-anchor="end">github.com/aiceflower/WeWorker</text>
+</svg>

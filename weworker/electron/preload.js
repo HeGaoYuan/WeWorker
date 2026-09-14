@@ -1,0 +1,56 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
+
+let lastDroppedFilePaths = []
+
+window.addEventListener('drop', (event) => {
+  try {
+    lastDroppedFilePaths = Array.from(event.dataTransfer?.files || [])
+      .map((file) => webUtils.getPathForFile(file))
+      .filter(Boolean)
+  } catch {
+    lastDroppedFilePaths = []
+  }
+}, true)
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  getStatus: () => ipcRenderer.invoke('get-status'),
+  getVersion: () => ipcRenderer.invoke('get-version'),
+  getUpdateState: () => ipcRenderer.invoke('updates:get-state'),
+  getUpdateSettings: () => ipcRenderer.invoke('updates:get-settings'),
+  setUpdateSettings: (settings) => ipcRenderer.invoke('updates:set-settings', settings),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onUpdateState: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const handler = (_event, state) => callback(state)
+    ipcRenderer.on('updates:state', handler)
+    return () => ipcRenderer.removeListener('updates:state', handler)
+  },
+  getHttpAuthToken: () => ipcRenderer.invoke('get-http-auth-token'),
+  focusWindow: () => ipcRenderer.invoke('focus-main-window'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  openWebwright: () => ipcRenderer.invoke('open-webwright'),
+  openChromeUrl: (url) => ipcRenderer.invoke('open-chrome-url', url),
+  openChrome: () => ipcRenderer.invoke('open-chrome'),
+  selectFiles: (options) => ipcRenderer.invoke('select-files', options),
+  selectDirectory: (options) => ipcRenderer.invoke('select-directory', options),
+  openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),
+  resolveSkillDirectory: (payload) => ipcRenderer.invoke('resolve-skill-directory', payload),
+  readSkillResourcePreview: (payload) => ipcRenderer.invoke('read-skill-resource-preview', payload),
+  importSkillResources: (payload) => ipcRenderer.invoke('import-skill-resources', payload),
+  onSkillResourceImportProgress: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const handler = (_event, progress) => callback(progress)
+    ipcRenderer.on('skill-resource-import-progress', handler)
+    return () => ipcRenderer.removeListener('skill-resource-import-progress', handler)
+  },
+  revealInFileManager: (targetPath) => ipcRenderer.invoke('reveal-in-file-manager', targetPath),
+  openTerminal: (targetPath) => ipcRenderer.invoke('open-terminal', targetPath),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  getLastDroppedFilePaths: () => lastDroppedFilePaths.slice(),
+  readClipboardFilePaths: () => ipcRenderer.invoke('read-clipboard-file-paths'),
+  saveClipboardImage: () => ipcRenderer.invoke('save-clipboard-image'),
+  savePastedText: (text) => ipcRenderer.invoke('save-pasted-text', text),
+  readLocalImageThumbnail: (targetPath) => ipcRenderer.invoke('read-local-image-thumbnail', targetPath),
+})

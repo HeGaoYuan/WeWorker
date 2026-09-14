@@ -1,0 +1,65 @@
+{
+  "id": "mail.qq.com",
+  "name": "QQ邮箱",
+  "description": "QQ邮箱：搜索邮件、读取未读、打开邮件、下载附件、按关键词/月份批量下载发票",
+  "match": [
+    "mail.qq.com"
+  ],
+  "homepage_url": "https://mail.qq.com/",
+  "requires_auth": true,
+  "version": "2026-06-09T00:00:00Z",
+  "author": "webmcp-team",
+  "auth_check_tool": "mail.qq.com.check_login_status",
+  "quick_prompts": [
+    "打开QQ邮箱，下载我${这个}月收到的${发票}"
+  ],
+  "icon": "mail",
+  "scenarios": [
+    {
+      "id": "read-mail-list",
+      "title": "读取邮件列表",
+      "summary": "在QQ 邮箱中读取邮件列表"
+    },
+    {
+      "id": "search-mail",
+      "title": "搜索邮件",
+      "summary": "在QQ 邮箱中搜索邮件"
+    },
+    {
+      "id": "view-mail-detail",
+      "title": "查看邮件详情",
+      "summary": "在QQ 邮箱中查看邮件详情"
+    },
+    {
+      "id": "download-attachment",
+      "title": "下载附件",
+      "summary": "帮我下载QQ邮箱本月所有发票",
+      "prompts": [
+        {
+          "text": "打开QQ邮箱，下载我${本}月收到的${发票}"
+        }
+      ]
+    },
+    {
+      "id": "auto-download-invoice",
+      "title": "自动下载发票",
+      "summary": "帮我下载QQ邮箱本月所有发票",
+      "prompts": [
+        {
+          "text": "打开QQ邮箱，下载我${本}月收到的${发票}"
+        }
+      ]
+    }
+  ],
+  "detail_description": "QQ邮箱可以让 WeWorker 根据你的自然语言指令处理邮件和发票附件任务，例如读取邮件列表、搜索邮件、查看邮件详情、下载附件或自动下载发票。执行过程中如果需要登录、打开邮件、下载附件或跳转发票平台，会停下来等你确认。",
+  "test_prompts": [
+    "打开QQ邮箱，查看收件箱邮件列表，然后搜索关键词'发票'，打开搜索结果中的第一封邮件查看详情"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "QQ邮箱",
+      "description": "QQ邮箱：读取邮件列表、搜索邮件、查看邮件详情、下载附件、自动下载发票"
+    }
+  },
+  "verified_on": "2026-03-31"
+}

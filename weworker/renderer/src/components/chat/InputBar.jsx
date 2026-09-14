@@ -1,0 +1,949 @@
+import React, { useRef, useEffect, useState, useMemo, useCallback, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { useChatInputFillStore } from '../../store/chat-input-fill.js'
+import { useSettingsStore } from '../../store/settings.js'
+import { useSitesStore } from '../../store/sites.js'
+import { useTerminalStore } from '../../store/terminal.js'
+import { useUserFilesStore } from '../../store/user-files.js'
+import {
+  buildWebcliSlashCommands,
+  filterChatSlashCommands,
+  findChatBangTrigger,
+} from '../../utils/chat-slash-commands.js'
+import { basename, getPathsFromPasteEvent, mergeAttachmentPaths } from '../../utils/clipboard-files.js'
+import { localFileUrl } from '../../utils/local-file-url.js'
+import {
+  acceptTerminalCompletion,
+  getChatBangCompletionCandidates,
+} from '../../utils/terminal-completion.js'
+import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeIcon.jsx'
+import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
+
+const COLLAPSED_ATTACHMENT_COUNT = 10
+const ATTACHMENT_CHIP_HEIGHT = 62
+const DEFAULT_MAX_ATTACHMENTS = 60
+const DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD = 20000
+const SLASH_MENU_MAX_HEIGHT = 208
+const SLASH_MENU_GAP = 8
+const SLASH_MENU_INSET_X = 10
+const SLASH_MENU_SHELL_PADDING = 6
+
+function getPlatformShell() {
+  if (typeof navigator === 'undefined') return 'bash'
+  const platform = String(navigator.userAgentData?.platform || navigator.platform || '').toLowerCase()
+  return platform.includes('win') ? 'powershell' : 'bash'
+}
+
+function estimateSlashMenuHeight(itemCount) {
+  const visibleItems = Math.max(1, Math.min(Number(itemCount) || 1, 5))
+  return Math.min(SLASH_MENU_MAX_HEIGHT, 34 + visibleItems * 40)
+}
+
+export default function InputBar({
+  onSend,
+  onStop,
+  disabled,
+  streaming,
+  text,
+  onTextChange,
+  attachments = [],
+  onAttachmentsChange,
+  onShellCommand,
+  maxAttachments = DEFAULT_MAX_ATTACHMENTS,
+  variant,
+  embedded,
+  attachmentTarget = 'welcome',
+}) {
+  const textareaRef = useRef(null)
+  const slashMenuRef = useRef(null)
+  const composingRef = useRef(false)
+  const attachmentsRef = useRef(attachments)
+  const bangFilesLoadRequestedRef = useRef(false)
+  const fillSeq = useChatInputFillStore((s) => s.seq)
+  const isWelcome = variant === 'welcome'
+  const maxTaHeight = isWelcome ? 220 : 120
+  const hasAttachments = attachments.length > 0
+  const attachmentLimit = Math.max(1, Number(maxAttachments) || DEFAULT_MAX_ATTACHMENTS)
+  const pasteTextAttachmentThreshold = useSettingsStore((s) => s.pasteTextAttachmentThreshold)
+  const textAttachmentThreshold = Math.max(1, Number(pasteTextAttachmentThreshold) || DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD)
+  const overAttachmentLimit = attachments.length > attachmentLimit
+  const inputDisabled = !!disabled || !!streaming
+  const [attachmentNotice, setAttachmentNotice] = useState('')
+  const [slashMenuState, setSlashMenuState] = useState(null)
+  const [slashMenuPlacement, setSlashMenuPlacement] = useState(null)
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
+  const [bangCompletionSource, setBangCompletionSource] = useState(null)
+  const minLineHeight = 22
+  const chatAttachmentSeq = useUserFilesStore((s) => s.chatAttachmentSeq)
+  const pendingChatAttachmentTarget = useUserFilesStore((s) => s.pendingChatAttachmentTarget)
+  const pendingChatAttachments = useUserFilesStore((s) => s.pendingChatAttachments)
+  const clearPendingChatAttachments = useUserFilesStore((s) => s.clearPendingChatAttachments)
+  const userFilesRoot = useUserFilesStore((s) => s.directory)
+  const userFiles = useUserFilesStore((s) => s.files)
+  const loadUserFiles = useUserFilesStore((s) => s.load)
+  const terminalSessions = useTerminalStore((s) => s.sessions)
+  const sites = useSitesStore((s) => Array.isArray(s.sites) ? s.sites : [])
+  const webcliSlashCommands = useMemo(() => buildWebcliSlashCommands(sites), [sites])
+  const buildBangSlashItems = useCallback((query) => {
+    const command = query || ''
+    const cursor = command.length
+    const candidates = getChatBangCompletionCandidates({
+      command,
+      cursor,
+      sites,
+      shell: getPlatformShell(),
+      cwd: userFilesRoot,
+      root: userFilesRoot,
+      files: userFiles,
+      sessions: terminalSessions,
+      source: bangCompletionSource || 'auto',
+      includeEmpty: true,
+    })
+    return candidates.map((candidate) => ({
+      id: `bang:${candidate.kind || 'file'}:${candidate.value || candidate.name}`,
+      title: candidate.name || candidate.value || 'command',
+      command: candidate.value || candidate.name || '',
+      description: candidate.description || commandCompletionKindLabel(candidate),
+      kind: candidate.kind,
+      isDirectory: candidate.isDirectory,
+      candidate,
+    }))
+  }, [bangCompletionSource, sites, terminalSessions, userFiles, userFilesRoot])
+  const slashItems = useMemo(() => {
+    if (!slashMenuState) return []
+    if (slashMenuState.kind === 'bang') return buildBangSlashItems(slashMenuState.query)
+    return filterChatSlashCommands(webcliSlashCommands, slashMenuState.query)
+  }, [buildBangSlashItems, slashMenuState, webcliSlashCommands])
+
+  const syncSlashMenuPlacement = useCallback(() => {
+    const textarea = textareaRef.current
+    if (!textarea || !slashMenuState) {
+      setSlashMenuPlacement(null)
+      return
+    }
+    const caret = getTextareaCaretRect(textarea, slashMenuState.end)
+    if (!caret) {
+      setSlashMenuPlacement(null)
+      return
+    }
+    const textareaRect = textarea.getBoundingClientRect()
+    const menuHeight = Math.min(
+      SLASH_MENU_MAX_HEIGHT,
+      Math.max(
+        56,
+        slashMenuRef.current?.getBoundingClientRect?.().height || estimateSlashMenuHeight(slashItems.length),
+      ),
+    )
+    const topBelow = caret.bottom + SLASH_MENU_GAP
+    const fitsBelow = topBelow + menuHeight <= window.innerHeight - 8
+    const top = fitsBelow
+      ? topBelow
+      : Math.max(8, caret.top - menuHeight - SLASH_MENU_GAP)
+    setSlashMenuPlacement({
+      top,
+      left: textareaRect.left + SLASH_MENU_INSET_X,
+      width: Math.max(280, textareaRect.width - SLASH_MENU_INSET_X * 2),
+    })
+  }, [slashItems.length, slashMenuState])
+
+  useEffect(() => {
+    attachmentsRef.current = attachments
+  }, [attachments])
+
+  useEffect(() => {
+    if (!pendingChatAttachments.length) return
+    if (pendingChatAttachmentTarget !== attachmentTarget) return
+    onAttachmentsChange?.([...attachmentsRef.current, ...pendingChatAttachments])
+    clearPendingChatAttachments(chatAttachmentSeq)
+  }, [attachmentTarget, chatAttachmentSeq, pendingChatAttachmentTarget, pendingChatAttachments, onAttachmentsChange, clearPendingChatAttachments])
+
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (ta) {
+      ta.style.height = 'auto'
+      const contentH = Math.max(ta.scrollHeight, isWelcome ? 100 : minLineHeight)
+      ta.style.height = `${Math.min(contentH, maxTaHeight)}px`
+    }
+  }, [text, maxTaHeight, isWelcome])
+
+  useEffect(() => {
+    if (fillSeq > 0) requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [fillSeq])
+
+  useEffect(() => {
+    if (attachments.length < attachmentLimit && attachmentNotice) setAttachmentNotice('')
+  }, [attachments.length, attachmentLimit, attachmentNotice])
+
+  useEffect(() => {
+    if (!slashMenuState) return undefined
+    setSlashActiveIndex((current) => {
+      if (slashItems.length === 0) return 0
+      return Math.min(current, slashItems.length - 1)
+    })
+  }, [slashItems.length, slashMenuState])
+
+  useEffect(() => {
+    if (slashMenuState?.kind !== 'bang') return
+    const mayNeedFiles = bangCompletionSource === 'files' || /\s/.test(slashMenuState.query || '')
+    if (!mayNeedFiles || bangFilesLoadRequestedRef.current) return
+    bangFilesLoadRequestedRef.current = true
+    void loadUserFiles()
+  }, [bangCompletionSource, loadUserFiles, slashMenuState])
+
+  useEffect(() => {
+    if (!slashMenuState || !slashMenuRef.current) return
+    const active = slashMenuRef.current.querySelector('.chat-slash-menu-item.is-active')
+    active?.scrollIntoView({ block: 'nearest' })
+  }, [slashActiveIndex, slashMenuState])
+
+  useLayoutEffect(() => {
+    if (!slashMenuState) {
+      setSlashMenuPlacement(null)
+      return undefined
+    }
+    syncSlashMenuPlacement()
+    window.addEventListener('resize', syncSlashMenuPlacement)
+    window.addEventListener('scroll', syncSlashMenuPlacement, true)
+    return () => {
+      window.removeEventListener('resize', syncSlashMenuPlacement)
+      window.removeEventListener('scroll', syncSlashMenuPlacement, true)
+    }
+  }, [slashMenuState, text, syncSlashMenuPlacement])
+
+  const syncSlashMenuFromText = (nextText, cursor) => {
+    if (inputDisabled) {
+      setSlashMenuState(null)
+      setBangCompletionSource(null)
+      return
+    }
+    const bangTrigger = findChatBangTrigger(nextText, cursor)
+    const trigger = bangTrigger ? { ...bangTrigger, kind: 'bang' } : null
+    if (!trigger) {
+      setSlashMenuState(null)
+      setBangCompletionSource(null)
+      return
+    }
+    setSlashMenuState(trigger)
+    setSlashActiveIndex(0)
+  }
+
+  const applySlashItem = (item) => {
+    const textarea = textareaRef.current
+    if (!textarea || !slashMenuState || !item) return
+    const current = text || ''
+    let replacement = item.command
+    let keepMenuOpen = false
+    if (slashMenuState.kind === 'bang' && item.candidate) {
+      const completion = acceptTerminalCompletion({
+        command: slashMenuState.query || '',
+        cursor: String(slashMenuState.query || '').length,
+        candidate: item.candidate,
+      })
+      if (!completion.completed) return
+      replacement = `!${completion.command}`
+      keepMenuOpen = item.candidate.isDirectory
+        || ['cmd', 'webcli', 'subcommand', 'option', 'tool', 'site'].includes(item.candidate.kind)
+    }
+    const nextText = `${current.slice(0, slashMenuState.start)}${replacement}${current.slice(slashMenuState.end)}`
+    const nextCursor = slashMenuState.start + replacement.length
+    onTextChange(nextText)
+    if (keepMenuOpen) {
+      setSlashMenuState({
+        kind: 'bang',
+        query: replacement.slice(1),
+        start: slashMenuState.start,
+        end: nextCursor,
+      })
+    } else {
+      setSlashMenuState(null)
+    }
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
+
+  const handleTextChange = (event) => {
+    const nextText = event.target.value
+    onTextChange(nextText)
+    syncSlashMenuFromText(nextText, event.target.selectionStart ?? nextText.length)
+  }
+
+  const syncSlashMenuFromTextarea = () => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    syncSlashMenuFromText(textarea.value, textarea.selectionStart ?? textarea.value.length)
+  }
+
+  const handleTextareaKeyUp = (event) => {
+    if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) return
+    syncSlashMenuFromTextarea()
+  }
+
+  const handlePaste = async (e) => {
+    const attachClipboardImage = async () => {
+      if (attachmentsRef.current.length >= attachmentLimit) {
+        setAttachmentNotice(`最多只能添加 ${attachmentLimit} 个文件`)
+        return true
+      }
+      try {
+        const saved = await window.electronAPI?.saveClipboardImage?.()
+        if (!saved?.path) return false
+        onAttachmentsChange?.([...attachmentsRef.current, { path: saved.path, name: saved.name || basename(saved.path) }])
+        setAttachmentNotice('')
+        return true
+      } catch (error) {
+        console.error('[input] save clipboard image failed:', error)
+        setAttachmentNotice('剪切板图片添加失败')
+        return true
+      }
+    }
+
+    const attachPastedText = async (content) => {
+      if (attachmentsRef.current.length >= attachmentLimit) {
+        setAttachmentNotice(`最多只能添加 ${attachmentLimit} 个文件`)
+        return true
+      }
+      try {
+        const saved = await window.electronAPI?.savePastedText?.(content)
+        if (!saved?.path) return false
+        onAttachmentsChange?.([...attachmentsRef.current, { path: saved.path, name: saved.name || basename(saved.path) }])
+        setAttachmentNotice(`粘贴文本较长，已转换为 ${saved.name || 'txt'} 附件`)
+        return true
+      } catch (error) {
+        console.error('[input] save pasted text failed:', error)
+        setAttachmentNotice('粘贴文本转换失败')
+        return true
+      }
+    }
+
+    const filePaths = getPathsFromPasteEvent(e)
+    if (filePaths.length) {
+      e.preventDefault()
+      const { attachments: next, notice } = mergeAttachmentPaths(attachments, filePaths, attachmentLimit)
+      onAttachmentsChange?.(next)
+      if (notice) setAttachmentNotice(notice)
+      return
+    }
+
+    const hasClipboardImage = Array.from(e.clipboardData?.items || [])
+      .some((item) => String(item?.type || '').startsWith('image/'))
+    if (hasClipboardImage) {
+      e.preventDefault()
+      await attachClipboardImage()
+      return
+    }
+
+    const pasted = e.clipboardData?.getData('text/plain') ?? ''
+    if (!pasted) {
+      if (await attachClipboardImage()) e.preventDefault()
+      return
+    }
+
+    e.preventDefault()
+    const cleaned = pasted.replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '')
+    if (cleaned.length > textAttachmentThreshold) {
+      await attachPastedText(cleaned)
+      return
+    }
+    const ta = textareaRef.current
+    if (!ta) return
+    const start = ta.selectionStart ?? 0
+    const end = ta.selectionEnd ?? 0
+    const current = text || ''
+    const newText = current.slice(0, start) + cleaned + current.slice(end)
+    onTextChange(newText)
+    requestAnimationFrame(() => {
+      const pos = start + cleaned.length
+      ta.selectionStart = pos
+      ta.selectionEnd = pos
+    })
+  }
+
+  const handleKeyDown = (e) => {
+    if (slashMenuState) {
+      if (
+        slashMenuState.kind === 'bang'
+        && ((e.key === 'Tab' && e.shiftKey) || (e.key === ' ' && e.ctrlKey))
+      ) {
+        e.preventDefault()
+        const hasCommandItems = slashItems.some((item) => Boolean(item.kind))
+        const nextSource = bangCompletionSource
+          ? (bangCompletionSource === 'files' ? 'commands' : 'files')
+          : (hasCommandItems ? 'files' : 'commands')
+        setBangCompletionSource(nextSource)
+        setSlashActiveIndex(0)
+        return
+      }
+      if (slashMenuState.kind === 'bang' && e.key === 'Enter' && !e.shiftKey) {
+        if (composingRef.current) return
+        e.preventDefault()
+        submit()
+        return
+      }
+      if (e.key === 'ArrowDown' && slashItems.length > 0) {
+        e.preventDefault()
+        setSlashActiveIndex((current) => (current + 1) % slashItems.length)
+        return
+      }
+      if (e.key === 'ArrowUp' && slashItems.length > 0) {
+        e.preventDefault()
+        setSlashActiveIndex((current) => (current - 1 + slashItems.length) % slashItems.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        const items = slashItems.length > 0
+          ? slashItems
+          : slashMenuState.kind === 'bang'
+            ? buildBangSlashItems(slashMenuState.query)
+            : filterChatSlashCommands(webcliSlashCommands, slashMenuState.query)
+        if (!items.length) {
+          if (e.key === 'Tab') e.preventDefault()
+          return
+        }
+        e.preventDefault()
+        applySlashItem(items[Math.min(slashActiveIndex, items.length - 1)])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSlashMenuState(null)
+        setBangCompletionSource(null)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (composingRef.current) return
+      e.preventDefault()
+      submit()
+    }
+  }
+
+  const handleUpload = async () => {
+    const paths = await window.electronAPI?.selectFiles?.()
+    if (!paths?.length) return
+
+    const remainingSlots = Math.max(attachmentLimit - attachments.length, 0)
+    if (remainingSlots <= 0) {
+      setAttachmentNotice(`\u6700\u591a\u53ea\u80fd\u6dfb\u52a0 ${attachmentLimit} \u4e2a\u6587\u4ef6`)
+      return
+    }
+
+    const acceptedPaths = paths.slice(0, remainingSlots)
+    const next = acceptedPaths.map((p) => ({ path: p, name: basename(p) }))
+    onAttachmentsChange?.([...attachments, ...next])
+    setAttachmentNotice(paths.length > remainingSlots
+      ? `\u5df2\u8fbe\u5230 ${attachmentLimit} \u4e2a\u4e0a\u9650\uff0c\u53ea\u6dfb\u52a0\u4e86\u524d ${remainingSlots} \u4e2a`
+      : '')
+  }
+
+  const submit = async () => {
+    const trimmed = (text || '').trim()
+    if ((!trimmed && !hasAttachments) || inputDisabled) return
+    if (overAttachmentLimit) {
+      setAttachmentNotice(`\u5df2\u9009 ${attachments.length}/${attachmentLimit}\uff0c\u8bf7\u5220\u51cf\u5230 ${attachmentLimit} \u4e2a\u4ee5\u5185`)
+      return
+    }
+    if (trimmed.startsWith('!') && trimmed.slice(1).trim()) {
+      const command = trimmed.slice(1).trim()
+      setSlashMenuState(null)
+      setBangCompletionSource(null)
+      onTextChange('')
+      onAttachmentsChange?.([])
+      setAttachmentNotice('')
+      await onShellCommand?.(command, trimmed)
+      textareaRef.current?.focus()
+      return
+    }
+    onSend(trimmed, attachments)
+    onTextChange('')
+    onAttachmentsChange?.([])
+    setAttachmentNotice('')
+    setSlashMenuState(null)
+    setBangCompletionSource(null)
+    textareaRef.current?.focus()
+  }
+
+  const focusTextarea = () => {
+    if (inputDisabled) return
+    window.electronAPI?.focusWindow?.()
+    const focus = () => {
+      const textarea = textareaRef.current
+      if (!textarea || textarea.disabled) return
+      textarea.focus()
+    }
+    focus()
+    requestAnimationFrame(focus)
+    window.setTimeout(focus, 0)
+  }
+
+  const handleInputSurfacePointerDown = (event) => {
+    if (inputDisabled) return
+    if (event.target?.closest?.('button, select, input, a, [role="button"], [data-chat-input-ignore-focus]')) return
+    focusTextarea()
+  }
+
+  const outerStyle = embedded
+    ? {
+        padding: '12px 16px 14px',
+        borderTop: 'none',
+        background: 'transparent',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+      }
+    : isWelcome
+      ? {
+          padding: '12px 20px 16px',
+          borderTop: 'none',
+          background: 'transparent',
+          maxWidth: 680,
+          width: '100%',
+          margin: '0 auto',
+          flexShrink: 0,
+        }
+      : {
+          padding: '12px 20px 16px',
+          borderTop: 'none',
+          background: 'transparent',
+          maxWidth: 1184,
+          width: '100%',
+          margin: '0 auto',
+          pointerEvents: 'none',
+        }
+
+  const innerStyle = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 0,
+    minHeight: hasAttachments ? 132 : (isWelcome ? 112 : 104),
+    background: 'var(--bg-secondary)',
+    border: '1px solid color-mix(in srgb, var(--border) 68%, var(--text-muted))',
+    borderRadius: 16,
+    padding: 0,
+    boxShadow: '0 10px 28px rgba(0,0,0,0.07)',
+    pointerEvents: 'auto',
+    overflow: 'hidden',
+  }
+
+  const buttonBase = {
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 600,
+    flexShrink: 0,
+    transition: 'background 0.15s',
+  }
+
+  const textareaEl = (
+    <textarea
+      data-weworker-chat-input="true"
+      ref={textareaRef}
+      value={text || ''}
+      onChange={handleTextChange}
+      onKeyDown={handleKeyDown}
+      onClick={syncSlashMenuFromTextarea}
+      onKeyUp={handleTextareaKeyUp}
+      onPaste={handlePaste}
+      onCompositionStart={() => { composingRef.current = true }}
+      onCompositionEnd={() => { composingRef.current = false }}
+      placeholder={streaming ? '\u6b63\u5728\u5904\u7406...' : inputDisabled ? '\u6b63\u5728\u9009\u62e9\u6d88\u606f...' : '\u8f93\u5165\u6d88\u606f...'}
+      disabled={inputDisabled}
+      rows={isWelcome ? 4 : 1}
+      style={{
+        width: '100%',
+        flex: '1 1 auto',
+        minHeight: isWelcome ? 58 : 48,
+        padding: '14px 16px 12px',
+        background: 'none',
+        border: 'none',
+        outline: 'none',
+        color: 'var(--text-primary)',
+        fontSize: 14,
+        resize: 'none',
+        maxHeight: maxTaHeight,
+        overflowY: 'auto',
+        lineHeight: 1.45,
+        fontFamily: 'inherit',
+        boxSizing: 'border-box',
+      }}
+      onInput={(e) => {
+        const ta = e.target
+        ta.style.height = 'auto'
+        const contentH = Math.max(ta.scrollHeight, isWelcome ? 100 : minLineHeight)
+        ta.style.height = `${Math.min(contentH, maxTaHeight)}px`
+        syncSlashMenuFromText(ta.value, ta.selectionStart ?? ta.value.length)
+      }}
+    />
+  )
+
+  const uploadBtn = (
+    <button
+      type="button"
+      onClick={handleUpload}
+      disabled={inputDisabled}
+      title="上传文件"
+      aria-label="上传文件"
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: 7,
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--text-secondary)',
+        cursor: inputDisabled ? 'not-allowed' : 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ fontSize: 21, lineHeight: 1, fontWeight: 300 }}>+</span>
+    </button>
+  )
+
+  const actionBtn = streaming ? (
+    <button
+      className="chat-input-action chat-input-action-stop"
+      onClick={onStop}
+      title="停止生成"
+      style={{
+        ...buttonBase,
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        background: '#8f8f93',
+        border: 'none',
+        color: '#fff',
+        cursor: 'pointer',
+        padding: 0,
+        alignSelf: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 0,
+      }}
+    >
+      Stop
+    </button>
+  ) : (
+    <button
+      className="chat-input-action chat-input-action-send"
+      onClick={submit}
+      disabled={inputDisabled || (!(text || '').trim() && !hasAttachments) || overAttachmentLimit}
+      style={{
+        ...buttonBase,
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        background: (inputDisabled || (!(text || '').trim() && !hasAttachments) || overAttachmentLimit) ? '#8f8f93' : 'var(--text-primary)',
+        border: 'none',
+        color: 'var(--bg-secondary)',
+        cursor: (inputDisabled || (!(text || '').trim() && !hasAttachments) || overAttachmentLimit) ? 'not-allowed' : 'pointer',
+        padding: 0,
+        alignSelf: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: (inputDisabled || (!(text || '').trim() && !hasAttachments) || overAttachmentLimit) ? 0.9 : 1,
+        fontSize: 0,
+      }}
+    >
+      Send
+    </button>
+  )
+
+  const toolbarEl = (
+    <div style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+      width: '100%',
+      minHeight: 38,
+      borderTop: '1px solid var(--border)',
+      padding: '4px 10px',
+      background: 'var(--bg-secondary)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
+        {uploadBtn}
+      </div>
+      {actionBtn}
+    </div>
+  )
+
+  const renderSlashMenu = () => {
+    if (!slashMenuState || !slashMenuPlacement || typeof document === 'undefined') return null
+
+    const panelStyle = {
+      position: 'fixed',
+      top: slashMenuPlacement.top,
+      left: slashMenuPlacement.left,
+      width: slashMenuPlacement.width,
+      maxHeight: SLASH_MENU_MAX_HEIGHT,
+      zIndex: 4000,
+      border: '1px solid color-mix(in srgb, var(--border) 75%, var(--text-muted))',
+      borderRadius: 12,
+      boxShadow: '0 12px 32px rgba(0,0,0,0.14)',
+      padding: SLASH_MENU_SHELL_PADDING,
+    }
+
+    if (slashMenuState.kind === 'bang') {
+      if (slashItems.length === 0) {
+        return createPortal(
+          <div className="skill-slash-menu chat-slash-menu chat-slash-menu--empty" style={panelStyle}>
+            没有匹配的 Shell 命令
+          </div>,
+          document.body,
+        )
+      }
+
+      return createPortal(
+        <div className="skill-slash-menu chat-slash-menu" style={panelStyle}>
+          <div
+            ref={slashMenuRef}
+            className="skill-slash-menu-scroll chat-slash-menu-scroll scrollbar-hover-only"
+            role="listbox"
+            aria-label="Shell 命令提示"
+          >
+            <div className="skill-slash-menu-group-title">! Shell 提示 · Shift+Tab 切换命令/文件</div>
+            <div className="chat-slash-menu-list">
+              {slashItems.map((item, index) => {
+                const active = index === slashActiveIndex
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={`skill-slash-menu-item chat-slash-menu-item chat-slash-menu-item--terminal${active ? ' is-active' : ''}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setSlashActiveIndex(index)}
+                    onClick={() => applySlashItem(item)}
+                  >
+                    <span className="chat-slash-menu-item__icon" aria-hidden="true">
+                      <TerminalCommandIcon />
+                    </span>
+                    <span className="chat-slash-menu-item__body">
+                      <span className="chat-slash-menu-item__title">{item.title}</span>
+                      <span className="chat-slash-menu-item__hint">{item.description}</span>
+                    </span>
+                    <code className="chat-slash-menu-item__command">{commandCompletionKindLabel(item)}</code>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )
+    }
+
+    if (slashItems.length === 0) {
+      return createPortal(
+        <div className="skill-slash-menu chat-slash-menu chat-slash-menu--empty" style={panelStyle}>
+          没有匹配的 webcli 命令
+        </div>,
+        document.body,
+      )
+    }
+
+    return createPortal(
+      <div className="skill-slash-menu chat-slash-menu" style={panelStyle}>
+        <div
+          ref={slashMenuRef}
+          className="skill-slash-menu-scroll chat-slash-menu-scroll scrollbar-hover-only"
+          role="listbox"
+          aria-label="webcli 命令调用"
+        >
+          <div className="skill-slash-menu-group-title">webcli 命令调用</div>
+          <div className="chat-slash-menu-list">
+            {slashItems.map((item, index) => {
+              const active = index === slashActiveIndex
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  className={`skill-slash-menu-item chat-slash-menu-item${active ? ' is-active' : ''}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setSlashActiveIndex(index)}
+                  onClick={() => applySlashItem(item)}
+                >
+                  <span className="chat-slash-menu-item__icon" aria-hidden="true">
+                    <WebcliCommandIcon />
+                  </span>
+                  <span className="chat-slash-menu-item__body">
+                    <span className="chat-slash-menu-item__title">{item.title}</span>
+                    <span className="chat-slash-menu-item__hint">{item.description}</span>
+                  </span>
+                  <code className="chat-slash-menu-item__command">{item.command}</code>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )
+  }
+
+  return (
+    <div style={outerStyle}>
+      <div
+        data-chat-input-surface
+        className="chat-input-surface"
+        style={innerStyle}
+        onPointerDownCapture={handleInputSurfacePointerDown}
+      >
+        {hasAttachments && (
+          <div style={{ padding: '12px 14px 0' }}>
+            <AttachmentTray
+              attachments={attachments}
+              maxAttachments={attachmentLimit}
+              notice={attachmentNotice}
+              disabled={inputDisabled}
+              onRemove={(idx) => onAttachmentsChange?.(attachments.filter((_, i) => i !== idx))}
+            />
+          </div>
+        )}
+        {textareaEl}
+        {toolbarEl}
+      </div>
+      {renderSlashMenu()}
+    </div>
+  )
+}
+
+function WebcliCommandIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2.75 4.25h10.5v7.5H2.75z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
+      <path d="M4.75 6.25 6.25 8 4.75 9.75" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7.5 9.75h3.25" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function TerminalCommandIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2.5 4h11v8h-11z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
+      <path d="M4.5 6.25 6.25 8 4.5 9.75" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7.5 9.75h3.5" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function commandCompletionKindLabel(item) {
+  if (item?.kind === 'cmd') return 'cmd'
+  if (item?.kind === 'webcli') return 'webcli'
+  if (item?.kind === 'subcommand') return 'sub'
+  if (item?.kind === 'option') return 'arg'
+  if (item?.kind === 'tool') return 'tool'
+  if (item?.kind === 'site') return 'site'
+  if (item?.isDirectory) return 'dir'
+  return 'file'
+}
+
+function AttachmentTray({ attachments, maxAttachments, notice, onRemove, disabled = false }) {
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => {
+    if (attachments.length <= COLLAPSED_ATTACHMENT_COUNT) setExpanded(false)
+  }, [attachments.length])
+
+  const overLimit = attachments.length > maxAttachments
+  const hiddenCount = Math.max(attachments.length - COLLAPSED_ATTACHMENT_COUNT, 0)
+  const visibleAttachments = expanded ? attachments : attachments.slice(0, COLLAPSED_ATTACHMENT_COUNT)
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', width: '100%', maxHeight: expanded ? 148 : 'none', overflowY: expanded ? 'auto' : 'visible', alignContent: 'flex-start' }}>
+      <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 1 }}>
+        <span style={{ fontSize: 11, fontWeight: 650, color: overLimit ? 'var(--error)' : 'var(--text-muted)' }}>
+          {`\u5df2\u9009 ${attachments.length}/${maxAttachments} \u4e2a\u6587\u4ef6`}
+        </span>
+        {(notice || overLimit) && (
+          <span style={{ fontSize: 11, color: overLimit ? 'var(--error)' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {notice || `\u8bf7\u5220\u51cf\u5230 ${maxAttachments} \u4e2a\u4ee5\u5185`}
+          </span>
+        )}
+      </div>
+      {visibleAttachments.map((file, idx) => (
+        <div key={`${file.path}-${idx}`} title={file.path} className="chat-attachment-card">
+          <AttachmentPreview file={file} />
+          <div className="chat-attachment-card__content">
+            <div className="chat-attachment-card__name">{file.name}</div>
+            <div className="chat-attachment-card__type">{getFileTypeLabel(file.name || file.path)}</div>
+          </div>
+          <button type="button" className="chat-attachment-card__remove" onClick={() => { if (!disabled) onRemove(idx) }} disabled={disabled} title="移除文件" aria-label="移除文件" />
+        </div>
+      ))}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? '\u6536\u8d77\u9644\u4ef6' : `\u5c55\u5f00\u5269\u4f59 ${hiddenCount} \u4e2a\u9644\u4ef6`}
+          aria-label={expanded ? '\u6536\u8d77\u9644\u4ef6' : '\u5c55\u5f00\u66f4\u591a\u9644\u4ef6'}
+          style={{ height: ATTACHMENT_CHIP_HEIGHT, minWidth: 58, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '0 9px', fontSize: 11, fontWeight: 650, fontFamily: 'inherit', flexShrink: 0 }}
+        >
+          <AttachmentToggleIcon expanded={expanded} />
+          <span>{expanded ? '\u6536\u8d77' : `+${hiddenCount}`}</span>
+        </button>
+      )}
+    </div>
+  )
+}
+
+function AttachmentPreview({ file }) {
+  const [failed, setFailed] = useState(false)
+  const [thumbnailSrc, setThumbnailSrc] = useState('')
+  const name = file.name || file.path
+  const isImage = getFileTypeMeta(name).kind === 'image'
+
+  useEffect(() => {
+    let cancelled = false
+    setFailed(false)
+    setThumbnailSrc('')
+    if (!isImage || !file.path) return undefined
+
+    window.electronAPI?.readLocalImageThumbnail?.(file.path)
+      .then((src) => {
+        if (cancelled) return
+        setThumbnailSrc(src || localFileUrl(file.path))
+      })
+      .catch(() => {
+        if (!cancelled) setThumbnailSrc(localFileUrl(file.path))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [file.path, isImage])
+
+  const src = isImage ? (thumbnailSrc || localFileUrl(file.path)) : ''
+
+  if (src && !failed) {
+    return (
+      <span className="chat-attachment-card__thumb">
+        <img src={src} alt="" onError={() => setFailed(true)} />
+      </span>
+    )
+  }
+
+  return (
+    <span className="chat-attachment-card__icon" aria-hidden="true">
+      <FileGlyph name={name} size={22} />
+    </span>
+  )
+}
+
+function AttachmentToggleIcon({ expanded }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.12s' }} aria-hidden="true">
+      <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}

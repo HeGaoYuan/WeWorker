@@ -1,0 +1,178 @@
+{
+  "name": "weworker",
+  "version": "1.0.0",
+  "description": "WeWorker — AI 操作网站的桌面应用",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "npm run ensure:webwright && npm run build:webcli && concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "ensure:webwright": "node scripts/ensure-webwright.cjs",
+    "sync:webwright": "uv sync --project ../components/webwright",
+    "build:webwright": "node scripts/build-webwright.cjs",
+    "test:webwright-integration": "node --test scripts/__tests__/webwright-scripts.test.cjs electron/__tests__/webwright-manager.test.mjs renderer/src/__tests__/webwright-status.test.js",
+    "sync:adapters-registry": "node scripts/sync-adapters-registry.cjs",
+    "dev:renderer": "cd renderer && npm run dev",
+    "dev:electron": "wait-on --timeout 30000 tcp:localhost:5173 && cross-env NODE_ENV=development electron .",
+    "build:renderer": "cd renderer && npm run build",
+    "build:backend": "cd backend && pyinstaller build.spec --distpath ../build/backend-dist --workpath ../build/backend-work --noconfirm",
+    "build:backend-ts": "node scripts/bundle-backend-ts.cjs",
+    "build:bridge": "node scripts/bundle-bridge.cjs",
+    "build:bridge:win": "node scripts/bundle-bridge.cjs",
+    "build:webcli": "node scripts/bundle-webcli.cjs",
+    "build:mac": "node scripts/prepare-build.cjs && npm run build:webwright && npm run build:renderer && npm run build:backend-ts && npm run build:bridge && npm run build:webcli && node scripts/build-electron-current-arch.cjs --mac",
+    "build:decrypt": "python -m PyInstaller --onefile --name sd_decrypt --distpath build/decrypt-dist --workpath build/decrypt-work --specpath build scripts/sd_decrypt.py --noconfirm",
+    "build:win": "node scripts/prepare-build.cjs && npm run build:webwright && npm run build:renderer && npm run build:backend-ts && npm run build:bridge:win && npm run build:webcli && npm run build:decrypt && node scripts/build-electron-current-arch.cjs --win",
+    "install:all": "npm run ensure:webwright && npm run sync:webwright && npm install && cd renderer && npm install && cd ../backend-ts && npm install && cd ../../webcli && npm install && cd ../weworker && npm run build:webcli"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.1.196",
+    "@yao-pkg/pkg": "^5.11.0",
+    "concurrently": "^8.2.0",
+    "cross-env": "^10.1.0",
+    "electron": "^36.0.0",
+    "electron-builder": "^24.0.0",
+    "esbuild": "^0.27.4",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.weworker.app",
+    "productName": "WeWorker",
+    "directories": {
+      "output": "dist-app"
+    },
+    "afterPack": "scripts/after-pack.cjs",
+    "files": [
+      "electron/**",
+      "renderer/dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/backend-ts-dist/",
+        "to": "backend-ts",
+        "filter": [
+          "server.cjs",
+          "node_modules/**"
+        ]
+      },
+      {
+        "from": "backend-ts/bundled/",
+        "to": "bundled",
+        "filter": [
+          "zcf/**"
+        ]
+      },
+      {
+        "from": "build/bridge-dist/",
+        "to": "bridge",
+        "filter": [
+          "bridge.cjs"
+        ]
+      },
+      {
+        "from": "build/webcli-dist/",
+        "to": "webcli",
+        "filter": [
+          "webcli",
+          "webcli.cjs",
+          "webcli.cmd",
+          "skills/**"
+        ]
+      },
+      {
+        "from": "build/webwright-dist/dist/Webwright/",
+        "to": "webwright"
+      },
+      {
+        "from": "node_modules/@anthropic-ai/claude-code",
+        "to": "claude-code",
+        "filter": [
+          "bin/**",
+          "cli-wrapper.cjs",
+          "install.cjs",
+          "package.json",
+          "sdk-tools.d.ts"
+        ]
+      },
+      {
+        "from": "../extension",
+        "to": "extension",
+        "filter": [
+          "**/*",
+          "!adapters/**"
+        ]
+      },
+      {
+        "from": "build/adapters-dist/",
+        "to": "extension/adapters"
+      }
+    ],
+    "mac": {
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extraResources": [
+        {
+          "from": "node_modules/@anthropic-ai/claude-code",
+          "to": "claude-code",
+          "filter": [
+            "vendor/ripgrep/arm64-darwin/**",
+            "vendor/ripgrep/x64-darwin/**",
+            "vendor/tree-sitter-bash/arm64-darwin/**",
+            "vendor/tree-sitter-bash/x64-darwin/**",
+            "vendor/audio-capture/arm64-darwin/**",
+            "vendor/audio-capture/x64-darwin/**"
+          ]
+        }
+      ],
+      "target": [
+        {
+          "target": "dmg"
+        },
+        {
+          "target": "zip"
+        }
+      ],
+      "icon": "asset/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "build/decrypt-dist/",
+          "to": "tools",
+          "filter": [
+            "sd_decrypt.exe"
+          ]
+        }
+      ],
+      "target": [
+        {
+          "target": "nsis"
+        }
+      ],
+      "icon": "asset/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "license": "asset/LICENSE_AGREEMENT.html"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://example.com/downloads/"
+      }
+    ]
+  }
+}

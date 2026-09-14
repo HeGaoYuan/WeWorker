@@ -1,0 +1,17 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="roundedClip">
+      <rect width="512" height="512" rx="115" ry="115"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#roundedClip)">
+    <rect width="512" height="512" fill="#ffffff"/>
+    <text x="256" y="280"
+          font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif"
+          font-weight="680"
+          font-size="86"
+          fill="#000000"
+          text-anchor="middle"
+          letter-spacing="-0.9">WeWorker</text>
+  </g>
+</svg>

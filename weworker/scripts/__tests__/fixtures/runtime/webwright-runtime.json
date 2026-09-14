@@ -1,0 +1,7 @@
+{
+  "webwright_version": "0.1.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "mode": "embedded",
+  "entrypoint": "Webwright"
+}

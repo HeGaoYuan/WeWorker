@@ -1,0 +1,52 @@
+name: 文档问题
+description: 报告错误、过期、缺失或难以理解的文档
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue
+          required: true
+        - label: 附件和示例中不包含凭据、账号或私人数据
+          required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: 文档位置
+      description: 提供仓库路径、章节标题或公开页面地址
+      placeholder: "例如：README.md 的“快速开始”章节"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 问题类型
+      options:
+        - 内容错误
+        - 内容过期
+        - 链接失效
+        - 缺少说明
+        - 表述不清
+        - 示例无法运行
+        - 翻译或排版
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 说明当前内容、问题所在和可能造成的误解
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 修改建议
+      description: 如果有建议文本或公开参考资料，请填写在这里

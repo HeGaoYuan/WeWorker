@@ -1,0 +1,83 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Build outputs and caches
+dist/
+**/dist/
+build/
+**/build/
+dist-app/
+**/dist-app/
+coverage/
+**/coverage/
+.cache/
+**/.cache/
+*.tsbuildinfo
+
+# Python
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# 日志文件
+*.log
+native-host.log
+
+# PID文件
+.webmcp-native-host.pid
+*.pid
+
+# macOS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# website dist zip
+dist.zip
+
+# claude
+.claude
+
+# 临时调试工具
+claude-cli/
+
+.kiro
+# 暂存站点的dom、accessibility tree之类的文件,开发adapter时会用到
+dom-info/
+
+OpenCLI/
+
+outputs/
+
+.tmp-wecli-src/
+
+webcli/extension/
+
+# offline packaging output (regenerable wheels/vendor.zip) + 临时账单导出
+offline_zips/
+*.local.csv
+
+# chat-bench 运行输出（每次重新生成）
+bench-out/
+
+# Local sessions and internal-only reports
+session-*.md
+*_INTERNAL_*.html
+internal-*-report.html

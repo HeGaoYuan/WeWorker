@@ -1,0 +1,39 @@
+{
+  "tool_id": "print_property_certificate",
+  "code": "async def print_property_certificate(ctx):\n    \"\"\"查询贷款用途的有／无产权证明并触发打印\"\"\"\n    page = ctx.page\n    \n    # Navigate to the dashboard start page\n    await page.goto(\"https://jxd.ghhzrzy.tj.gov.cn/personal/iebdc.html?isKstb#/newHome/newDashboard\", wait_until=\"domcontentloaded\")\n    \n    # Click \"不动产登记资料查询\" to ensure the sidebar menu is visible\n    await page.locator('text=不动产登记资料查询').first.click()\n    \n    # Click \"有/无产权证明\" (With/Without Property Certificate) in the sidebar menu\n    await page.get_by_text(\"有/无产权证明\").click()\n    \n    # Select \"贷款\" (Loan) as the query purpose\n    # There are two inputs with placeholder \"请选择\". The second one (index 1) is for \"*查询目的\" (Query Purpose).\n    await page.locator('input[placeholder=\"请选择\"]').nth(1).click()\n    await page.get_by_role('listitem').filter(has_text='贷款').click()\n    \n    # Click the \"查询\" (Query) button to execute the query\n    await page.get_by_role(\"button\", name=\"查询\").click()\n    \n    # Wait for results to appear\n    await page.wait_for_timeout(2000)\n    \n    # Click the \"打印证明\" (Print Certificate) button\n    await page.get_by_role(\"button\", name=\"打印证明\").click()\n    \n    return {\"status\": \"success\", \"message\": \"已查询贷款用途的有/无产权证明，并点击了打印证明按钮\"}",
+  "code_hash": "sha256:3bb10d60e4430896bcb8181e8f12e26059aa3a9c7978db3ebb3653cdb4b90155",
+  "description": "查询贷款用途的有／无产权证明并触发打印。该工具会从首页导航，先点击“不动产登记资料查询”展开菜单，然后点击“有/无产权证明”，选择贷款用途，执行查询，最后点击打印证明按钮。",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  },
+  "result_schema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "description": "执行状态，成功返回 success"
+      },
+      "message": {
+        "type": "string",
+        "description": "执行结果描述信息"
+      }
+    },
+    "required": [
+      "status",
+      "message"
+    ]
+  },
+  "requires": [],
+  "ensures": [
+    "查询结果页面显示",
+    "打印证明按钮被点击"
+  ],
+  "side_effects": [],
+  "risk_notice": "该工具会触发网页查询和打印操作，可能产生实际的打印请求。",
+  "source_exploration_id": "exp_print_property_certificate_20260715_162632",
+  "based_on_formal_hash": "",
+  "debug_run_evidence_id": "debug_20260715_202617_952756",
+  "updated_at": "2026-07-15T20:41:23+08:00"
+}

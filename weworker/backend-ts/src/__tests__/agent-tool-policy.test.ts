@@ -1,0 +1,92 @@
+import { describe, expect, it } from 'vitest'
+import {
+  WEWORKER_ALLOWED_TOOLS,
+  canUseWeWorkerTool,
+  createWeWorkerToolPolicy,
+  isAllowedBashCommand,
+  invokesWebcli,
+} from '../agent-tool-policy.js'
+
+describe('agent tool policy', () => {
+  it('allows non-empty Bash commands used by regular tasks', () => {
+    expect(isAllowedBashCommand('webcli call open_browser --args \'{"url":"https://expense.example.com"}\'')).toBe(true)
+    expect(isAllowedBashCommand('webcli call expense.example.com.create_budget --args "{}"')).toBe(true)
+    expect(isAllowedBashCommand('npm view @example/webcli version')).toBe(true)
+    expect(isAllowedBashCommand('git clone git@github.com:example-user/example-repo.git')).toBe(true)
+    expect(isAllowedBashCommand('npm test -- --runInBand')).toBe(true)
+  })
+
+  it('rejects empty or non-string Bash commands', () => {
+    expect(isAllowedBashCommand('')).toBe(false)
+    expect(isAllowedBashCommand('   ')).toBe(false)
+    expect(isAllowedBashCommand(undefined)).toBe(false)
+  })
+
+  it('recognizes webcli executable invocations without matching unrelated text', () => {
+    expect(invokesWebcli('webcli call blog-admin.search-blog')).toBe(true)
+    expect(invokesWebcli('cd /tmp && /opt/bin/webcli call open_browser')).toBe(true)
+    expect(invokesWebcli('webcli.cmd call blog-admin.search-blog')).toBe(true)
+    expect(invokesWebcli('echo webcli-python')).toBe(false)
+    expect(invokesWebcli('echo "use webcli for this skill"')).toBe(false)
+  })
+
+  it('allows Claude Code Skill activation for WeWorker adapter documentation', async () => {
+    const decision = await canUseWeWorkerTool('Skill', {
+      skill: 'webcli-project.example.com',
+    })
+
+    expect(decision.behavior).toBe('allow')
+    expect(WEWORKER_ALLOWED_TOOLS).toContain('Skill')
+  })
+
+  it('allows Claude Code native file tools so user-directory guard can enforce paths', async () => {
+    for (const toolName of ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']) {
+      const decision = await canUseWeWorkerTool(toolName, {
+        file_path: 'notes.txt',
+      })
+
+      expect(decision.behavior).toBe('allow')
+      expect(WEWORKER_ALLOWED_TOOLS).toContain(toolName)
+    }
+  })
+
+  it('enforces the qa_only, no_bash, and full capability matrix', async () => {
+    const cases = [
+      { mode: 'qa_only' as const, skill: 'deny', file: 'deny', bash: 'deny', mcp: 'deny' },
+      { mode: 'no_bash' as const, skill: 'allow', file: 'allow', bash: 'deny', mcp: 'allow' },
+      { mode: 'full' as const, skill: 'allow', file: 'allow', bash: 'allow', mcp: 'allow' },
+    ]
+
+    for (const expected of cases) {
+      const policy = createWeWorkerToolPolicy(expected.mode)
+      await expect(policy('Skill', { skill: 'test' }, {} as never))
+        .resolves.toMatchObject({ behavior: expected.skill })
+      await expect(policy('Read', { file_path: 'notes.txt' }, {} as never))
+        .resolves.toMatchObject({ behavior: expected.file })
+      await expect(policy('Bash', { command: 'pwd' }, {} as never))
+        .resolves.toMatchObject({ behavior: expected.bash })
+      await expect(policy('PowerShell', { command: 'Get-Location' }, {} as never))
+        .resolves.toMatchObject({ behavior: expected.bash })
+      await expect(policy('mcp__weworker__webcli_result', {}, {} as never))
+        .resolves.toMatchObject({ behavior: expected.mcp })
+    }
+  })
+
+  it('forces every webcli Adapter command onto the platform-native command tool in full mode', async () => {
+    const policy = createWeWorkerToolPolicy('full')
+
+    await expect(policy(
+      'mcp__weworker__weworker_powershell',
+      { command: 'webcli call blog-admin.search-blog --limit=5' },
+      {} as never,
+    )).resolves.toMatchObject({
+      behavior: 'deny',
+      message: expect.stringContaining('platform-native'),
+    })
+    await expect(policy(
+      'mcp__weworker__weworker_powershell',
+      { command: 'npm test' },
+      {} as never,
+    )).resolves.toMatchObject({ behavior: 'allow' })
+  })
+})

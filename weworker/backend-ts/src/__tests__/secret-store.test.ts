@@ -1,0 +1,83 @@
+import { describe, expect, it, beforeEach } from 'vitest'
+import {
+  applySecrets,
+  collectPlaintextSecretsFromRaw,
+  extractSecrets,
+  rawFileHasPlaintextSecrets,
+} from '../settings-secrets.js'
+import type { Settings } from '../config.js'
+
+const baseSettings = (): Settings => ({
+  active_provider: 'anthropic',
+  api_key: 'active-key',
+  base_url: 'https://api.anthropic.com',
+  model: 'claude-sonnet-4-6',
+  api_key_anthropic: 'anthropic-key',
+  model_anthropic: 'claude-sonnet-4-6',
+  api_key_glm: '',
+  model_glm: 'glm-4.7',
+  api_key_deepseek: '',
+  model_deepseek: 'deepseek-chat',
+  api_key_custom: '',
+  model_custom: '',
+  base_url_custom: '',
+  openai_base_url_custom: '',
+  channels: {
+    qq: { enabled: true, app_id: 'qq-id', app_secret: 'qq-secret', owner_user_id: 'owner-1', owner_permission_level: 'full' },
+    weixin: { enabled: true, token: 'wx-token', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
+    wecom: { enabled: true, bot_id: 'bot', secret: 'wecom-secret', owner_user_id: '', owner_permission_level: 'full' },
+  },
+  site_toggles: {},
+  custom_test_prompts: {},
+  label_names: {},
+  user_directory: '',
+  download_directory: '',
+  max_chat_attachments: 60,
+  paste_text_attachment_threshold: 20000,
+  open_browser_allowed_origins: [],
+  api_query_llm_route: true,
+  welcome_featured_site_limit: 50,
+  resource_preview_extensions: null,
+  user_directory_blacklist: [],
+  zcf_default_role: 'weworker-clear',
+  zcf_default_mode: 'auto-plan',
+  zcf_lang: 'zh-CN',
+  zcf_enabled_roles: ['weworker-clear'],
+  zcf_custom_roles: [],
+})
+
+describe('settings-secrets', () => {
+  it('extracts and applies secret fields', () => {
+    const settings = baseSettings()
+    const secrets = extractSecrets(settings)
+    expect(secrets['api_key_anthropic']).toBe('anthropic-key')
+    expect(secrets['channels.qq.app_secret']).toBe('qq-secret')
+
+    const cleared = applySecrets(settings, {})
+    expect(cleared.api_key_anthropic).toBe('')
+    expect(cleared.channels.qq.app_secret).toBe('')
+  })
+
+  it('detects legacy plaintext secrets in raw settings', () => {
+    const raw = {
+      api_key_custom: 'legacy-key',
+      channels: { wecom: { secret: 'legacy-secret' } },
+    }
+    expect(rawFileHasPlaintextSecrets(raw)).toBe(true)
+    expect(collectPlaintextSecretsFromRaw(raw)['api_key_custom']).toBe('legacy-key')
+  })
+})
+
+describe('secret-store', () => {
+  beforeEach(() => {
+    process.env.WEWORKER_TEST_MASTER_KEY = '0123456789abcdef0123456789abcdef'
+  })
+
+  it('encrypts and decrypts secrets with SM4', async () => {
+    const { initSecretStore, encryptSecret, decryptSecret } = await import('../secret-store.js')
+    await initSecretStore()
+    const encrypted = encryptSecret('super-secret-key')
+    expect(encrypted).not.toBe('super-secret-key')
+    expect(decryptSecret(encrypted)).toBe('super-secret-key')
+  })
+})

@@ -1,0 +1,102 @@
+import WebSocket from 'ws'
+import { createLogger } from './logger.js'
+
+const log = createLogger('bridge-status')
+
+const BRIDGE_URL = 'ws://localhost:3711'
+
+export interface AdapterScaffoldGeneratedEvent {
+  siteKey: string
+  adapterDir?: string
+}
+
+/**
+ * Bridge event monitor. Connects to the WebSocket bridge, tracks connection
+ * state, and exposes local runtime events such as scaffold generation.
+ * It never sends mutation requests to the bridge.
+ */
+export class BridgeStatus {
+  private _ws: WebSocket | null = null
+  private _connected = false
+  private _extensionConnected = false
+  private _extensionVersion: string | null = null
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private _stopped = false
+  private _adapterScaffoldListeners = new Set<(event: AdapterScaffoldGeneratedEvent) => void>()
+
+  start(): void {
+    this._connect()
+  }
+
+  stop(): void {
+    this._stopped = true
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
+    this._ws?.close()
+  }
+
+  private _connect(): void {
+    if (this._stopped) return
+    const ws = new WebSocket(BRIDGE_URL)
+    this._ws = ws
+
+    ws.on('open', () => {
+      this._connected = true
+      log.info('connected to bridge')
+    })
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString())
+        this._handleMessage(msg)
+      } catch {}
+    })
+
+    ws.on('close', () => {
+      this._connected = false
+      this._extensionConnected = false
+      this._ws = null
+      if (!this._stopped) {
+        this._reconnectTimer = setTimeout(() => this._connect(), 2000)
+      }
+    })
+
+    ws.on('error', () => {})
+  }
+
+  private _handleMessage(msg: Record<string, unknown>): void {
+    const type = msg.type as string
+
+    if (type === 'extension_connected') {
+      this._extensionConnected = true
+      this._extensionVersion = (msg as { version?: string }).version ?? null
+    } else if (type === 'extension_disconnected') {
+      this._extensionConnected = false
+      this._extensionVersion = null
+    } else if (type === 'adapter_scaffold_generated') {
+      const siteKey = typeof msg.siteKey === 'string' ? msg.siteKey.trim() : ''
+      if (!siteKey) return
+      const event: AdapterScaffoldGeneratedEvent = {
+        siteKey,
+        ...(typeof msg.adapterDir === 'string' ? { adapterDir: msg.adapterDir } : {}),
+      }
+      for (const listener of this._adapterScaffoldListeners) {
+        try {
+          listener(event)
+        } catch (e) {
+          log.warn('adapter scaffold listener failed', e)
+        }
+      }
+    }
+  }
+
+  onAdapterScaffoldGenerated(listener: (event: AdapterScaffoldGeneratedEvent) => void): () => void {
+    this._adapterScaffoldListeners.add(listener)
+    return () => this._adapterScaffoldListeners.delete(listener)
+  }
+
+  isConnected(): boolean { return this._connected }
+  isExtensionConnected(): boolean { return this._extensionConnected }
+  getExtensionVersion(): string | null { return this._extensionVersion }
+}
+
+export const bridgeStatus = new BridgeStatus()

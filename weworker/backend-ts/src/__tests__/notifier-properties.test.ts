@@ -1,0 +1,224 @@
+/**
+ * **Feature: scheduled-tasks, Property 9: 通知分发**
+ *
+ * For any completed scheduled task (status is completed or failed), the system
+ * should send a notification containing the task title and execution status.
+ *
+ * 1. System notification (SSE broadcast) is ALWAYS sent regardless of channels.
+ * 2. If notify_channels are configured and the channel is connected, channel
+ *    notification is attempted.
+ * 3. If the channel is NOT connected or sending fails, the system falls back to
+ *    system notification and records the failure in the execution record.
+ *
+ * **Validates: Requirements 7.1, 7.5, 7.6**
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import fc from 'fast-check'
+
+// ---------------------------------------------------------------------------
+// Mocks — must be declared before importing the module under test
+// ---------------------------------------------------------------------------
+
+// Mock channel-manager: control getStatuses() per test
+const mockGetStatuses = vi.fn<() => Record<string, { status: string; error?: string }>>()
+vi.mock('../channels/channel-manager.js', () => ({
+  channelManager: {
+    getStatuses: (...args: unknown[]) => mockGetStatuses(...(args as [])),
+  },
+}))
+
+// Mock works-store: spy on updateTaskExecution
+const mockUpdateTaskExecution = vi.fn()
+vi.mock('../works-store.js', () => ({
+  updateTaskExecution: (...args: unknown[]) => mockUpdateTaskExecution(...args),
+}))
+
+// Mock heavy dependencies to avoid side-effect imports
+vi.mock('../task-executor.js', () => ({ executeTask: vi.fn() }))
+vi.mock('../agent.js', () => ({ streamChat: vi.fn() }))
+
+// ---------------------------------------------------------------------------
+// Import module under test AFTER mocks are set up
+// ---------------------------------------------------------------------------
+import {
+  notify,
+  registerSSEClient,
+  unregisterSSEClient,
+  broadcastSSE,
+} from '../notifier.js'
+
+// ---------------------------------------------------------------------------
+// Generators
+// ---------------------------------------------------------------------------
+
+const arbNonEmptyStr = fc
+  .string({ minLength: 1, maxLength: 60 })
+  .filter((s) => s.trim().length > 0)
+
+const arbStatus = fc.constantFrom<'completed' | 'failed'>('completed', 'failed')
+
+const arbPayload = fc.record({
+  taskId: fc.uuid(),
+  taskTitle: arbNonEmptyStr,
+  status: arbStatus,
+  summary: fc.option(arbNonEmptyStr, { nil: undefined }),
+  error: fc.option(arbNonEmptyStr, { nil: undefined }),
+  executionId: fc.uuid(),
+  workId: fc.uuid(),
+})
+
+const arbChannelName = fc
+  .string({ minLength: 1, maxLength: 12 })
+  .filter((s) => /^[a-z]+$/.test(s))
+
+const arbChannels = fc.uniqueArray(arbChannelName, { minLength: 0, maxLength: 4 })
+
+// ---------------------------------------------------------------------------
+// Helpers — fake SSE Response object
+// ---------------------------------------------------------------------------
+
+function createFakeSSEClient() {
+  const chunks: string[] = []
+  const res = {
+    write: vi.fn((data: string) => {
+      chunks.push(data)
+      return true
+    }),
+    // Minimal Response-like shape
+    writeHead: vi.fn(),
+    end: vi.fn(),
+  }
+  return { res: res as unknown as import('express').Response, chunks }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('Property 9: 通知分发', () => {
+  let fakeClient: ReturnType<typeof createFakeSSEClient>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Register a fake SSE client so we can observe broadcastSSE writes
+    fakeClient = createFakeSSEClient()
+    registerSSEClient(fakeClient.res)
+    // Default: no channels connected
+    mockGetStatuses.mockReturnValue({})
+  })
+
+  afterEach(() => {
+    unregisterSSEClient(fakeClient.res)
+  })
+
+  // -------------------------------------------------------------------------
+  // Scenario 1: No channels → only system notification (SSE broadcast)
+  // -------------------------------------------------------------------------
+  it('always sends system notification via SSE when no channels are specified', async () => {
+    await fc.assert(
+      fc.asyncProperty(arbPayload, async (payload) => {
+        vi.clearAllMocks()
+
+        // Act — no channels
+        await notify(payload, [])
+
+        // Assert — SSE client received exactly one write with task_notification
+        expect(fakeClient.res.write).toHaveBeenCalledTimes(1)
+        const written = (fakeClient.res.write as ReturnType<typeof vi.fn>).mock
+          .calls[0][0] as string
+        const parsed = JSON.parse(written.replace(/^data: /, '').trim())
+        expect(parsed.type).toBe('task_notification')
+        expect(parsed.data.taskTitle).toBe(payload.taskTitle)
+        expect(parsed.data.status).toBe(payload.status)
+
+        // No channel interaction
+        expect(mockGetStatuses).not.toHaveBeenCalled()
+        // No execution record update (no failures)
+        expect(mockUpdateTaskExecution).not.toHaveBeenCalled()
+      }),
+      { numRuns: 100 },
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Scenario 2: Channels specified & connected → SSE + channel attempt
+  // -------------------------------------------------------------------------
+  it('sends system notification AND attempts channel notification when channel is connected', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        arbPayload,
+        fc.uniqueArray(arbChannelName, { minLength: 1, maxLength: 3 }),
+        async (payload, channels) => {
+          vi.clearAllMocks()
+
+          // All channels are connected
+          const statuses: Record<string, { status: string }> = {}
+          for (const ch of channels) {
+            statuses[ch] = { status: 'connected' }
+          }
+          mockGetStatuses.mockReturnValue(statuses)
+
+          await notify(payload, channels)
+
+          // SSE broadcast always happens
+          expect(fakeClient.res.write).toHaveBeenCalled()
+          const written = (fakeClient.res.write as ReturnType<typeof vi.fn>)
+            .mock.calls[0][0] as string
+          const parsed = JSON.parse(written.replace(/^data: /, '').trim())
+          expect(parsed.type).toBe('task_notification')
+
+          // Channel statuses were checked (once per channel)
+          expect(mockGetStatuses).toHaveBeenCalledTimes(channels.length)
+
+          // Connected channels still fail (no sendMessage support) → failure recorded
+          expect(mockUpdateTaskExecution).toHaveBeenCalledTimes(1)
+          const [execId, updates] = mockUpdateTaskExecution.mock.calls[0]
+          expect(execId).toBe(payload.executionId)
+          expect(typeof updates.error_message).toBe('string')
+          expect(updates.error_message.length).toBeGreaterThan(0)
+        },
+      ),
+      { numRuns: 100 },
+    )
+  })
+
+  // -------------------------------------------------------------------------
+  // Scenario 3: Channels NOT connected → SSE + fallback + failure recorded
+  // -------------------------------------------------------------------------
+  it('falls back and records failure when channels are not connected', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        arbPayload,
+        fc.uniqueArray(arbChannelName, { minLength: 1, maxLength: 3 }),
+        async (payload, channels) => {
+          vi.clearAllMocks()
+
+          // All channels are disconnected (status != 'connected')
+          const statuses: Record<string, { status: string }> = {}
+          for (const ch of channels) {
+            statuses[ch] = { status: 'error' }
+          }
+          mockGetStatuses.mockReturnValue(statuses)
+
+          await notify(payload, channels)
+
+          // SSE broadcast always happens
+          expect(fakeClient.res.write).toHaveBeenCalled()
+
+          // Failure recorded in execution record
+          expect(mockUpdateTaskExecution).toHaveBeenCalledTimes(1)
+          const [execId, updates] = mockUpdateTaskExecution.mock.calls[0]
+          expect(execId).toBe(payload.executionId)
+          expect(typeof updates.error_message).toBe('string')
+          expect(updates.error_message.length).toBeGreaterThan(0)
+
+          // Each channel's failure should be mentioned
+          for (const ch of channels) {
+            expect(updates.error_message).toContain(ch)
+          }
+        },
+      ),
+      { numRuns: 100 },
+    )
+  })
+})

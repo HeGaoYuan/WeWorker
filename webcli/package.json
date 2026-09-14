@@ -1,0 +1,59 @@
+{
+  "name": "weworker-webcli",
+  "version": "1.0.0",
+  "description": "Browser automation CLI for Extension and Toolkit Adapters",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "webcli": "index.js"
+  },
+  "files": [
+    "index.js",
+    "bridge.js",
+    "metrics.js",
+    "stats.js",
+    "adapter-cli.js",
+    "adapter-registry.js",
+    "toolkit-runner.js",
+    "direct-execution-metadata.js",
+    "adapter-scaffold.js",
+    "ai-analyzer.js",
+    "ai-worker.js",
+    "ai-worker-session.js",
+    "generation-worker.js",
+    "generation-worker-controller.js",
+    "generation-transport.js",
+    "generation-harness/",
+    "skill-installer.js",
+    "skill-writer.js",
+    "logger.js",
+    "open-browser-policy.js",
+    "paths.js",
+    "websocket-origin-policy.js",
+    "tool-timeouts.js",
+    "install.js",
+    "skills/",
+    "extension/"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "install-host": "node install.js",
+    "prepack": "node scripts/prepare-package-extension.js",
+    "generate:wecli-adapters": "node scripts/generate-wecli-adapters.js",
+    "test": "vitest --run",
+    "test:ci": "vitest --run --testTimeout=20000",
+    "test:e2e:real": "node scripts/run-real-e2e.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "ws": "^8.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "fast-check": "^4.7.0",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

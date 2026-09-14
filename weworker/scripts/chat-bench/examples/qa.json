@@ -1,0 +1,15 @@
+[
+  {
+    "id": "qa-hello",
+    "prompt": "你好，请用一句话介绍你自己",
+    "category": "qa"
+  },
+  {
+    "id": "itsm-todo",
+    "prompt": "查看我的待办工单",
+    "siteId": "itsm.example.com",
+    "category": "itsm",
+    "expectTools": ["itsm.example.com.my_todo"],
+    "expectMaxMs": 20000
+  }
+]

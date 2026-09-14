@@ -1,0 +1,4 @@
+model:
+  model_class: openai_chat
+  model_name: ""
+  openai_chat_endpoint: ""

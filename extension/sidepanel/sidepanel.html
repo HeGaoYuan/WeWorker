@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WeWorker Browser Adapter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1e1e2e; color: #cdd6f4;
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+    [hidden] { display: none !important; }
+
+    /* Header */
+    .header {
+      padding: 10px 14px; background: #181825; border-bottom: 1px solid #313244;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .header-logo { width: 20px; height: 20px; border-radius: 4px; }
+    .header h1 { font-size: 14px; font-weight: 600; flex: 1; }
+    .header-badge {
+      font-size: 10px; padding: 2px 8px; border-radius: 99px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .header-badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .badge-active { background: #a6e3a122; color: #a6e3a1; }
+    .badge-active .dot { background: #a6e3a1; }
+    .badge-none { background: #45475a44; color: #6c7086; }
+    .badge-none .dot { background: #6c7086; }
+
+    /* Tabs */
+    .tabs {
+      display: flex; border-bottom: 1px solid #313244; background: #181825; flex-shrink: 0;
+    }
+    .tab {
+      padding: 8px 16px; font-size: 12px; cursor: pointer;
+      border-bottom: 2px solid transparent; color: #6c7086; font-weight: 500;
+    }
+    .tab:hover { color: #cdd6f4; }
+    .tab.active { color: #89b4fa; border-bottom-color: #89b4fa; }
+
+    /* Main & Panels */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .tab-panel { flex: 1; overflow-y: auto; display: none; padding: 14px; }
+    .tab-panel.active { display: flex; flex-direction: column; }
+    .tab-panel#panelDev { padding: 0; overflow: hidden; }
+
+    /* Section label */
+    .section-label {
+      font-size: 11px; font-weight: 600; color: #6c7086;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;
+    }
+
+    /* Tool list */
+    .tool-list { display: flex; flex-direction: column; gap: 4px; }
+    .tool-item {
+      padding: 8px 10px; border-radius: 6px;
+      background: #181825; border: 1px solid #313244; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tool-item:hover { background: #313244; border-color: #45475a; }
+    .tool-name {
+      font: 11.5px/1.4 'SF Mono', Monaco, Consolas, monospace;
+      font-weight: 600; color: #89b4fa; margin-bottom: 2px;
+    }
+    .tool-desc { font-size: 11.5px; color: #a6adc8; line-height: 1.4; }
+
+    /* None state */
+    .none-body { text-align: center; padding: 40px 20px; }
+    .none-icon { font-size: 32px; margin-bottom: 12px; }
+    .none-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .none-desc { font-size: 12px; color: #6c7086; line-height: 1.6; }
+
+    /* Loading / Spinner */
+    .loading-box { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 24px 0; color: #6c7086; font-size: 12px; }
+    .spinner { width: 14px; height: 14px; border: 2px solid #45475a; border-top-color: #89b4fa; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Buttons */
+    .btn-primary-full {
+      width: 100%; background: #89b4fa; color: #1e1e2e; border: none;
+      font-size: 12px; font-weight: 600; padding: 10px 12px; border-radius: 6px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-primary-full:hover { background: #b4d0fb; }
+    .btn-primary-full:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-sm {
+      padding: 6px 12px; font-size: 11px; border-radius: 4px;
+      cursor: pointer; border: none; font-weight: 500;
+    }
+    .btn-sm.primary { background: #89b4fa; color: #1e1e2e; }
+    .btn-sm.primary:hover { background: #b4d0fb; }
+    .btn-sm.secondary { background: #313244; color: #cdd6f4; border: 1px solid #45475a; }
+    .btn-sm.secondary:hover { background: #45475a; }
+    .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Dev tab: IDE layout */
+    .dev-layout { display: flex; height: 100%; overflow: hidden; }
+    .dev-sidebar {
+      width: 140px; min-width: 120px; border-right: 1px solid #313244;
+      display: flex; flex-direction: column; overflow: hidden; background: #181825;
+    }
+    .dev-sidebar-header {
+      padding: 8px 10px; font-size: 10px; font-weight: 600; color: #6c7086;
+      text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid #313244;
+    }
+    .dev-sidebar-list { flex: 1; overflow-y: auto; }
+    .dev-sidebar-item {
+      padding: 6px 10px; cursor: pointer; font-size: 11px;
+      border-bottom: 1px solid #313244; color: #a6adc8;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .dev-sidebar-item:hover { background: #313244; color: #cdd6f4; }
+    .dev-sidebar-item.active { background: #89b4fa22; border-left: 2px solid #89b4fa; color: #89b4fa; }
+    .dev-sidebar-section {
+      padding: 8px 10px 4px; font-size: 9px; font-weight: 700; color: #6c7086;
+      text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #313244;
+    }
+    .dev-editor-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .dev-editor-tabs {
+      display: flex; border-bottom: 1px solid #313244; background: #181825; flex-shrink: 0;
+    }
+    .dev-editor-tab {
+      padding: 6px 12px; font-size: 11px; cursor: pointer; color: #6c7086;
+      border-bottom: 2px solid transparent; border-right: 1px solid #313244;
+    }
+    .dev-editor-tab:hover { color: #cdd6f4; }
+    .dev-editor-tab.active { color: #89b4fa; border-bottom-color: #89b4fa; background: #1e1e2e; }
+    .dev-editor-content { flex: 1; position: relative; overflow: hidden; }
+    .code-editor-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+    .dev-action-bar {
+      padding: 6px 10px; border-top: 1px solid #313244; background: #181825;
+      display: flex; gap: 6px; align-items: center; flex-shrink: 0;
+    }
+    .dev-action-bar .save-status { font-size: 10px; margin-left: auto; }
+    .save-status.success { color: #a6e3a1; }
+    .save-status.error { color: #f38ba8; }
+
+    /* Explore section in dev tab */
+    .dev-guide-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    .dev-guide-title { font-size: 14px; font-weight: 700; color: #cdd6f4; margin-bottom: 4px; }
+    .dev-guide-desc { font-size: 11px; color: #a6adc8; line-height: 1.5; }
+    .dev-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+    .dev-step { width: 100%; border: 1px solid #313244; background: #181825; border-radius: 8px; padding: 10px; color: #6c7086; text-align: left; font: inherit; cursor: pointer; }
+    .dev-step:hover { border-color: #585b70; }
+    .dev-step:focus-visible { outline: 2px solid #89b4fa; outline-offset: 2px; }
+    .dev-step.active { border-color: #89b4fa; background: #89b4fa14; color: #cdd6f4; }
+    .dev-step.done { border-color: #a6e3a144; background: #a6e3a111; color: #a6e3a1; }
+    .dev-step-index { font: 10px/1 'SF Mono', monospace; margin-bottom: 6px; }
+    .dev-step-title { font-size: 12px; font-weight: 600; }
+    .dev-step-desc { font-size: 10px; color: #6c7086; line-height: 1.4; margin-top: 4px; }
+    .dev-step-panel { display: none; }
+    .dev-step-panel.active { display: block; }
+    .dev-step-card { background: #181825; border: 1px solid #313244; border-radius: 8px; padding: 14px; }
+    .dev-step-card-title { font-size: 13px; font-weight: 700; color: #cdd6f4; margin-bottom: 6px; }
+    .dev-step-card-desc { font-size: 11px; color: #a6adc8; line-height: 1.6; margin-bottom: 12px; }
+    .dev-advanced-toggle { white-space: nowrap; }
+    .explore-divider { height: 1px; background: #313244; margin: 16px 0; }
+    .explore-result-card { background: #181825; border: 1px solid #313244; border-radius: 8px; padding: 14px; }
+    .explore-result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .explore-badge { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+    .explore-badge-api { background: #89b4fa33; color: #89b4fa; }
+    .explore-badge-ui { background: #fab38733; color: #fab387; }
+    .explore-badge-hybrid { background: #cba6f733; color: #cba6f7; }
+    .explore-strategy { font-size: 11px; font-weight: 600; color: #cdd6f4; }
+    .explore-reason { font-size: 11px; color: #a6adc8; line-height: 1.5; margin-bottom: 8px; }
+    .explore-stats { font-size: 11px; color: #6c7086; margin-bottom: 10px; }
+    .explore-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .explore-error-msg { font-size: 11px; color: #f38ba8; margin-bottom: 8px; }
+    .explore-api-list { margin: 10px 0; overflow-y: auto; }
+    .explore-api-title { font-size: 10px; font-weight: 600; color: #6c7086; text-transform: uppercase; margin-bottom: 6px; }
+    .explore-api-item { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 10.5px; border-bottom: 1px solid #313244; }
+    .explore-api-item:last-child { border-bottom: none; }
+    .explore-api-main { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; }
+    .explore-api-method { font: 9px/1 'SF Mono', monospace; font-weight: 600; color: #cba6f7; background: #cba6f722; padding: 2px 4px; border-radius: 3px; flex-shrink: 0; }
+    .explore-api-url { font: 10px 'SF Mono', monospace; color: #a6adc8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .explore-api-content { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+    .explore-api-why { font-size: 10px; color: #6c7086; line-height: 1.4; white-space: normal; word-break: break-word; }
+    .explore-generate-result { margin-top: 10px; font-size: 11px; padding: 10px; border-radius: 4px; background: #11111b; border: 1px solid #313244; min-height: 180px; max-height: none; overflow-y: auto; }
+    .explore-generate-result pre { font: 10px/1.5 'SF Mono', monospace; color: #a6e3a1; white-space: pre-wrap; word-break: break-all; margin: 0; }
+    .action-capture-block { margin-top: 14px; }
+    .action-capture-title { font-size: 11px; font-weight: 600; color: #cdd6f4; margin-bottom: 6px; }
+    .action-capture-hint { font-size: 11px; color: #6c7086; line-height: 1.5; margin-bottom: 10px; }
+    .action-capture-grid { display: grid; grid-template-columns: 1fr 120px; gap: 10px; }
+    .action-capture-advanced { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #313244; }
+    .action-capture-advanced summary { cursor: pointer; color: #a6adc8; font-size: 11px; margin-bottom: 10px; }
+    .action-capture-status { margin-top: 10px; font-size: 11px; padding: 10px; border-radius: 4px; border: 1px solid #313244; background: #11111b; }
+    .action-capture-status.success { color: #a6e3a1; border-color: #a6e3a144; background: #a6e3a111; }
+    .action-capture-status.error { color: #f38ba8; border-color: #f38ba844; background: #f38ba811; }
+    .action-capture-status.loading { color: #cdd6f4; }
+    .action-capture-status pre { font: 10px/1.5 'SF Mono', monospace; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; color: inherit; }
+    .capture-review { display: flex; flex-direction: column; gap: 10px; color: #cdd6f4; }
+    .capture-review-title { font-size: 11px; font-weight: 600; color: inherit; }
+    .capture-review-summary { font-size: 11px; color: inherit; }
+    .capture-review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+    .capture-review-metric { border: 1px solid #313244; border-radius: 6px; padding: 8px; background: #181825; }
+    .capture-review-metric-label { font-size: 10px; color: #6c7086; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .capture-review-metric-value { font-size: 12px; font-weight: 600; color: #cdd6f4; word-break: break-all; }
+    .capture-review-section { border-top: 1px solid #313244; padding-top: 10px; }
+    .capture-review-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+    .capture-review-card { border: 1px solid #313244; border-radius: 6px; padding: 8px; background: #181825; }
+    .capture-review-card.is-primary { border-color: #89b4fa; box-shadow: inset 0 0 0 1px #89b4fa33; }
+    .capture-review-card-header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+    .capture-review-chip { font: 9px/1 'SF Mono', monospace; font-weight: 600; padding: 2px 4px; border-radius: 3px; background: #313244; color: #cdd6f4; }
+    .capture-review-chip.ok { background: #a6e3a122; color: #a6e3a1; }
+    .capture-review-chip.warn { background: #fab38722; color: #fab387; }
+    .capture-review-chip.error { background: #f38ba822; color: #f38ba8; }
+    .capture-review-card-title { font-size: 11px; font-weight: 600; color: #cdd6f4; word-break: break-all; }
+    .capture-review-kv { display: grid; grid-template-columns: 84px 1fr; gap: 4px 8px; font-size: 10.5px; margin-top: 6px; }
+    .capture-review-k { color: #6c7086; }
+    .capture-review-v { color: #cdd6f4; word-break: break-all; }
+    .capture-review-preview { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #313244; }
+    .capture-review-preview-label { font-size: 10px; color: #6c7086; margin-bottom: 4px; }
+    .capture-review-preview pre { margin: 0; font: 10px/1.5 'SF Mono', monospace; color: #a6adc8; white-space: pre-wrap; word-break: break-all; }
+
+    /* Config tab */
+    .config-stack { display: flex; flex-direction: column; gap: 14px; }
+    .config-card { background: #181825; border: 1px solid #313244; border-radius: 8px; padding: 14px; }
+    .config-title { font-size: 13px; font-weight: 600; color: #cdd6f4; margin-bottom: 6px; }
+    .config-desc { font-size: 11px; color: #a6adc8; line-height: 1.6; margin-bottom: 12px; }
+    .config-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .config-actions { display: flex; gap: 8px; margin-top: 4px; }
+    .config-status {
+      margin-top: 10px; font-size: 11px; padding: 10px; border-radius: 4px;
+      border: 1px solid #313244; background: #11111b; color: #cdd6f4;
+    }
+    .config-status.success { color: #a6e3a1; border-color: #a6e3a144; background: #a6e3a111; }
+    .config-status.error { color: #f38ba8; border-color: #f38ba844; background: #f38ba811; }
+    .config-status.loading { color: #cdd6f4; }
+    .config-meta { font-size: 10px; color: #6c7086; line-height: 1.6; margin-top: 10px; word-break: break-all; }
+
+    /* Modal */
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 100; display: flex; align-items: center; justify-content: center; }
+    .modal { background: #1e1e2e; border: 1px solid #313244; border-radius: 8px; width: 320px; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+    .modal-header { padding: 12px 14px; border-bottom: 1px solid #313244; display: flex; gap: 10px; align-items: flex-start; }
+    .modal-heading { flex: 1; min-width: 0; }
+    .modal-title { font: 13px/1.4 'SF Mono', monospace; font-weight: 600; color: #89b4fa; }
+    .modal-subtitle { margin-top: 4px; font-size: 11px; color: #a6adc8; line-height: 1.5; }
+    .modal-close { flex: none; width: 24px; height: 24px; border: none; border-radius: 4px; background: transparent; color: #a6adc8; font-size: 18px; line-height: 1; cursor: pointer; }
+    .modal-close:hover { background: #313244; color: #cdd6f4; }
+    .modal-body { padding: 14px; }
+    .form-group { margin-bottom: 12px; }
+    .form-label { display: block; font-size: 11px; font-weight: 600; color: #cdd6f4; margin-bottom: 4px; }
+    .form-hint { font-size: 10px; color: #6c7086; margin-top: 2px; }
+    .form-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .form-chip { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 999px; font-size: 10px; color: #a6adc8; background: #313244; border: 1px solid #45475a; }
+    .form-input { width: 100%; padding: 6px 8px; background: #313244; border: 1px solid #45475a; border-radius: 4px; font-size: 12px; color: #cdd6f4; }
+    .form-input.form-textarea { min-height: 92px; resize: vertical; font-family: 'SF Mono', Monaco, Consolas, monospace; line-height: 1.5; }
+    .form-input:focus { outline: none; border-color: #89b4fa; }
+    .modal-footer { padding: 10px 14px; border-top: 1px solid #313244; display: flex; gap: 8px; justify-content: flex-end; }
+    .btn-modal { padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer; border: none; }
+    .btn-modal.primary { background: #89b4fa; color: #1e1e2e; }
+    .btn-modal.primary:hover { background: #b4d0fb; }
+    .btn-modal.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-modal.cancel { background: #45475a; color: #cdd6f4; }
+    .result-box { margin-top: 12px; padding: 10px; border-radius: 4px; font: 11px/1.5 'SF Mono', monospace; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
+    .result-success { background: #a6e3a122; border: 1px solid #a6e3a144; color: #a6e3a1; }
+    .result-error { background: #f38ba822; border: 1px solid #f38ba844; color: #f38ba8; }
+
+    /* Footer */
+    .footer { padding: 8px 14px; border-top: 1px solid #313244; background: #181825; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .footer-status { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #6c7086; }
+    .footer-link { font-size: 11px; color: #6c7086; cursor: pointer; text-decoration: none; }
+    .footer-link:hover { color: #cdd6f4; }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
+      padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500;
+      background: #89b4fa; color: #1e1e2e; z-index: 9999;
+      opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+
+    /* Product UI refresh: lightweight design system overlay */
+    :root {
+      --surface-page: #f5f7fb;
+      --surface-panel: rgba(255, 255, 255, 0.94);
+      --surface-muted: #f8fafc;
+      --surface-raised: #ffffff;
+      --line-soft: #e6ebf2;
+      --line-strong: #d8e0eb;
+      --text-main: #172033;
+      --text-subtle: #5d6b82;
+      --text-muted: #8a97aa;
+      --brand: #1f6feb;
+      --brand-strong: #1557c0;
+      --brand-soft: #eaf2ff;
+      --success: #15803d;
+      --success-soft: #ecfdf3;
+      --warning: #b45309;
+      --warning-soft: #fff7ed;
+      --danger: #dc2626;
+      --danger-soft: #fef2f2;
+      --shadow-card: 0 10px 30px rgba(31, 45, 61, 0.08);
+      --shadow-float: 0 24px 60px rgba(15, 23, 42, 0.18);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+    }
+
+    body {
+      font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 20% -10%, rgba(31, 111, 235, 0.14), transparent 34%),
+        linear-gradient(180deg, #ffffff 0%, var(--surface-page) 34%, #eef3f9 100%);
+    }
+
+    .header {
+      padding: 13px 16px 11px;
+      background: rgba(255, 255, 255, 0.86);
+      border-bottom: 1px solid var(--line-soft);
+      backdrop-filter: blur(16px);
+    }
+    .header-logo {
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      box-shadow: 0 4px 12px rgba(31, 111, 235, 0.16);
+    }
+    .header h1 {
+      color: var(--text-main);
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+    .header-badge {
+      border: 1px solid transparent;
+      font-size: 10.5px;
+      font-weight: 650;
+    }
+    .badge-active { background: var(--success-soft); color: var(--success); border-color: #bbf7d0; }
+    .badge-active .dot { background: #22c55e; }
+    .badge-none { background: #eef2f7; color: var(--text-subtle); border-color: var(--line-soft); }
+    .badge-none .dot { background: #94a3b8; }
+
+    .tabs {
+      gap: 6px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.72);
+      border-bottom: 1px solid var(--line-soft);
+      backdrop-filter: blur(14px);
+    }
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      color: var(--text-subtle);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .tab:hover {
+      color: var(--text-main);
+      background: var(--surface-muted);
+      border-color: var(--line-soft);
+    }
+    .tab.active {
+      color: var(--brand);
+      background: var(--brand-soft);
+      border-color: #c7dcff;
+      box-shadow: 0 5px 14px rgba(31, 111, 235, 0.12);
+    }
+
+    .tab-panel { padding: 16px; }
+    .section-label {
+      color: var(--text-muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .tool-list { gap: 8px; }
+    .tool-item {
+      padding: 11px 12px;
+      border-radius: var(--radius-md);
+      background: var(--surface-panel);
+      border: 1px solid var(--line-soft);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+    }
+    .tool-item:hover {
+      background: #ffffff;
+      border-color: #c7dcff;
+      box-shadow: var(--shadow-card);
+      transform: translateY(-1px);
+    }
+    .tool-name {
+      color: var(--brand);
+      font-size: 12px;
+      letter-spacing: -0.01em;
+    }
+    .tool-desc { color: var(--text-subtle); font-size: 12px; }
+
+    .none-body {
+      margin-top: 18px;
+      padding: 34px 24px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-lg);
+      background: var(--surface-panel);
+      box-shadow: var(--shadow-card);
+    }
+    .none-title { color: var(--text-main); font-size: 15px; }
+    .none-desc { color: var(--text-subtle); font-size: 12.5px; }
+    .loading-box { color: var(--text-subtle); }
+    .spinner {
+      border-color: #dbe4ef;
+      border-top-color: var(--brand);
+    }
+
+    .btn-primary-full,
+    .btn-sm.primary,
+    .btn-modal.primary {
+      background: linear-gradient(135deg, var(--brand), #3b82f6);
+      color: #ffffff;
+      border: 1px solid rgba(21, 87, 192, 0.2);
+      box-shadow: 0 8px 18px rgba(31, 111, 235, 0.18);
+    }
+    .btn-primary-full:hover,
+    .btn-sm.primary:hover,
+    .btn-modal.primary:hover {
+      background: linear-gradient(135deg, var(--brand-strong), var(--brand));
+      box-shadow: 0 10px 22px rgba(31, 111, 235, 0.22);
+    }
+    .btn-sm,
+    .btn-modal {
+      min-height: 30px;
+      border-radius: var(--radius-sm);
+      font-weight: 650;
+      transition: transform 0.14s, box-shadow 0.14s, background 0.14s, border-color 0.14s;
+    }
+    .btn-sm:hover,
+    .btn-modal:hover {
+      transform: translateY(-1px);
+    }
+    .btn-sm.secondary,
+    .btn-modal.cancel {
+      background: #ffffff;
+      color: var(--text-subtle);
+      border: 1px solid var(--line-strong);
+    }
+    .btn-sm.secondary:hover,
+    .btn-modal.cancel:hover {
+      color: var(--text-main);
+      background: var(--surface-muted);
+      border-color: #cbd5e1;
+    }
+    .btn-sm:disabled,
+    .btn-primary-full:disabled,
+    .btn-modal.primary:disabled {
+      opacity: 0.55;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .dev-layout,
+    .dev-sidebar,
+    .dev-editor-tabs,
+    .dev-action-bar {
+      background: var(--surface-raised);
+      border-color: var(--line-soft);
+    }
+    .dev-sidebar-header,
+    .dev-sidebar-section {
+      color: var(--text-muted);
+      border-color: var(--line-soft);
+      background: var(--surface-muted);
+    }
+    .dev-sidebar-item {
+      color: var(--text-subtle);
+      border-color: var(--line-soft);
+    }
+    .dev-sidebar-item:hover {
+      background: var(--brand-soft);
+      color: var(--brand);
+    }
+    .dev-sidebar-item.active {
+      background: var(--brand-soft);
+      color: var(--brand);
+      border-left-color: var(--brand);
+    }
+    .dev-editor-tab {
+      color: var(--text-subtle);
+      border-color: var(--line-soft);
+    }
+    .dev-editor-tab:hover { color: var(--text-main); }
+    .dev-editor-tab.active {
+      color: var(--brand);
+      background: #ffffff;
+      border-bottom-color: var(--brand);
+    }
+
+    #devExploreSection {
+      padding: 18px !important;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden !important;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(245, 247, 251, 0.92)),
+        radial-gradient(circle at 90% 0%, rgba(31, 111, 235, 0.1), transparent 30%);
+    }
+    .dev-guide-header {
+      padding: 2px 2px 0;
+      margin-bottom: 16px;
+    }
+    .dev-guide-title {
+      color: var(--text-main);
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }
+    .dev-guide-desc {
+      color: var(--text-subtle);
+      font-size: 12.5px;
+      line-height: 1.65;
+    }
+    .dev-steps {
+      flex: none;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .dev-guide-header { flex: none; }
+    #devStepPanelExplore.active,
+    #devStepPanelCapture.active {
+      min-height: 0;
+      overflow-y: auto;
+    }
+    #devStepPanelGenerate.active {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+    #devStepPanelGenerate > .dev-step-card {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      flex-direction: column;
+    }
+    #devStepPanelGenerate .explore-generate-result:not([hidden]) {
+      flex: 1 1 240px;
+      min-height: 180px;
+      max-height: none;
+    }
+    @media (max-height: 680px) {
+      #devExploreSection { overflow-y: auto !important; }
+      #devStepPanelGenerate.active { flex: none; }
+      #devStepPanelGenerate .explore-generate-result:not([hidden]) {
+        min-height: 160px;
+        max-height: 42vh;
+      }
+    }
+    .dev-step {
+      position: relative;
+      overflow: hidden;
+      padding: 12px;
+      border-radius: var(--radius-md);
+      border-color: var(--line-soft);
+      background: rgba(255, 255, 255, 0.78);
+      color: var(--text-subtle);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+    }
+    .dev-step::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      height: 3px;
+      background: transparent;
+    }
+    .dev-step.active {
+      border-color: #bdd5ff;
+      background: #ffffff;
+      color: var(--text-main);
+      box-shadow: var(--shadow-card);
+    }
+    .dev-step.active::after { background: linear-gradient(90deg, var(--brand), #60a5fa); }
+    .dev-step.done {
+      border-color: #bbf7d0;
+      background: var(--success-soft);
+      color: var(--success);
+    }
+    .dev-step.done::after { background: #22c55e; }
+    .dev-step-index {
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .dev-step-title { color: inherit; font-size: 12.5px; }
+    .dev-step-desc { color: var(--text-muted); }
+
+    .dev-step-card,
+    .explore-result-card,
+    .config-card {
+      background: var(--surface-panel);
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+    }
+    .dev-step-card,
+    .config-card {
+      padding: 18px;
+    }
+    .dev-step-card-title,
+    .config-title {
+      color: var(--text-main);
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+    .dev-step-card-desc,
+    .config-desc,
+    .explore-reason {
+      color: var(--text-subtle);
+      font-size: 12.5px;
+      line-height: 1.65;
+    }
+    .explore-result-card { padding: 16px; }
+    .explore-badge {
+      border-radius: 999px;
+      padding: 3px 8px;
+      letter-spacing: 0.02em;
+    }
+    .explore-badge-api { background: var(--brand-soft); color: var(--brand); }
+    .explore-badge-ui { background: var(--warning-soft); color: var(--warning); }
+    .explore-badge-hybrid { background: #f5f3ff; color: #6d28d9; }
+    .explore-strategy { color: var(--text-main); font-size: 12px; }
+    .explore-stats { color: var(--text-muted); }
+    .explore-actions { flex-wrap: wrap; gap: 8px; }
+    .explore-api-list {
+      padding: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-md);
+      background: var(--surface-muted);
+    }
+    .explore-api-title {
+      color: var(--text-muted);
+      font-size: 11.5px;
+      letter-spacing: 0.03em;
+      margin-bottom: 8px;
+    }
+    .explore-api-item {
+      align-items: flex-start;
+      padding: 9px 0;
+      border-bottom-color: var(--line-soft);
+      font-size: 12px;
+    }
+    .explore-api-main {
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .explore-api-method {
+      color: #6d28d9;
+      background: #f5f3ff;
+      border-radius: 999px;
+      font-size: 10.5px;
+      line-height: 1.2;
+      padding: 3px 6px;
+      margin-top: 1px;
+    }
+    .explore-api-content {
+      gap: 4px;
+    }
+    .explore-api-url {
+      color: var(--text-main);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .explore-api-why {
+      color: var(--text-subtle);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .form-label {
+      color: var(--text-main);
+      font-size: 12px;
+    }
+    .form-hint {
+      color: var(--text-muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .form-chip {
+      color: var(--text-subtle);
+      background: var(--surface-muted);
+      border-color: var(--line-soft);
+    }
+    .form-input {
+      min-height: 36px;
+      padding: 8px 10px;
+      color: var(--text-main);
+      background: #ffffff;
+      border-color: var(--line-strong);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      font-family: inherit;
+      transition: border-color 0.14s, box-shadow 0.14s, background 0.14s;
+    }
+    .form-input:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.12);
+    }
+    .action-capture-advanced {
+      border-top-color: var(--line-soft);
+    }
+    .action-capture-advanced summary {
+      color: var(--brand);
+      font-weight: 650;
+    }
+    .action-capture-status,
+    .config-status,
+    .explore-generate-result,
+    .result-box {
+      background: var(--surface-muted);
+      border-color: var(--line-soft);
+      color: var(--text-main);
+      border-radius: var(--radius-md);
+    }
+    .action-capture-status.success,
+    .config-status.success,
+    .result-success {
+      background: var(--success-soft);
+      border-color: #bbf7d0;
+      color: var(--success);
+    }
+    .action-capture-status.error,
+    .config-status.error,
+    .result-error {
+      background: var(--danger-soft);
+      border-color: #fecaca;
+      color: var(--danger);
+    }
+    .capture-review { color: var(--text-main); }
+    .capture-review-metric,
+    .capture-review-card {
+      background: #ffffff;
+      border-color: var(--line-soft);
+      border-radius: var(--radius-md);
+    }
+    .capture-review-metric-label,
+    .capture-review-k,
+    .capture-review-preview-label {
+      color: var(--text-muted);
+    }
+    .capture-review-metric-value,
+    .capture-review-v,
+    .capture-review-card-title {
+      color: var(--text-main);
+    }
+    .capture-review-section,
+    .capture-review-preview {
+      border-color: var(--line-soft);
+    }
+    .capture-review-chip {
+      background: var(--surface-muted);
+      color: var(--text-subtle);
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+    }
+
+    .modal-overlay {
+      background: rgba(15, 23, 42, 0.28);
+      backdrop-filter: blur(10px);
+    }
+    .modal {
+      width: min(420px, calc(100vw - 28px));
+      max-height: 86vh;
+      background: #ffffff;
+      border-color: var(--line-soft);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-float);
+    }
+    .modal-header,
+    .modal-footer {
+      border-color: var(--line-soft);
+    }
+    .modal-title {
+      color: var(--brand);
+      font-size: 13px;
+    }
+    .modal-subtitle { color: var(--text-subtle); }
+    .modal-close {
+      color: var(--text-muted);
+      border-radius: var(--radius-sm);
+    }
+    .modal-close:hover {
+      color: var(--text-main);
+      background: var(--surface-muted);
+    }
+    .footer {
+      padding: 9px 14px;
+      background: rgba(255, 255, 255, 0.86);
+      border-top-color: var(--line-soft);
+      backdrop-filter: blur(14px);
+    }
+    .footer-status,
+    .footer-link {
+      color: var(--text-muted);
+    }
+    .footer-link:hover { color: var(--brand); }
+    .toast {
+      background: #172033;
+      color: #ffffff;
+      border-radius: 999px;
+      box-shadow: var(--shadow-float);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <!-- <img class="header-logo" src="../icons/icon48.png" alt="WebMCP" />
+    <h1>WebMCP Adapter123</h1> -->
+    <span class="header-badge badge-none" id="headerBadge">
+      <span class="dot"></span>
+      <span id="headerBadgeText">加载中</span>
+    </span>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-panel="panelUse">使用</div>
+    <div class="tab" data-panel="panelDev" data-dev-only hidden>生成</div>
+    <div class="tab" data-panel="panelConfig" data-dev-only hidden>配置</div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Use Tab -->
+    <div class="tab-panel active" id="panelUse">
+      <div id="useLoading" class="loading-box"><div class="spinner"></div><span>加载中…</span></div>
+      <div id="useActive" hidden>
+        <div class="section-label" id="useToolCount"></div>
+        <div class="tool-list" id="useToolList"></div>
+      </div>
+      <div id="useNone" hidden>
+        <div class="none-body">
+          <div class="none-icon">🔍</div>
+          <div class="none-title">此网站暂无适配器</div>
+          <div class="none-desc">切换到“生成”标签页，探索此网站并生成工具。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dev Tab -->
+    <div class="tab-panel" id="panelDev">
+
+      <!-- IDE Layout (when adapter exists) -->
+      <div id="devIdeLayout" class="dev-layout" hidden>
+        <!-- Sidebar: tool list -->
+        <div class="dev-sidebar">
+          <div class="dev-sidebar-header">工具 / 上下文</div>
+          <div class="dev-sidebar-list" id="devToolList"></div>
+        </div>
+        <!-- Editor area -->
+        <div class="dev-editor-area">
+          <div class="dev-editor-tabs">
+            <div class="dev-editor-tab active" data-file="code">index.js</div>
+            <div class="dev-editor-tab" data-file="tool" id="devToolFileTab" hidden>tool</div>
+            <div class="dev-editor-tab" data-file="manifest">manifest.json</div>
+            <div class="dev-editor-tab" data-file="skill" id="devSkillFileTab" hidden>SKILL.md</div>
+            <div class="dev-editor-tab" data-file="generatedSkill" id="devGeneratedSkillFileTab" hidden>生成Skill</div>
+            <div class="dev-editor-tab" data-file="knowledgeMarkdown" id="devKnowledgeMdFileTab" hidden>知识.md</div>
+            <div class="dev-editor-tab" data-file="knowledgeJson" id="devKnowledgeJsonFileTab" hidden>知识.json</div>
+          </div>
+          <div class="dev-editor-content">
+            <div class="code-editor-container" id="codeEditorContainer"></div>
+            <div class="code-editor-container" id="manifestEditorContainer" hidden></div>
+          </div>
+          <div class="dev-action-bar">
+            <button class="btn-sm primary" id="btnSave">保存</button>
+            <button class="btn-sm secondary" id="btnExploreFromDev">探索</button>
+            <span class="save-status" id="devSaveStatus"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Explore Section (guided public workflow) -->
+      <div id="devExploreSection" style="padding:14px;overflow-y:auto">
+        <div class="dev-guide-header">
+          <div>
+            <div class="dev-guide-title">生成网站工具</div>
+            <div class="dev-guide-desc">按步骤探索当前网站、按需录制一次操作，最后生成可在“使用”中调用的工具。</div>
+          </div>
+          <button class="btn-sm secondary dev-advanced-toggle" id="btnDevShowCode" hidden>高级：查看代码</button>
+        </div>
+        <div class="dev-steps">
+          <button type="button" class="dev-step active" id="devStepExplore" data-workflow-step="explore" aria-current="step">
+            <div class="dev-step-index">STEP 1</div>
+            <div class="dev-step-title">探索网站</div>
+            <div class="dev-step-desc">分析页面和接口</div>
+          </button>
+          <button type="button" class="dev-step" id="devStepCapture" data-workflow-step="capture">
+            <div class="dev-step-index">STEP 2</div>
+            <div class="dev-step-title">录制操作</div>
+            <div class="dev-step-desc">可跳过</div>
+          </button>
+          <button type="button" class="dev-step" id="devStepGenerate" data-workflow-step="generate">
+            <div class="dev-step-index">STEP 3</div>
+            <div class="dev-step-title">生成工具</div>
+            <div class="dev-step-desc">写入适配器</div>
+          </button>
+        </div>
+
+        <div class="dev-step-panel active" id="devStepPanelExplore">
+          <div id="exploreIdle" class="dev-step-card">
+            <div class="dev-step-card-title">探索当前网站</div>
+            <div class="dev-step-card-desc">系统会刷新当前页面并被动捕获 Fetch/XHR 接口，不会填写搜索框、点击分页或进入详情。需要搜索、筛选、翻页或业务动作时，请在下一步手动录制。</div>
+            <button class="btn-primary-full" id="btnExplore">开始探索</button>
+          </div>
+          <div id="exploreLoading" hidden>
+            <div class="loading-box"><div class="spinner"></div><span id="exploreLoadingText">正在分析页面…</span></div>
+          </div>
+          <div id="exploreResults" hidden>
+            <div class="explore-result-card">
+              <div class="explore-result-header">
+                <span class="explore-badge" id="exploreBadge"></span>
+                <span class="explore-strategy" id="exploreStrategy"></span>
+              </div>
+              <div class="explore-reason" id="exploreReason"></div>
+              <div class="explore-stats" id="exploreStats"></div>
+              <div class="explore-actions">
+                <button class="btn-sm primary" id="btnExploreWorkflow">捕获页面接口 →</button>
+                <button class="btn-sm secondary" id="btnExploreReset">重新分析</button>
+              </div>
+            </div>
+          </div>
+          <div id="exploreWorkflowResults" hidden>
+            <div class="explore-result-card">
+              <div class="explore-result-header">
+                <span class="explore-badge" id="exploreWfBadge"></span>
+                <span class="explore-strategy" id="exploreWfStrategy"></span>
+              </div>
+              <div class="explore-reason" id="exploreWfReason"></div>
+              <div class="explore-stats" id="exploreWfStats"></div>
+              <div id="exploreWfApiList" class="explore-api-list" hidden></div>
+              <div class="explore-actions">
+                <button class="btn-sm primary" id="btnGoCaptureStep">下一步：录制操作</button>
+                <button class="btn-sm secondary" id="btnExploreWfReset">重新分析</button>
+              </div>
+            </div>
+          </div>
+          <div id="exploreError" hidden>
+            <div class="explore-error-msg" id="exploreErrorText"></div>
+            <button class="btn-sm secondary" id="btnExploreRetry">重试</button>
+          </div>
+        </div>
+
+        <div class="dev-step-panel" id="devStepPanelCapture">
+          <div class="dev-step-card">
+            <div class="dev-step-card-title">录制一次关键操作</div>
+            <div class="dev-step-card-desc">如果需要搜索、筛选、翻页、查看详情，或预订、提交、取消等业务动作，请录制一次。填写操作名称后回到页面完成真实操作；如果初始化接口已经满足需求，可以跳过。</div>
+            <div class="action-capture-block" id="actionCaptureSection">
+              <div id="actionCaptureForm">
+                <div class="action-capture-grid">
+                  <div class="form-group">
+                    <label class="form-label" for="actionCaptureName">操作名称 *</label>
+                    <input class="form-input" id="actionCaptureName" type="text" placeholder="例如 搜索待办 / 翻到下一页 / 预订会议室" />
+                    <div class="form-hint">用于生成工具名称，建议描述一个明确业务动作。</div>
+                  </div>
+                </div>
+                <details class="action-capture-advanced">
+                  <summary>高级选项</summary>
+                  <div class="action-capture-grid">
+                    <div class="form-group">
+                      <label class="form-label" for="actionCaptureMode">捕获方式</label>
+                      <select class="form-input" id="actionCaptureMode">
+                        <option value="intercept">记录并放行真实请求</option>
+                        <option value="observe">仅观察请求</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label" for="actionCaptureTimeout">超时秒数</label>
+                      <input class="form-input" id="actionCaptureTimeout" type="number" min="5" max="300" value="60" />
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label" for="actionCapturePattern">匹配关键词</label>
+                      <input class="form-input" id="actionCapturePattern" type="text" placeholder="可选，例如 meetinginfo|getRooms" />
+                    </div>
+                  </div>
+                </details>
+                <div class="explore-actions">
+                  <button class="btn-sm primary" id="btnActionCaptureStart">开始录制操作</button>
+                  <button class="btn-sm secondary" id="btnActionCaptureStop" hidden>结束捕获</button>
+                  <button class="btn-sm secondary" id="btnSkipCapture">跳过，去生成工具</button>
+                  <button class="btn-sm secondary" id="btnActionCaptureReset">清空结果</button>
+                </div>
+              </div>
+              <div id="actionCaptureStatus" class="action-capture-status" hidden></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dev-step-panel" id="devStepPanelGenerate">
+          <div class="dev-step-card">
+            <div class="dev-step-card-title">生成网站工具</div>
+            <div class="dev-step-card-desc">将探索结果和录制结果生成到当前网站适配器。生成前会自动保存本次探索结果；同名工具会更新，其他已有工具会保留。</div>
+            <div class="explore-actions">
+              <button class="btn-sm primary" id="btnExploreGenerate">智能生成</button>
+              <button class="btn-sm secondary" id="btnExploreQuickGenerate">快速生成</button>
+              <button class="btn-sm secondary" id="btnExploreSave">仅保存探索结果</button>
+              <button class="btn-sm secondary" id="btnBackToCaptureStep">返回录制操作</button>
+            </div>
+            <div id="exploreSaveStatus" class="save-status" hidden></div>
+            <div id="exploreGenerateResult" class="explore-generate-result" hidden></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Config Tab -->
+    <div class="tab-panel" id="panelConfig">
+      <div class="config-stack">
+        <div class="config-card">
+          <div class="config-title">大模型配置</div>
+          <div class="config-desc">这里维护扩展和 bridge 共用的大模型配置。探索结果和操作录制结果都会优先走模型分析；如果模型不可用，再回退到规则分析。</div>
+          <div class="config-grid">
+            <div class="form-group">
+              <label class="form-label" for="configProvider">厂家</label>
+              <select class="form-input" id="configProvider">
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="zhipu">智谱</option>
+                <option value="qwen">千问</option>
+                <option value="custom">自定义</option>
+              </select>
+            </div>
+            <div class="form-group" id="configProtocolGroup" hidden>
+              <label class="form-label" for="configProtocol">接口协议</label>
+              <select class="form-input" id="configProtocol">
+                <option value="openai">OpenAI Compatible</option>
+                <option value="anthropic">Anthropic Messages</option>
+              </select>
+              <div class="form-hint">仅自定义厂家时需要指定协议类型。</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="configApiKey">API Key</label>
+              <input class="form-input" id="configApiKey" type="password" placeholder="填入可用的 API Key" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="configBaseUrl">Base URL</label>
+              <input class="form-input" id="configBaseUrl" type="text" placeholder="例如 https://api.openai.com/v1" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="configModel">Model</label>
+              <input class="form-input" id="configModel" type="text" placeholder="例如 claude-sonnet-4-6 / gpt-4.1-mini" />
+            </div>
+          </div>
+          <div class="config-actions">
+            <button class="btn-sm secondary" id="btnConfigReload">重新读取</button>
+            <button class="btn-sm secondary" id="btnConfigTest">测试配置</button>
+            <button class="btn-sm primary" id="btnConfigSave">保存配置</button>
+          </div>
+          <div class="config-status" id="configStatus" hidden></div>
+          <div class="config-meta" id="configMeta">配置文件：加载中…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="footer-status">
+      <span class="header-badge badge-none" id="wsBadge"><span class="dot"></span><span id="wsLabel">未连接</span></span>
+    </div>
+    <span class="footer-link" id="extVersionRight"></span>
+  </div>
+
+  <!-- Tool Test Modal -->
+  <div id="toolModal" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-heading">
+          <div class="modal-title" id="modalToolName"></div>
+          <div class="modal-subtitle" id="modalToolDesc" hidden></div>
+        </div>
+        <button class="modal-close" id="btnModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body"><div id="modalForm"></div><div id="modalResult" hidden></div></div>
+      <div class="modal-footer">
+        <button class="btn-modal cancel" id="btnModalCancel">取消</button>
+        <button class="btn-modal primary" id="btnModalExecute">执行</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <link rel="stylesheet" href="monaco.bundle.css">
+  <script src="monaco.bundle.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

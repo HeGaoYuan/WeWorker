@@ -1,0 +1,9 @@
+# Zhipu AI Chat Completions model with native JSON mode for agent actions.
+#
+# Required env: ZHIPUAI_API_KEY. ANTHROPIC_API_KEY is accepted temporarily for
+# migration from the prior Anthropic-compatible Zhipu configuration.
+
+model:
+  model_class: zhipu
+  model_name: glm-4.7
+  zhipu_endpoint: https://open.bigmodel.cn/api/paas/v4/chat/completions

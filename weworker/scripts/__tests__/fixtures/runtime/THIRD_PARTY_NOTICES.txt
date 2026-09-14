@@ -1,0 +1,8 @@
+This product includes modified software derived from Microsoft Webwright.
+CPython==3.14.6
+playwright==1.60.0
+pyinstaller==6.21.0
+License: GPL-2.0-or-later WITH Bootloader-exception
+certifi==2026.6.17
+certifi Source Code Form
+https://pypi.org/project/certifi/2026.6.17/#files

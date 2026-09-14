@@ -1,0 +1,108 @@
+name: Adapter 提议
+description: 提议支持一个新的公开网站或扩展现有 Adapter
+title: "[Adapter]: "
+labels: ["enhancement", "adapter"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本模板只接受公开网站提议。请勿提交内部系统、内网地址、真实账号、Cookie、Token、抓包文件或用户数据。
+
+        提议不代表项目会绕过网站访问控制。贡献者需要遵守目标网站服务协议和适用法律。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已检查 Adapter 状态清单和现有 Issue
+          required: true
+        - label: 目标是可公开访问的网站，不是内部或私有系统
+          required: true
+        - label: 本 Issue 不包含凭据、登录态、抓包内容或个人数据
+          required: true
+
+  - type: input
+    id: site_name
+    attributes:
+      label: 网站名称
+      placeholder: "例如：GitHub"
+    validations:
+      required: true
+
+  - type: input
+    id: public_url
+    attributes:
+      label: 公开网站地址
+      description: 只填写公开主页，不要填写带 Token、查询参数或账号信息的地址
+      placeholder: "https://example.com"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: change_type
+    attributes:
+      label: 提议类型
+      options:
+        - 新增 Adapter
+        - 扩展已有 Adapter
+        - 修复或重新实现已有 Adapter
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: 使用场景
+      description: 列出希望完成的具体用户任务
+      placeholder: |
+        - 搜索……
+        - 查看……
+        - 创建……
+    validations:
+      required: true
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: 是否需要登录
+      options:
+        - 不需要登录
+        - 需要普通账号登录
+        - 部分能力需要登录
+        - 不确定
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: sensitive_actions
+    attributes:
+      label: 可能产生外部影响的操作
+      options:
+        - label: 发送消息、邮件或评论
+        - label: 发布、修改或删除公开内容
+        - label: 下单、支付、退款或其他资金操作
+        - label: 上传、下载或删除文件
+        - label: 提交表单、申请或投递
+        - label: 修改账号、权限或安全设置
+
+  - type: textarea
+    id: confirmation
+    attributes:
+      label: 建议的确认边界
+      description: 哪些操作必须在执行前让用户核对并确认？
+
+  - type: textarea
+    id: public_references
+    attributes:
+      label: 公开参考资料
+      description: 可提供公开帮助文档或开发者文档；不要上传抓包、登录态或私有资料
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 参与意愿
+      options:
+        - label: 我愿意参与实现
+        - label: 我愿意协助测试
+        - label: 我只能提供需求反馈

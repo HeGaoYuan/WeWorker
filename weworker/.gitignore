@@ -1,0 +1,8 @@
+node_modules/
+build/
+dist-app/
+backend-ts/dist/
+renderer/node_modules/
+renderer/dist/
+backend/__pycache__/
+backend/*.spec.bak

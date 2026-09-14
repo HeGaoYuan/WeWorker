@@ -1,0 +1,76 @@
+{
+  "manifest_version": 3,
+  "name": "WeWorker Browser Adapter",
+  "version": "1.0.0",
+  "description": "WeWorker browser extension for exposing website tools to AI agents",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "nativeMessaging",
+    "storage",
+    "cookies",
+    "downloads",
+    "alarms",
+    "notifications",
+    "debugger",
+    "sidePanel",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/injector.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "WeWorker Browser Adapter",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "adapters/index.json",
+        "adapters/*/index.js",
+        "adapters/*/manifest.json",
+        "adapters/*/wecli.generated.json",
+        "adapters/*/SKILL.md",
+        "adapters/*/SKILL.generated.md",
+        "adapters/*/WEBCLI_KNOWLEDGE.json",
+        "adapters/*/WEBCLI_KNOWLEDGE.md",
+        "adapters/*/webcli-generated/*.js",
+        "adapters/*/webcli-generated/*.json",
+        "adapters/*/webcli-generated/*.md",
+        "adapters/*/webcli-generated/*.txt",
+        "adapters/*/webcli-generated/shared/*.js",
+        "adapters/*/webcli-generated/tools/*.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

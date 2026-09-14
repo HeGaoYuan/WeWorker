@@ -1,0 +1,17 @@
+{
+  "name": "weworker-metrics-server",
+  "version": "1.0.0",
+  "description": "Adapter 调用埋点服务端：接收 webcli 回调上报，集中存储与聚合查询",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "metrics-server": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

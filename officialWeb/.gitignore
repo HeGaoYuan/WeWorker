@@ -1,0 +1,8 @@
+node_modules
+dist
+*.7z
+
+# 安装包放入 public/downloads 本地托管；体积大默认不入库（见 public/downloads/README.md）
+public/downloads/*.exe
+public/downloads/*.dmg
+public/downloads/*.zip

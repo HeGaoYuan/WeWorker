@@ -1,0 +1,63 @@
+{
+  "id": "mail.163.com",
+  "name": "163邮箱",
+  "description": "网易163邮箱：读取邮件列表、搜索邮件、查看邮件详情、下载附件、写邮件",
+  "match": [
+    "mail.163.com"
+  ],
+  "requires_auth": true,
+  "version": "1.0.8",
+  "author": "webmcp-team",
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/mail.163.com",
+  "icon": "mailbox",
+  "scenarios": [
+    {
+      "id": "read-mail-list",
+      "title": "读取邮件列表",
+      "summary": "帮我看看有没有未读邮件",
+      "prompts": [
+        {
+          "text": "帮我看看有没有未读邮件",
+          "reply": "我会打开 163 邮箱，先查看收件箱和未读状态。\n如果有未读邮件，我会整理发件人、主题和时间；需要打开邮件确认内容时会先告诉你。"
+        }
+      ]
+    },
+    {
+      "id": "search-mail",
+      "title": "搜索邮件",
+      "summary": "在163 邮箱中按关键词搜索邮件"
+    },
+    {
+      "id": "view-mail-detail",
+      "title": "查看邮件详情",
+      "summary": "在163 邮箱中查看邮件详情"
+    },
+    {
+      "id": "download-attachment",
+      "title": "下载附件",
+      "summary": "打开163邮箱，下载我这个月收到的联通发票",
+      "prompts": [
+        {
+          "text": "打开163邮箱，下载我${这个月}收到的${发票}",
+          "reply": "我会打开 163 邮箱，按月份和发票关键词搜索邮件。\n找到附件后会下载到本地，并把下载结果和文件位置告诉你。"
+        }
+      ]
+    },
+    {
+      "id": "compose-mail",
+      "title": "写邮件",
+      "summary": "在163 邮箱中写邮件"
+    }
+  ],
+  "detail_description": "网易163邮箱可以让 WeWorker 根据你的自然语言指令处理邮件任务，例如查看邮件列表、搜索邮件、打开邮件详情、下载附件或撰写邮件。执行过程中如果需要登录、确认收件人、邮件内容或附件，会停下来等你确认。",
+  "test_prompts": [
+    "打开163邮箱，查看收件箱邮件列表，然后搜索关键词'test'，打开搜索结果中的第一封邮件查看详情"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "163邮箱",
+      "description": "网易163邮箱：读取邮件列表、搜索邮件、查看邮件详情、下载附件、写邮件"
+    }
+  },
+  "verified_on": "2026-03-21"
+}

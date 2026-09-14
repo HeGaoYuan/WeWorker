@@ -1,0 +1,172 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: 10 10 15;
+  --color-surface: 17 17 24;
+  --color-border: 30 30 46;
+  --color-accent: 99 102 241;
+  --color-accent-hover: 129 140 248;
+  --color-muted: 156 163 175;
+  --color-subtle: 75 85 99;
+  --color-text: 240 240 245;
+  --color-text-soft: 220 223 228;
+  --color-text-faint: 180 187 198;
+  --scroll-track: 10 10 15;
+  --scroll-thumb: 55 65 81;
+}
+
+[data-theme='light'] {
+  --color-bg: 248 250 252;
+  --color-surface: 255 255 255;
+  --color-border: 226 232 240;
+  --color-accent: 79 70 229;
+  --color-accent-hover: 67 56 202;
+  --color-muted: 71 85 105;
+  --color-subtle: 148 163 184;
+  --color-text: 15 23 42;
+  --color-text-soft: 30 41 59;
+  --color-text-faint: 100 116 139;
+  --scroll-track: 241 245 249;
+  --scroll-thumb: 148 163 184;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: rgb(var(--color-bg));
+  color: rgb(var(--color-text));
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* 全局细滚动条（含横向） */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--scroll-thumb) / 0.65) transparent;
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--scroll-thumb) / 0.55);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--scroll-thumb) / 0.85);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Markdown prose styles — explicit CJK stack so bold (700) renders visibly; Inter has no CJK masters */
+.prose-dark {
+  color: rgb(var(--color-text-soft));
+  line-height: 1.75;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  font-synthesis: weight;
+}
+.prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 { color: rgb(var(--color-text)); font-weight: 700; margin-top: 1.25em; margin-bottom: 0.4em; }
+.prose-dark h1 { font-size: 1.5rem; }
+.prose-dark h2 { font-size: 1.25rem; border-bottom: 1px solid rgb(var(--color-border)); padding-bottom: 0.4em; }
+.prose-dark h3 { font-size: 1.1rem; }
+.prose-dark p { margin-bottom: 0.6em; }
+.prose-dark ul, .prose-dark ol { padding-left: 1.5em; margin-bottom: 1em; }
+.prose-dark li { margin-bottom: 0.25em; list-style: disc; }
+.prose-dark code { background: rgb(var(--color-border)); color: rgb(var(--color-accent-hover)); padding: 0.15em 0.4em; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.875em; }
+.prose-dark pre { background: rgb(var(--color-surface)); border: 1px solid rgb(var(--color-border)); border-radius: 8px; padding: 1rem; overflow-x: auto; margin-bottom: 1em; position: relative; }
+.site-example-card { border: 1px solid rgb(var(--color-border)); background: rgb(var(--color-surface)); border-radius: 8px; margin-bottom: 1em; overflow: hidden; }
+.prose-dark .site-example-card__pre { white-space: pre; background: transparent; border: none; border-radius: 0; margin-bottom: 0; padding: 0.85rem 1rem; overflow-x: auto; }
+.prose-dark .site-example-card__prompt { border-bottom: 1px solid rgb(var(--color-border) / 0.7); }
+.prose-dark .site-example-card__label { color: rgb(var(--color-text-faint)); padding: 0.35rem 1rem 0; font-size: 0.75rem; line-height: 1.4; }
+.prose-dark pre .copy-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  padding: 0.3em;
+  color: rgb(var(--color-text-faint));
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s;
+}
+.prose-dark pre .copy-btn:hover { color: rgb(var(--color-accent)); }
+.prose-dark pre .copy-btn.copied { color: rgb(var(--color-accent)); }
+.prose-dark pre code { background: none; padding: 0; color: rgb(var(--color-text)); font-size: 0.875rem; }
+.prose-dark a { color: rgb(var(--color-accent)); text-decoration: none; }
+.prose-dark a:hover { text-decoration: underline; }
+.prose-dark blockquote { border-left: 3px solid rgb(var(--color-subtle)); padding-left: 1em; color: rgb(var(--color-text-faint)); margin: 1em 0; }
+.prose-dark table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+.prose-dark th, .prose-dark td { border: 1px solid rgb(var(--color-border)); padding: 0.5em 1em; text-align: left; }
+.prose-dark th { background: rgb(var(--color-surface)); color: rgb(var(--color-text)); }
+.prose-dark strong,
+.prose-dark b {
+  color: rgb(var(--color-text));
+  font-weight: 700;
+}
+.prose-dark details {
+  margin: 0.8em 0;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 0;
+  background: rgb(var(--color-surface));
+}
+.prose-dark details summary {
+  cursor: pointer;
+  padding: 0.6em 1em;
+  font-size: 0.875em;
+  font-weight: 600;
+  color: rgb(var(--color-text-soft));
+  user-select: none;
+  list-style: none;
+}
+.prose-dark details summary::before {
+  content: '▸ ';
+  color: rgb(var(--color-accent));
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.prose-dark details[open] summary::before {
+  content: '▾ ';
+}
+.prose-dark details > :not(summary) {
+  padding: 0 1em 0 2.5em;
+  font-size: 0.875em;
+  color: rgb(var(--color-text-soft));
+}
+.prose-dark img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgb(var(--color-border));
+  margin: 0.6em 0;
+  cursor: zoom-in;
+  transition: opacity 0.15s;
+}
+.prose-dark img:hover {
+  opacity: 0.85;
+}

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1280, initial-scale=1.0">
+    <title>WeWorker Social Preview</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            width: 1280px;
+            height: 640px;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .container {
+            width: 1120px;
+            height: 400px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 60px;
+            display: flex;
+            gap: 60px;
+        }
+        .logo {
+            width: 200px;
+            height: 200px;
+            background: white;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .logo-text {
+            font-size: 48px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 20px;
+        }
+        .title {
+            font-size: 72px;
+            font-weight: 700;
+            color: white;
+        }
+        .subtitle {
+            font-size: 32px;
+            font-weight: 400;
+            color: #a0a0a0;
+        }
+        .description {
+            font-size: 24px;
+            font-weight: 400;
+            color: #808080;
+            line-height: 1.5;
+        }
+        .badges {
+            display: flex;
+            gap: 16px;
+            margin-top: 20px;
+        }
+        .badge {
+            padding: 8px 20px;
+            border-radius: 15px;
+            font-size: 14px;
+            font-weight: 600;
+            color: white;
+        }
+        .badge-green {
+            background: #28a745;
+        }
+        .badge-blue {
+            background: #0366d6;
+        }
+        .footer {
+            position: absolute;
+            bottom: 40px;
+            right: 80px;
+            font-size: 18px;
+            color: #606060;
+        }
+        .decorative-circle {
+            position: absolute;
+            border-radius: 50%;
+            opacity: 0.3;
+        }
+        .circle-1 {
+            width: 600px;
+            height: 600px;
+            background: #0f3460;
+            top: -200px;
+            left: -200px;
+        }
+        .circle-2 {
+            width: 500px;
+            height: 500px;
+            background: #533483;
+            bottom: -200px;
+            right: -100px;
+            opacity: 0.2;
+        }
+    </style>
+</head>
+<body>
+    <div class="decorative-circle circle-1"></div>
+    <div class="decorative-circle circle-2"></div>
+
+    <div class="container">
+        <div class="logo">
+            <div class="logo-text">WeWorker</div>
+        </div>
+        <div class="content">
+            <div class="title">WeWorker</div>
+            <div class="subtitle">AI 驱动的网页自动化工具</div>
+            <div class="description">
+                通过浏览器扩展将网站操作封装为工具<br>
+                供 AI Agent 调用，实现对任意网站的自动化操控
+            </div>
+            <div class="badges">
+                <div class="badge badge-green">Apache 2.0</div>
+                <div class="badge badge-blue">GitHub</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">github.com/aiceflower/WeWorker</div>
+</body>
+</html>

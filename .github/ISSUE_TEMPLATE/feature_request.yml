@@ -1,0 +1,79 @@
+name: 功能建议
+description: 提出新的产品能力或现有功能改进
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提出建议。请描述问题和使用场景，而不只是实现方案。
+
+        新网站支持请优先使用“Adapter 提议”模板。请勿提交账号、Cookie、Token、抓包内容或内部系统资料。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue 和 Adapter 状态清单
+          required: true
+        - label: 这不是安全漏洞或包含敏感资料的请求
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 当前场景中遇到了什么困难？谁会从改进中受益？
+      placeholder: 当我需要……时，目前……，因此……
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 描述期望的用户体验；不要求提供完整技术设计
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+      description: 描述现有绕行方式或其他可能方案
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 相关组件
+      multiple: true
+      options:
+        - 桌面应用
+        - 浏览器扩展
+        - WebCLI
+        - 网站探索agent
+        - 定时任务或消息通知
+        - 官网或文档
+        - 构建与发布
+        - 不确定
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: 可能涉及的高影响变化
+      description: 不确定时可以不选，并在补充信息中说明
+      options:
+        - label: 新增或扩大浏览器权限
+        - label: 新增外部网络访问或第三方服务
+        - label: 新增或修改本地持久数据
+        - label: 修改 IPC、自动更新或安装包
+        - label: 新增依赖或运行时
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 可添加已脱敏的流程图、界面草图或公开参考链接

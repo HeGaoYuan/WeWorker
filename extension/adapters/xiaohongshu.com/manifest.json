@@ -1,0 +1,47 @@
+{
+  "id": "xiaohongshu.com",
+  "name": "小红书",
+  "description": "小红书：导航主页、按关键字搜索帖子",
+  "match": [
+    "xiaohongshu.com"
+  ],
+  "requires_auth": false,
+  "version": "1.0.8",
+  "author": "webmcp-team",
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/xiaohongshu.com",
+  "enabled": false,
+  "icon": "social",
+  "scenarios": [
+    {
+      "id": "search",
+      "title": "搜索笔记",
+      "summary": "按关键词搜索小红书笔记推荐",
+      "prompts": [
+        {
+          "text": "帮我在小红书搜索${好吃的蛋糕}推荐"
+        }
+      ]
+    },
+    {
+      "id": "trend",
+      "title": "发现流行",
+      "summary": "浏览近期热门内容与趋势",
+      "prompts": [
+        {
+          "text": "帮我看看小红书上最近流行什么"
+        }
+      ]
+    }
+  ],
+  "detail_description": "小红书可以让 WeWorker 根据你的自然语言指令浏览和搜索内容，例如打开首页、按关键词搜索笔记、查看搜索结果并整理相关信息。执行过程中如果需要登录、打开具体内容或进一步筛选，会停下来等你确认。",
+  "test_prompts": [
+    "打开小红书，搜索'蛋糕推荐'，告诉我搜索结果"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "小红书",
+      "description": "小红书：导航主页、按关键字搜索帖子"
+    }
+  },
+  "verified_on": "2026-03-10"
+}

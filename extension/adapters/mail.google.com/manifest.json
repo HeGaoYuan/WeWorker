@@ -1,0 +1,49 @@
+{
+  "id": "mail.google.com",
+  "name": "Gmail",
+  "description": "Gmail：读取邮件列表、搜索邮件、查看邮件详情、下载附件",
+  "match": [
+    "mail.google.com"
+  ],
+  "requires_auth": true,
+  "version": "1.0.8",
+  "author": "webmcp-team",
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/mail.google.com",
+  "enabled": false,
+  "icon": "mail",
+  "scenarios": [
+    {
+      "id": "inbox",
+      "title": "查收邮件",
+      "summary": "查看 Gmail 收件箱与未读邮件",
+      "prompts": [
+        {
+          "text": "帮我看看有没有未读邮件",
+          "reply": "我会打开 Gmail，先查看收件箱和未读状态。\n如果有未读邮件，我会整理发件人、主题和时间；需要打开某封邮件确认内容时会先告诉你。"
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "title": "搜索下载",
+      "summary": "按关键词搜索邮件并下载附件（如发票）",
+      "prompts": [
+        {
+          "text": "搜索最近收到的${发票}邮件",
+          "reply": "我会在 Gmail 中搜索最近收到的发票邮件，并检查匹配结果。\n如果找到附件，会帮你下载并说明文件位置；需要你确认时会停下来。"
+        }
+      ]
+    }
+  ],
+  "detail_description": "Gmail 可以让 WeWorker 根据你的自然语言指令处理邮件任务，例如查看收件箱和未读邮件、搜索邮件、打开邮件详情、整理关键信息或下载附件。执行过程中如果需要登录、打开特定邮件或确认附件内容，会停下来等你确认。",
+  "test_prompts": [
+    "打开 Gmail，查看收件箱邮件列表，然后搜索关键词'test'，打开搜索结果中的第一封邮件查看详情"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "Gmail",
+      "description": "Gmail：读取邮件列表、搜索邮件、查看邮件详情、下载附件"
+    }
+  },
+  "verified_on": "2026-02-24"
+}

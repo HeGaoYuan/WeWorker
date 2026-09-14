@@ -1,0 +1,10 @@
+{
+  "toolkit_id": "tianjin_property",
+  "name": "tianjin_property",
+  "description": "天津市不动产登记资料查询工具",
+  "allowed_domains": [
+    "jxd.ghhzrzy.tj.gov.cn"
+  ],
+  "created_at": "2026-07-15T00:00:00+08:00",
+  "updated_at": "2026-07-15T00:00:00+08:00"
+}

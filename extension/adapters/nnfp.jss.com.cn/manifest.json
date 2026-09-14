@@ -1,0 +1,47 @@
+{
+  "id": "nnfp.jss.com.cn",
+  "name": "诺诺网发票",
+  "description": "诺诺网发票平台：获取发票信息、下载 PDF/OFD/XML、自动下载并返回 QQ 邮箱",
+  "match": [
+    "nnfp.jss.com.cn"
+  ],
+  "requires_auth": true,
+  "version": "1.0.8",
+  "author": "webmcp-team",
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/nnfp.jss.com.cn",
+  "hidden": true,
+  "icon": "invoice",
+  "scenarios": [
+    {
+      "id": "download-pdf",
+      "title": "下载发票 PDF",
+      "summary": "在诺诺网发票页下载当前发票",
+      "prompts": [
+        {
+          "text": "在诺诺网发票页帮我下载当前发票为 PDF"
+        }
+      ]
+    },
+    {
+      "id": "from-mail",
+      "title": "邮件链接取票",
+      "summary": "从邮件中的诺诺链接打开并下载发票",
+      "prompts": [
+        {
+          "text": "从邮件里的诺诺链接打开后，帮我下载发票"
+        }
+      ]
+    }
+  ],
+  "detail_description": "诺诺网发票可以让 WeWorker 根据你的自然语言指令处理发票下载任务，例如读取当前发票信息、下载 PDF/OFD/XML 文件，或从邮件链接打开后完成发票下载并返回邮箱流程。涉及下载文件或跨系统跳转时，会停下来等你确认。",
+  "test_prompts": [
+    "打开诺诺网发票页面，获取发票信息，然后下载 PDF"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "诺诺网发票",
+      "description": "诺诺网发票平台：获取发票信息、下载 PDF/OFD/XML、自动下载并返回 QQ 邮箱"
+    }
+  },
+  "verified_on": "2026-04-08"
+}

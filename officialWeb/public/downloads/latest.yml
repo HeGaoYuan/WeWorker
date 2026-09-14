@@ -1,0 +1,8 @@
+version: 0.2.4
+files:
+  - url: WeWorker-0.2.4-win-x64.exe
+    sha512: NNPfIImdBoPwl1M7o9+vVvde9AJovjvuqCwIougNTLgWID0kzsTrB2/aCCFuDPcPtn5Ls0elxu+RJJhodiZ52g==
+    size: 248575543
+path: WeWorker-0.2.4-win-x64.exe
+sha512: NNPfIImdBoPwl1M7o9+vVvde9AJovjvuqCwIougNTLgWID0kzsTrB2/aCCFuDPcPtn5Ls0elxu+RJJhodiZ52g==
+releaseDate: '2026-07-13T06:47:00.234Z'

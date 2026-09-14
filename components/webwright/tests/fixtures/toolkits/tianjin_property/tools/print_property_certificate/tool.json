@@ -1,0 +1,10 @@
+{
+  "tool_id": "print_property_certificate",
+  "toolkit_id": "tianjin_property",
+  "name": "print_property_certificate",
+  "goal": "查询贷款用途的有／无产权证明并触发打印",
+  "start_url": "https://jxd.ghhzrzy.tj.gov.cn/personal/iebdc.html?isKstb#/newHome/newDashboard",
+  "expected_effect": "查询结果出现，并点击打印证明按钮",
+  "created_at": "2026-07-15T00:00:00+08:00",
+  "updated_at": "2026-07-15T00:00:00+08:00"
+}
