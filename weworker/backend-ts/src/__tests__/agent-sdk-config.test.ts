@@ -21,4 +21,13 @@ describe('agent SDK security config', () => {
     expect(agentSource).toContain("'AskUserQuestion'")
     expect(agentSource).toContain("WEWORKER_ADAPTERS_DIR: path.join(getUserDirectory(), '.claude', 'skills')")
   })
+
+  it('keeps conversation compaction isolated from runtime and long-term context', () => {
+    expect(agentSource).toContain('summarizeConversationOnly')
+    expect(agentSource).toContain("tools: []")
+    expect(agentSource).toContain('persistSession: false')
+    expect(agentSource).toContain("type: 'context_compaction_start'")
+    expect(agentSource).toContain("type: 'context_compaction_end'")
+    expect(agentSource).toContain('systemPrompt: contextAssembly.sdk.system_prompt')
+  })
 })

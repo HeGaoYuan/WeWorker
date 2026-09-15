@@ -70,11 +70,20 @@ function appendScopeFilter(
   }
 }
 
-function normalizeFtsQuery(value: string): string {
+function normalizeSearchText(value: string): string {
   return String(value || '')
-    .replace(/["'*:^(){}\[\]]/gu, ' ')
+    .replace(/["'*:^(){}\[\]\\.,;!?/|<>=+~#@`$%&-]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()
+}
+
+function normalizeFtsQuery(value: string): string {
+  const terms = normalizeSearchText(value)
+    .split(' ')
+    .filter((term) => [...term].length >= 3)
+  return terms
+    .map((term) => `"${term.replace(/"/gu, '""')}"`)
+    .join(' OR ')
 }
 
 export class MemoryStore {
@@ -269,10 +278,11 @@ export class MemoryStore {
     appendScopeFilter(clauses, values, 'project_scope', scope.project)
     appendScopeFilter(clauses, values, 'site_scope', scope.site)
     appendScopeFilter(clauses, values, 'extension_scope', scope.extension)
+    const searchText = normalizeSearchText(input.query)
     const ftsQuery = normalizeFtsQuery(input.query)
-    if (!ftsQuery) return []
-    if ([...ftsQuery].length < 3) {
-      const like = `%${ftsQuery}%`
+    if (!searchText) return []
+    if ([...searchText.replace(/\s/gu, '')].length < 3 || !ftsQuery) {
+      const like = `%${searchText}%`
       const rows = this.database.prepare(`
         SELECT m.*
         FROM memories m

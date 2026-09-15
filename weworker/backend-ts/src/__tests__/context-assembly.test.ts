@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 describe('context assembly', () => {
-  it('keeps the SDK prompt unchanged while classifying its sources', () => {
+  it('keeps conversation separate from long-term memory in the SDK request', () => {
     const systemPrompt = 'style rules\n---\nYou are WeWorker.\nNever expose secrets.'
     const result = buildContextAssembly({
       systemPrompt,
@@ -37,6 +37,19 @@ describe('context assembly', () => {
       result.snapshot.categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
     )
     expect(result.snapshot.context_limit).toBe(DEFAULT_CONTEXT_LIMIT)
+  })
+
+  it('places recalled memory in the system prompt instead of the compressible conversation', () => {
+    const result = buildContextAssembly({
+      systemPrompt: 'system rules',
+      identityPrompt: 'missing',
+      prompt: 'User: continue',
+      recalledMemory: 'workflow memory',
+    })
+
+    expect(result.sdk.system_prompt).toContain('[相关长期记忆]\nworkflow memory')
+    expect(result.sdk.prompt).toBe('User: continue')
+    expect(result.snapshot.categories.find((item) => item.id === 'long_term_memory')?.estimated_tokens).toBeGreaterThan(0)
   })
 
   it('falls back to classifying the full system prompt as rules when identity is absent', () => {

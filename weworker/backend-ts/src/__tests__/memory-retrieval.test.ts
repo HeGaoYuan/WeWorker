@@ -63,8 +63,8 @@ describe('long-term memory retrieval', () => {
 
     expect(firstResult.status).toBe('saved')
     expect(recalled.recalled).toContain('用户默认使用中文回复')
-    expect(assembled.sdk.prompt).toContain('[相关长期记忆]')
-    expect(assembled.sdk.prompt).toContain('用户默认使用中文回复')
+    expect(assembled.sdk.system_prompt).toContain('[相关长期记忆]')
+    expect(assembled.sdk.system_prompt).toContain('用户默认使用中文回复')
     secondSession.close()
     fs.rmSync(directory, { recursive: true, force: true })
   })
@@ -96,7 +96,7 @@ describe('long-term memory retrieval', () => {
     expect(result.map((memory) => memory.content)).toEqual(['用户默认使用中文回复'])
   })
 
-  it('formats recalled memory and injects it into the actual SDK prompt', () => {
+  it('formats recalled memory and injects it into the actual SDK system prompt', () => {
     const recalled = formatRecalledMemories([
       {
         id: 'memory-1',
@@ -114,8 +114,8 @@ describe('long-term memory retrieval', () => {
       sdkPrompt: '请继续',
     })
 
-    expect(result.sdk.prompt).toContain('用户默认使用中文回复')
-    expect(result.sdk.prompt).toContain('id=memory-1')
+    expect(result.sdk.system_prompt).toContain('用户默认使用中文回复')
+    expect(result.sdk.system_prompt).toContain('id=memory-1')
     expect(result.snapshot.categories.find((item) => item.id === 'long_term_memory')?.estimated_tokens).toBeGreaterThan(0)
   })
 
@@ -134,6 +134,26 @@ describe('long-term memory retrieval', () => {
       scope: { user: 'user-a', site: 'costplus' },
       store,
     }).recalled).toBe('')
+  })
+
+  it('recalls task execution memories when natural-language queries contain paths and punctuation', () => {
+    const store = createStore()
+    store.create({
+      type: 'task_execution',
+      key: 'powershell_markdown_audit_report',
+      content: 'PowerShell 读取 Markdown 文档，生成审计报告并写入 $env:TEMP。',
+      scope: { user: 'user-a' },
+      sourceEventId: 'event-path-query',
+    })
+
+    const query = '请再次完成 PowerShell Markdown 审计：读取 ROADMAP.md 和 docs\\memory_real_e2e_test_plan.md，生成报告并写入 $env:TEMP。'
+    expect(store.search({ query, scope: { user: 'user-a' } })).toMatchObject([{
+      key: 'powershell_markdown_audit_report',
+    }])
+
+    const recalled = recallLongTermMemory({ query, scope: { user: 'user-a' }, store })
+
+    expect(recalled.recalled).toContain('powershell_markdown_audit_report')
   })
 
   it('maps historical site_operation rows to task_execution during reads', () => {

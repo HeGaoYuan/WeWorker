@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { contextUsagePercent, formatContextTokens, normalizeContextSnapshot } from '../utils/context-snapshot.js'
+import { calibrateContextSnapshot, contextUsagePercent, formatContextTokens, normalizeContextSnapshot } from '../utils/context-snapshot.js'
 import { formatContextLimitInput, parseContextLimitInput } from '../utils/context-window.js'
 
 describe('context snapshot display helpers', () => {
@@ -14,12 +14,38 @@ describe('context snapshot display helpers', () => {
         { id: 'conversation', scope: 'work', estimated_tokens: 1200 },
         { id: 'unknown', estimated_tokens: 999 },
       ],
+      compaction: {
+        mode: 'conversation_only',
+        before_tokens: 900,
+        after_tokens: 300,
+        summarized_message_count: 4,
+        retained_message_count: 2,
+      },
     })
 
     assert.equal(snapshot.categories.length, 1)
     assert.equal(snapshot.phase, 'turn_end')
     assert.equal(snapshot.actual_input_tokens, 4200)
+    assert.equal(snapshot.compaction.mode, 'conversation_only')
+    assert.equal(snapshot.compaction.before_tokens, 900)
     assert.equal(contextUsagePercent(snapshot), 100)
+  })
+
+  it('calibrates category display values to the provider total', () => {
+    const snapshot = normalizeContextSnapshot({
+      estimated_total_tokens: 100,
+      context_limit: 1000,
+      categories: [
+        { id: 'rules', scope: 'runtime', estimated_tokens: 70 },
+        { id: 'conversation', scope: 'work', estimated_tokens: 30 },
+      ],
+    })
+    const calibrated = calibrateContextSnapshot(snapshot, 250)
+
+    assert.equal(calibrated.token_source, 'provider_calibrated')
+    assert.equal(calibrated.displayed_total_tokens, 250)
+    assert.equal(calibrated.categories[0].calibrated_tokens + calibrated.categories[1].calibrated_tokens, 250)
+    assert.equal(contextUsagePercent(calibrated), 25)
   })
 
   it('formats token counts for compact UI labels', () => {

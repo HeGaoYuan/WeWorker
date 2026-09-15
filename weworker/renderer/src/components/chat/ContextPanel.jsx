@@ -75,21 +75,26 @@ export default function ContextPanel({ snapshot }) {
               <div className="context-panel__title">上下文</div>
               <div className="context-panel__subtitle">
                 {normalized.phase === 'turn_end' ? '任务结束快照；' : '请求开始快照；'}
-                {normalized.actual_input_tokens == null
-                  ? '本地估算组成，不代表供应商逐项计量'
-                  : `本地估算组成；模型实际输入 ${formatContextTokens(normalized.actual_input_tokens)}`}
+                {normalized.token_source === 'provider_calibrated'
+                  ? `模型真实输入 ${formatContextTokens(normalized.actual_input_tokens)}；分类按本地比例校准`
+                  : '本地估算组成；等待模型真实 token'}
+                {normalized.compaction ? `；已压缩对话 ${formatContextTokens(normalized.compaction.before_tokens)}→${formatContextTokens(normalized.compaction.after_tokens)}` : ''}
               </div>
             </div>
             <button type="button" className="context-panel__close" onClick={() => setOpen(false)} aria-label="关闭上下文面板" title="关闭">×</button>
           </div>
           <div className="context-panel__summary">
             <span>{Math.round(percent)}% 已使用</span>
-            <span>~{formatContextTokens(normalized.estimated_total_tokens)} / {formatContextTokens(normalized.context_limit)} tokens</span>
+            <span>
+              {normalized.token_source === 'provider_calibrated' ? '' : '~'}
+              {formatContextTokens(normalized.displayed_total_tokens)} / {formatContextTokens(normalized.context_limit)} tokens
+            </span>
           </div>
           <div className="context-panel__bar" aria-hidden="true">
             {categories.map((item) => {
+              const displayedTokens = item.calibrated_tokens ?? item.estimated_tokens
               const width = normalized.context_limit > 0
-                ? (item.estimated_tokens / normalized.context_limit) * 100
+                ? (displayedTokens / normalized.context_limit) * 100
                 : 0
               return <span key={item.id} style={{ width: `${width}%`, background: CONTEXT_CATEGORY_META[item.id].color }} />
             })}
@@ -104,7 +109,7 @@ export default function ContextPanel({ snapshot }) {
                     <div className="context-panel__row" key={item.id}>
                       <span className="context-panel__swatch" style={{ background: meta.color }} aria-hidden="true" />
                       <span className="context-panel__name">{meta.label}</span>
-                      <span className="context-panel__tokens">{formatContextTokens(item.estimated_tokens)}</span>
+                      <span className="context-panel__tokens">{formatContextTokens(item.calibrated_tokens ?? item.estimated_tokens)}</span>
                     </div>
                   )
                 })}

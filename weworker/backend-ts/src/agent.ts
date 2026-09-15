@@ -31,9 +31,16 @@ import {
   buildContextAssembly,
   buildEnabledSkillIndex,
   createTurnContextCollector,
+  estimateContextTokens,
   recallLongTermMemory,
   type ContextSnapshot,
 } from './context-assembly.js'
+import {
+  buildCompactedConversationPrompt,
+  planConversationCompaction,
+  takeRecentWithinTokenBudget,
+} from './context/conversation-compaction.js'
+import type { ConversationCompactionSnapshot } from './context/context-types.js'
 import type { MemoryScope } from './memory/memory-types.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import {
@@ -119,7 +126,7 @@ export function buildConfiguredModelEnv(
 }
 
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'memory_status' | 'memory_candidate' | 'memory_parse'
+  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'context_compaction_start' | 'context_compaction_end' | 'memory_status' | 'memory_candidate' | 'memory_parse'
   content?: string
   id?: string
   name?: string
@@ -137,6 +144,7 @@ export interface SSEEvent {
   error?: string
   candidate?: MemoryUpdateCandidate
   memoryParse?: MemoryParseSummary
+  compaction?: Partial<ConversationCompactionSnapshot> & { status?: 'started' | 'completed' | 'failed'; error?: string }
 }
 
 /** Per-turn token & prompt-cache metrics, emitted once per streamChat turn. */
@@ -443,6 +451,51 @@ function getPackagedClaudeSetup(): { pathToClaudeCodeExecutable: string; executa
   return { pathToClaudeCodeExecutable: wrapperPath }
 }
 
+async function summarizeConversationOnly(input: {
+  conversation: string
+  settings: Settings
+  abortController?: AbortController
+  env: NodeJS.ProcessEnv
+  claudeSetup: { pathToClaudeCodeExecutable?: string; executable?: string }
+  spawnClaudeCodeProcess: (spawnArgs: ClaudeSpawnOptions) => SpawnedProcess
+}): Promise<string> {
+  const summaryQuery = query({
+    prompt: input.conversation,
+    options: {
+      abortController: input.abortController,
+      model: input.settings.model,
+      systemPrompt: [
+        '你正在执行 WeWorker 的对话上下文压缩。',
+        '只根据用户与助手的对话内容生成简洁、可继续执行的事实摘要。',
+        '保留用户目标、已经确认的事实、已完成或失败的步骤、重要参数、待处理事项和恢复线索。',
+        '不要加入系统规则、工具定义、Skills、长期记忆或对话之外的推断。',
+        '不要回答用户问题，不要输出标题、解释或元数据，只输出摘要正文。',
+      ].join('\n'),
+      tools: [],
+      settingSources: [],
+      persistSession: false,
+      maxTurns: 1,
+      permissionMode: 'dontAsk',
+      includePartialMessages: false,
+      cwd: getUserDirectory(),
+      pathToClaudeCodeExecutable: input.claudeSetup.pathToClaudeCodeExecutable,
+      spawnClaudeCodeProcess: input.spawnClaudeCodeProcess,
+      env: input.env,
+    },
+  })
+
+  try {
+    for await (const message of summaryQuery) {
+      if (message.type !== 'result') continue
+      const result = message as unknown as { subtype?: string; result?: string }
+      if (result.subtype === 'success' && typeof result.result === 'string') return result.result.trim()
+    }
+  } finally {
+    summaryQuery.close()
+  }
+  return ''
+}
+
 function stringifyPromptValue(value: unknown): string {
   if (value == null || value === '') return ''
   if (typeof value === 'string') return value
@@ -598,6 +651,29 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       return
     }
 
+    return
+  }
+
+  if (msg.type === 'system') {
+    const systemMessage = msg as unknown as {
+      subtype?: string
+      status?: string | null
+      compact_metadata?: { trigger?: 'manual' | 'auto'; pre_tokens?: number }
+    }
+    if (systemMessage.subtype === 'status' && systemMessage.status === 'compacting') {
+      yield { type: 'context_compaction_start', compaction: { status: 'started' } }
+    } else if (systemMessage.subtype === 'compact_boundary') {
+      yield {
+        type: 'context_compaction_end',
+        compaction: {
+          status: 'completed',
+          ...(systemMessage.compact_metadata?.trigger ? { mode: 'conversation_only' } : {}),
+          ...(Number.isFinite(systemMessage.compact_metadata?.pre_tokens)
+            ? { before_tokens: systemMessage.compact_metadata?.pre_tokens }
+            : {}),
+        },
+      }
+    }
     return
   }
 
@@ -833,10 +909,10 @@ export async function* streamChat(
     zcfCustomRoles: settings.zcf_custom_roles,
     memoryProtocol,
   })
-  const contextAssembly = buildContextAssembly({
+  const buildAssembly = (conversationPrompt: string, compaction?: ConversationCompactionSnapshot) => buildContextAssembly({
     systemPrompt,
     identityPrompt,
-    prompt,
+    prompt: conversationPrompt,
     toolDefinitions: [
       `Claude Code 原生 ${nativeCommandTool}`,
       'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
@@ -846,7 +922,83 @@ export async function* streamChat(
     subagentDefinitions: '',
     recalledMemory: longTermMemory.recalled,
     contextLimit: settings.context_limit,
+    compaction,
   })
+  const fullContextAssembly = buildAssembly(prompt)
+  const nonConversationTokens = fullContextAssembly.snapshot.categories
+    .filter((item) => item.id !== 'conversation')
+    .reduce((sum, item) => sum + item.estimated_tokens, 0)
+  const conversationTokens = fullContextAssembly.snapshot.categories
+    .find((item) => item.id === 'conversation')?.estimated_tokens ?? 0
+  const compactionPlan = planConversationCompaction({
+    contextLimit: fullContextAssembly.snapshot.context_limit,
+    nonConversationTokens,
+    conversationTokens,
+  })
+  let contextAssembly = fullContextAssembly
+
+  if (compactionPlan.shouldCompact && messages.length > 1) {
+    const historyMessages = messages.slice(0, -1)
+    const currentMessage = messages[messages.length - 1]
+    const currentTokens = estimateContextTokens(messagePromptText(currentMessage))
+    const recentSelection = takeRecentWithinTokenBudget(
+      historyMessages,
+      Math.max(1, compactionPlan.targetTokens - currentTokens),
+      (message) => estimateContextTokens(messagePromptText(message)),
+    )
+    if (recentSelection.dropped.length > 0) {
+      const summarySource = recentSelection.dropped
+        .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${messagePromptText(message)}`)
+        .filter((text) => text.trim())
+        .join('\n\n')
+      const compactionBase = {
+        mode: 'conversation_only' as const,
+        before_tokens: conversationTokens,
+        after_tokens: 0,
+        summarized_message_count: recentSelection.dropped.length,
+        retained_message_count: recentSelection.retained.length + 1,
+      }
+      yield { type: 'context_compaction_start', compaction: { ...compactionBase, status: 'started' } }
+      try {
+        const summary = await summarizeConversationOnly({
+          conversation: summarySource,
+          settings,
+          abortController,
+          env: envWithWebcli,
+          claudeSetup,
+          spawnClaudeCodeProcess,
+        })
+        if (summary) {
+          const recentConversation = buildPromptString([...recentSelection.retained, currentMessage])
+          const compactedConversation = buildCompactedConversationPrompt({
+            summary: clampPromptText(summary, 16_000),
+            recentConversation,
+          })
+          const compactedPrompt = memoryEnabled
+            ? appendMemoryUserTurnReminder(compactedConversation)
+            : compactedConversation
+          const compaction = {
+            ...compactionBase,
+            after_tokens: estimateContextTokens(compactedPrompt),
+          }
+          contextAssembly = buildAssembly(compactedPrompt, compaction)
+          yield { type: 'context_compaction_end', compaction: { ...compaction, status: 'completed' } }
+        } else {
+          yield { type: 'context_compaction_end', compaction: { ...compactionBase, status: 'failed', error: '摘要器未返回内容' } }
+        }
+      } catch (error) {
+        if (abortController?.signal.aborted) throw error
+        yield {
+          type: 'context_compaction_end',
+          compaction: {
+            ...compactionBase,
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          },
+        }
+      }
+    }
+  }
   yield { type: 'context_snapshot', context: contextAssembly.snapshot }
   const turnContextCollector = createTurnContextCollector(contextAssembly.snapshot)
 
@@ -855,7 +1007,7 @@ export async function* streamChat(
     options: {
       abortController,
       model: settings.model,
-      systemPrompt,
+      systemPrompt: contextAssembly.sdk.system_prompt,
       mcpServers: { weworker: mcpServer },
       disallowedTools,
       canUseTool,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assembleContext,
   buildTurnEndContextSnapshot,
+  calibrateContextSnapshot,
   createTurnContextCollector,
 } from '../context/context-assembler.js'
 import { createLongTermMemoryContext } from '../context/long-term-context.js'
@@ -58,6 +59,26 @@ describe('context providers', () => {
     expect(endConversation.estimated_tokens).toBeGreaterThan(startConversation.estimated_tokens)
     expect(end.estimated_total_tokens).toBeGreaterThan(start.estimated_total_tokens)
     expect(start.phase).toBe('request_start')
+  })
+
+  it('calibrates category values to the provider total while preserving local proportions', () => {
+    const start = assembleContext({
+      runtime: createRuntimeContext({ systemPrompt: 'rules', identityPrompt: '' }),
+      work: createWorkContext({ conversation: '当前任务' }),
+      longTerm: createLongTermMemoryContext({ recalledMemory: '可复用长期经验' }),
+      sdkSystemPrompt: 'rules',
+      sdkPrompt: '当前任务',
+    }).snapshot
+
+    const calibrated = calibrateContextSnapshot(start, 101)
+    const categoryTotal = calibrated.categories.reduce((sum, item) => sum + (item.calibrated_tokens ?? 0), 0)
+
+    expect(calibrated.token_source).toBe('provider_calibrated')
+    expect(calibrated.displayed_total_tokens).toBe(101)
+    expect(calibrated.actual_input_tokens).toBe(101)
+    expect(categoryTotal).toBe(101)
+    expect(calibrated.categories.find((item) => item.id === 'long_term_memory')?.calibrated_tokens).toBeGreaterThan(0)
+    expect(start.categories.every((item) => item.calibrated_tokens === undefined)).toBe(true)
   })
 
   it('collects one assistant turn and emits its end snapshot before done', () => {

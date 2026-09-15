@@ -3,6 +3,7 @@ import type {
   ContextAssembly,
   ContextCategoryId,
   ContextCategorySnapshot,
+  ConversationCompactionSnapshot,
   ContextSnapshot,
   LongTermMemoryContext,
   RuntimeContext,
@@ -46,11 +47,40 @@ function category(id: ContextCategoryId, scope: ContextCategorySnapshot['scope']
   return { id, scope, estimated_tokens: estimateContextTokens(text) }
 }
 
+function allocateCalibratedTokens(categories: ContextCategorySnapshot[], actualTotal: number): ContextCategorySnapshot[] {
+  const estimatedTotal = categories.reduce((sum, item) => sum + item.estimated_tokens, 0)
+  if (estimatedTotal <= 0) return categories.map((item) => ({ ...item, calibrated_tokens: 0 }))
+
+  const allocations = categories.map((item, index) => {
+    const exact = actualTotal * item.estimated_tokens / estimatedTotal
+    return { index, exact, whole: Math.floor(exact), remainder: exact - Math.floor(exact) }
+  })
+  let remaining = actualTotal - allocations.reduce((sum, item) => sum + item.whole, 0)
+  allocations.sort((left, right) => right.remainder - left.remainder || left.index - right.index)
+  for (let index = 0; index < remaining; index += 1) allocations[index % allocations.length].whole += 1
+  allocations.sort((left, right) => left.index - right.index)
+  return categories.map((item, index) => ({ ...item, calibrated_tokens: allocations[index].whole }))
+}
+
+export function calibrateContextSnapshot(snapshot: ContextSnapshot, actualInputTokens?: number): ContextSnapshot {
+  const actualTotal = Number(actualInputTokens)
+  if (!Number.isFinite(actualTotal)) return snapshot
+  const normalizedActualTotal = Math.max(0, Math.round(actualTotal))
+  return {
+    ...snapshot,
+    actual_input_tokens: normalizedActualTotal,
+    token_source: 'provider_calibrated',
+    displayed_total_tokens: normalizedActualTotal,
+    categories: allocateCalibratedTokens(snapshot.categories, normalizedActualTotal),
+  }
+}
+
 function createSnapshot(
   runtime: RuntimeContext,
   work: WorkContext,
   longTerm: LongTermMemoryContext,
   contextLimit: number,
+  compaction?: ConversationCompactionSnapshot,
 ): ContextSnapshot {
   const categories = [
     category('system_prompt', 'runtime', runtime.system_prompt),
@@ -69,6 +99,9 @@ function createSnapshot(
     estimated_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
     context_limit: contextLimit,
     categories,
+    token_source: 'estimated',
+    displayed_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
+    ...(compaction ? { compaction } : {}),
   }
 }
 
@@ -79,23 +112,25 @@ export function assembleContext(input: {
   sdkSystemPrompt: string
   sdkPrompt: string
   contextLimit?: number
+  compaction?: ConversationCompactionSnapshot
 }): ContextAssembly {
-  const sdkPrompt = input.longTerm.recalled
-    ? `[相关长期记忆]\n${input.longTerm.recalled}\n\n[当前任务上下文]\n${input.sdkPrompt}`
-    : input.sdkPrompt
+  const sdkSystemPrompt = input.longTerm.recalled
+    ? `${input.sdkSystemPrompt}\n\n[相关长期记忆]\n${input.longTerm.recalled}`
+    : input.sdkSystemPrompt
   return {
     runtime: input.runtime,
     work: input.work,
     long_term: input.longTerm,
     sdk: {
-      system_prompt: input.sdkSystemPrompt,
-      prompt: sdkPrompt,
+      system_prompt: sdkSystemPrompt,
+      prompt: input.sdkPrompt,
     },
     snapshot: createSnapshot(
       input.runtime,
       input.work,
       input.longTerm,
       input.contextLimit ?? DEFAULT_CONTEXT_LIMIT,
+      input.compaction,
     ),
   }
 }
@@ -113,13 +148,13 @@ export function buildTurnEndContextSnapshot(
       ? { ...item, estimated_tokens: item.estimated_tokens + assistantTokens }
       : { ...item }
   ))
-  return {
+  const snapshot: ContextSnapshot = {
     ...requestSnapshot,
     phase: 'turn_end',
     estimated_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
     categories,
-    ...(Number.isFinite(actualInputTokens) ? { actual_input_tokens: Math.max(0, Number(actualInputTokens)) } : {}),
   }
+  return calibrateContextSnapshot(snapshot, actualInputTokens)
 }
 
 export interface TurnContextEvent {

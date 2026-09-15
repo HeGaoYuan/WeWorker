@@ -54,8 +54,10 @@ export default function ChatView({ workId }) {
   const modeLabel = useZcfStore((s) => s.modeLabel)
   const [zcfNotice, setZcfNotice] = useState('')
   const [slowWarning, setSlowWarning] = useState(false)
+  const [conversationCompactionStatus, setConversationCompactionStatus] = useState(null)
   const slowTimerRef = useRef(null)
   const gotFirstEventRef = useRef(false)
+  const compactionNoticeTimerRef = useRef(null)
 
   const handleFillInput = (text) => {
     setInputText(text)
@@ -201,6 +203,23 @@ export default function ChatView({ workId }) {
         }
         if (event.type === 'context_snapshot') {
           useWorksStore.getState().setContextSnapshot(workId, event.context)
+          return
+        }
+        if (event.type === 'context_compaction_start' || event.type === 'context_compaction_end') {
+          if (compactionNoticeTimerRef.current) {
+            window.clearTimeout(compactionNoticeTimerRef.current)
+            compactionNoticeTimerRef.current = null
+          }
+          const status = event.type === 'context_compaction_start'
+            ? 'compacting'
+            : event.compaction?.status === 'failed' ? 'failed' : 'completed'
+          setConversationCompactionStatus(status)
+          if (status !== 'compacting') {
+            compactionNoticeTimerRef.current = window.setTimeout(() => {
+              setConversationCompactionStatus(null)
+              compactionNoticeTimerRef.current = null
+            }, 5000)
+          }
           return
         }
         if (event.type === 'usage') {
@@ -485,6 +504,17 @@ export default function ChatView({ workId }) {
     init()
   }, [workId])
 
+  useEffect(() => {
+    return () => {
+      if (slowTimerRef.current) window.clearTimeout(slowTimerRef.current)
+      if (compactionNoticeTimerRef.current) window.clearTimeout(compactionNoticeTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    setConversationCompactionStatus(null)
+  }, [workId])
+
   const shortId = workId?.slice(0, 8) || ''
   // Sum of all turn durations in this work (each assistant turn ends with a timing block)
   const taskTotalMs = messages.reduce(
@@ -566,6 +596,22 @@ export default function ChatView({ workId }) {
       {zcfNotice && (
         <div style={{ padding: '8px 20px', color: 'var(--accent)', fontSize: 12, background: 'color-mix(in srgb, var(--accent) 10%, transparent)' }}>
           {zcfNotice}
+        </div>
+      )}
+      {conversationCompactionStatus && (
+        <div
+          data-conversation-compaction-status={conversationCompactionStatus}
+          style={{
+            padding: '8px 20px',
+            color: conversationCompactionStatus === 'failed' ? 'var(--error)' : conversationCompactionStatus === 'completed' ? '#22c55e' : 'var(--accent)',
+            fontSize: 12,
+            background: conversationCompactionStatus === 'failed' ? 'rgba(248,113,113,0.1)' : conversationCompactionStatus === 'completed' ? 'rgba(34,197,94,0.1)' : 'rgba(99,102,241,0.1)',
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          {conversationCompactionStatus === 'compacting' && '⏳ 正在压缩对话上下文…'}
+          {conversationCompactionStatus === 'completed' && '✅ 对话上下文压缩完成'}
+          {conversationCompactionStatus === 'failed' && '⚠️ 对话上下文压缩失败，已继续使用原对话'}
         </div>
       )}
       {memoryStatus && memoryStatus.status !== 'not_applicable' && (

@@ -2,12 +2,14 @@ import { assembleContext } from './context/context-assembler.js'
 import { createLongTermMemoryContext } from './context/long-term-context.js'
 import { createRuntimeContext } from './context/runtime-context.js'
 import { createWorkContext } from './context/work-context.js'
+import type { ConversationCompactionSnapshot } from './context/context-types.js'
 
 export type {
   ContextAssembly,
   ContextCategoryId,
   ContextCategorySnapshot,
   ContextSnapshot,
+  ConversationCompactionSnapshot,
   ContextSnapshotPhase,
   LongTermMemoryContext,
   RuntimeContext,
@@ -33,6 +35,7 @@ export function buildContextAssembly(input: {
   subagentDefinitions?: string
   recalledMemory?: string
   contextLimit?: number
+  compaction?: ConversationCompactionSnapshot
 }) {
   return assembleContext({
     runtime: createRuntimeContext(input),
@@ -41,5 +44,6 @@ export function buildContextAssembly(input: {
     sdkSystemPrompt: input.systemPrompt,
     sdkPrompt: input.prompt,
     contextLimit: input.contextLimit,
+    compaction: input.compaction,
   })
 }

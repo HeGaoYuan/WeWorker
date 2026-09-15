@@ -2277,6 +2277,8 @@ app.post('/works/:id/chat', async (req, res) => {
         memoryCandidate = ev.candidate
       } else if (ev.type === 'memory_parse' && ev.memoryParse) {
         memoryParseOutcome = ev.memoryParse.outcome
+      } else if (ev.type === 'context_compaction_start' || ev.type === 'context_compaction_end') {
+        send(ev)
       } else if (ev.type === 'tool_call_start' && ev.id) {
         // Deduplicate: streaming mode sends tool_call_start twice (stream_event + assistant message)
         const isUpdate = toolCallMap.has(ev.id)

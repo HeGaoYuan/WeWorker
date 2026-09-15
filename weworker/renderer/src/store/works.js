@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
+import { calibrateContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
 
 const API = 'http://127.0.0.1:8765'
@@ -267,7 +268,7 @@ export const useWorksStore = create((set, get) => ({
       return {
         contextSnapshots: {
           ...s.contextSnapshots,
-          [workId]: { ...current, actual_input_tokens: Math.max(0, actualInputTokens) },
+          [workId]: calibrateContextSnapshot(current, actualInputTokens),
         },
       }
     })

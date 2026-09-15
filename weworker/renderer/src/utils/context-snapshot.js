@@ -24,6 +24,9 @@ export function normalizeContextSnapshot(snapshot) {
         id: item.id,
         scope: item.scope || CONTEXT_CATEGORY_META[item.id].scope,
         estimated_tokens: Math.max(0, Number(item.estimated_tokens) || 0),
+        calibrated_tokens: Number.isFinite(Number(item.calibrated_tokens))
+          ? Math.max(0, Number(item.calibrated_tokens))
+          : null,
       }))
     : []
   const estimatedTotal = Math.max(0, Number(snapshot.estimated_total_tokens) || 0)
@@ -36,7 +39,56 @@ export function normalizeContextSnapshot(snapshot) {
     actual_input_tokens: Number.isFinite(Number(snapshot.actual_input_tokens))
       ? Math.max(0, Number(snapshot.actual_input_tokens))
       : null,
+    token_source: snapshot.token_source === 'provider_calibrated' ? 'provider_calibrated' : 'estimated',
+    displayed_total_tokens: Number.isFinite(Number(snapshot.displayed_total_tokens))
+      ? Math.max(0, Number(snapshot.displayed_total_tokens))
+      : estimatedTotal,
+    compaction: snapshot.compaction && snapshot.compaction.mode === 'conversation_only'
+      ? {
+          mode: 'conversation_only',
+          before_tokens: Math.max(0, Number(snapshot.compaction.before_tokens) || 0),
+          after_tokens: Math.max(0, Number(snapshot.compaction.after_tokens) || 0),
+          summarized_message_count: Math.max(0, Number(snapshot.compaction.summarized_message_count) || 0),
+          retained_message_count: Math.max(0, Number(snapshot.compaction.retained_message_count) || 0),
+        }
+      : null,
     categories,
+  }
+}
+
+export function calibrateContextSnapshot(snapshot, actualInputTokens) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot
+  const actualTotal = Number(actualInputTokens)
+  if (!Number.isFinite(actualTotal)) return snapshot
+  const normalizedActualTotal = Math.max(0, Math.round(actualTotal))
+  const categories = Array.isArray(snapshot.categories) ? snapshot.categories : []
+  const estimatedTotal = categories.reduce((sum, item) => sum + (Math.max(0, Number(item.estimated_tokens) || 0)), 0)
+  if (estimatedTotal <= 0) {
+    return {
+      ...snapshot,
+      actual_input_tokens: normalizedActualTotal,
+      token_source: 'provider_calibrated',
+      displayed_total_tokens: normalizedActualTotal,
+      categories: categories.map((item) => ({ ...item, calibrated_tokens: 0 })),
+    }
+  }
+
+  const allocations = categories.map((item, index) => {
+    const exact = normalizedActualTotal * Math.max(0, Number(item.estimated_tokens) || 0) / estimatedTotal
+    const whole = Math.floor(exact)
+    return { index, whole, remainder: exact - whole }
+  })
+  let remaining = normalizedActualTotal - allocations.reduce((sum, item) => sum + item.whole, 0)
+  allocations.sort((left, right) => right.remainder - left.remainder || left.index - right.index)
+  for (let index = 0; index < remaining; index += 1) allocations[index % allocations.length].whole += 1
+  allocations.sort((left, right) => left.index - right.index)
+
+  return {
+    ...snapshot,
+    actual_input_tokens: normalizedActualTotal,
+    token_source: 'provider_calibrated',
+    displayed_total_tokens: normalizedActualTotal,
+    categories: categories.map((item, index) => ({ ...item, calibrated_tokens: allocations[index].whole })),
   }
 }
 
@@ -49,5 +101,8 @@ export function formatContextTokens(value) {
 
 export function contextUsagePercent(snapshot) {
   if (!snapshot) return 0
-  return Math.min(100, Math.max(0, (snapshot.estimated_total_tokens / snapshot.context_limit) * 100))
+  const displayedTotal = Number.isFinite(Number(snapshot.displayed_total_tokens))
+    ? Number(snapshot.displayed_total_tokens)
+    : snapshot.estimated_total_tokens
+  return Math.min(100, Math.max(0, (displayedTotal / snapshot.context_limit) * 100))
 }
