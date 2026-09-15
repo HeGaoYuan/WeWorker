@@ -26,7 +26,7 @@ async function simulateUserTurn(input: {
   })
 }
 
-function promptForNewConversation(store: MemoryStore, userMessage: string, scope: MemoryScope): string {
+function systemPromptForNewConversation(store: MemoryStore, userMessage: string, scope: MemoryScope): string {
   const longTerm = recallLongTermMemory({ query: userMessage, scope, store })
   return assembleContext({
     runtime: createRuntimeContext({ systemPrompt: '你是 WeWorker。', identityPrompt: '' }),
@@ -34,7 +34,7 @@ function promptForNewConversation(store: MemoryStore, userMessage: string, scope
     longTerm: createLongTermMemoryContext({ recalledMemory: longTerm.recalled }),
     sdkSystemPrompt: '你是 WeWorker。',
     sdkPrompt: `User: ${userMessage}`,
-  }).sdk.prompt
+  }).sdk.system_prompt
 }
 
 describe('真实用户输入记忆场景', () => {
@@ -57,7 +57,7 @@ describe('真实用户输入记忆场景', () => {
       },
     })
 
-    const nextConversationPrompt = promptForNewConversation(store, '帮我看看今天有哪些待处理事项。', scope)
+    const nextConversationPrompt = systemPromptForNewConversation(store, '帮我看看今天有哪些待处理事项。', scope)
 
     expect(result.status).toBe('saved')
     expect(nextConversationPrompt).toContain('用户默认使用中文，回复尽量简洁。')
@@ -82,7 +82,7 @@ describe('真实用户输入记忆场景', () => {
       },
     })
 
-    const nextConversationPrompt = promptForNewConversation(store, '帮我提交这张团建发票。', scope)
+    const nextConversationPrompt = systemPromptForNewConversation(store, '帮我提交这张团建发票。', scope)
 
     expect(result.status).toBe('saved')
     expect(nextConversationPrompt).toContain('先选择费用归属，再上传发票')
@@ -124,7 +124,7 @@ describe('真实用户输入记忆场景', () => {
       },
     })
 
-    const nextConversationPrompt = promptForNewConversation(store, '请继续整理 支持工单示例 待办工单。', scope)
+    const nextConversationPrompt = systemPromptForNewConversation(store, '请继续整理 支持工单示例 待办工单。', scope)
 
     expect(failed.status).toBe('saved')
     expect(recovered.status).toBe('saved')
@@ -162,7 +162,7 @@ describe('真实用户输入记忆场景', () => {
       },
     })
 
-    const nextConversationPrompt = promptForNewConversation(store, '请介绍一下这个项目。', scope)
+    const nextConversationPrompt = systemPromptForNewConversation(store, '请介绍一下这个项目。', scope)
 
     expect(first.status).toBe('saved')
     expect(second.status).toBe('saved')
@@ -190,7 +190,7 @@ describe('真实用户输入记忆场景', () => {
       },
     })
 
-    const otherUserPrompt = promptForNewConversation(store, '帮我提交这份申请。', otherScope)
+    const otherUserPrompt = systemPromptForNewConversation(store, '帮我提交这份申请。', otherScope)
 
     expect(ordinaryMessage).toBe('请帮我查一下今天的发票。')
     expect(otherUserPrompt).not.toContain('用户提交前需要确认。')
