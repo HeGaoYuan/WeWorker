@@ -29,6 +29,8 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 - Windows 解密工具改由 `uv` 创建隔离、固定版本的构建环境，不再依赖系统 Python 预装 PyInstaller/pywin32。
 - 已从清理后的公开 `main` 创建全新本地 `develop`，旧仓库 `develop` 仅作为只读迁移来源。
 - 首个低风险增量已迁入：Backend 显式固定 `@emnapi/runtime` 构建依赖，不涉及业务配置或内部资产。
+- 旧 `develop` 中的通用上下文与记忆能力已迁入公开 `develop`：Prompt 外置、长期记忆存储/召回、记忆准入与执行证据、对话上下文压缩、上下文用量面板、已加载 Skill 指令连续性。
+- Backend 关键运行依赖已从浮动版本调整为固定版本，并补齐 `@emnapi/runtime` optional lock 元数据，提升 Windows 构建可复现性。
 
 ## 验证结果
 
@@ -44,6 +46,8 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 - Extension manifest 跨域授权聚焦测试通过；公开 Profile 成功生成 4 个实际打包 Adapter。
 - Windows 解密工具在隔离环境中成功生成 `sd_decrypt.exe`。
 - `@emnapi/runtime` 固定版本迁移后，Backend TypeScript 生产构建通过，Git 差异格式检查通过。
+- 上下文与记忆迁移后，Backend TypeScript 生产构建通过，Renderer 生产构建通过。
+- 记忆、上下文压缩、上下文快照、Skill 连续性与 Windows 原生命令文案聚焦测试通过；Backend 全量测试为 414/421 通过，剩余 3 个失败为既有 mock/Windows 超时问题。
 
 ## 进行中
 
@@ -51,7 +55,7 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 
 ## 待办
 
-- 迁移上下文与记忆、网站探索、API 探索和 WebCLI 等公共候选模块，并完成对应测试与构建验证。
+- 迁移网站探索、API 探索和 WebCLI 等公共候选模块，并完成对应测试与构建验证。
 - 为公开发布配置新的下载地址、指标服务和发布流程。
 - 在目标平台完成 Windows x64、macOS arm64 与 macOS x64 安装包验收。
 
