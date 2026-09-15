@@ -94,7 +94,9 @@ export async function runChannelChat(
     memoryScope: opts?.memoryScope,
     channelAskUserHandler: opts?.askUserHandler,
   })) {
-    if (event.type === 'text_delta' && event.content) {
+    if (event.type === 'skill_context' && event.skillContext) {
+      toolCalls.push(event.skillContext)
+    } else if (event.type === 'text_delta' && event.content) {
       text += event.content
     } else if (event.type === 'tool_call_start' && event.id) {
       const isNew = !seenToolIds.has(event.id)

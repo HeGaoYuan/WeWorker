@@ -115,7 +115,8 @@ describe('System Prompt - complete output contract before externalization', () =
       ## 能力范围
 
       你通过 webcli 命令行工具调用 Extension Adapter 与 Toolkit Adapter，能够在网页上执行操作。
-      当用户提到某个网站时，你应该激活对应的 Skill 来了解该网站支持的工具和操作方式。
+      优先使用当前上下文已有的 Skill 说明和工具参数；相关说明缺失、不完整或已失效时，再激活对应 Skill。不要仅因为用户发起了新一轮对话就重复加载。
+      如果上下文已提供当前版本的完整说明，而其中没有某项能力或字段，应按未提供处理；不要为寻找同一缺失信息重复读取同一版本的说明。
       所有网站工具通过Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`调用。
       对于 Skill 中同时标记为 \`Execution: type=api, runtime=background\` 和 \`Execution: mode=direct\` 的工具，它们是无需 DOM 的 API 工具，必须直接调用，不需要先打开对应网站。旧 Skill 如果只标记了 \`Execution: mode=direct\`，也按同样规则处理。
       对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先使用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=<url>\`打开该网站。
@@ -123,7 +124,7 @@ describe('System Prompt - complete output contract before externalization', () =
       ## 使用 webcli call 的规则
 
       当你需要操作某个网站时，按以下步骤进行：
-      1. 激活该网站对应的 Skill，查阅其中的工具列表和参数说明。
+      1. 查阅当前上下文中该网站的 Skill 工具列表和参数说明；缺失、不完整或已失效时再加载。
       2. 使用 Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`
       3. 使用完整工具名称，例如 \`jd.com.search_products\`。
       4. 参数直接使用 \`--key=value\`；数组和对象可使用 JSON 字面量，字段必须匹配 Skill 文档中的参数定义。
@@ -289,13 +290,14 @@ describe('System Prompt - complete output contract before externalization', () =
       ## 能力范围
 
       当前权限模式允许使用标准 Skill 和受控文件／Shell 工具，但不能执行 Extension Adapter 或 Toolkit Adapter。
-      当用户提到某个网站时，你应该激活对应的 Skill 来了解该网站支持的工具和操作方式。
+      优先使用当前上下文已有的 Skill 说明和工具参数；相关说明缺失、不完整或已失效时，再激活对应 Skill。不要仅因为用户发起了新一轮对话就重复加载。
+      如果上下文已提供当前版本的完整说明，而其中没有某项能力或字段，应按未提供处理；不要为寻找同一缺失信息重复读取同一版本的说明。
       Skill 可用于阅读说明，但不要执行其中的 Adapter 命令。
 
       ## 使用 webcli call 的规则
 
       当你需要操作某个网站时，按以下步骤进行：
-      1. 激活该网站对应的 Skill，查阅其中的工具列表和参数说明。
+      1. 查阅当前上下文中该网站的 Skill 工具列表和参数说明；缺失、不完整或已失效时再加载。
       2. 当前权限模式不能执行 Adapter；需要执行时明确说明需要 full 权限。
       3. 使用完整工具名称，例如 \`jd.com.search_products\`。
       4. 参数直接使用 \`--key=value\`；数组和对象可使用 JSON 字面量，字段必须匹配 Skill 文档中的参数定义。

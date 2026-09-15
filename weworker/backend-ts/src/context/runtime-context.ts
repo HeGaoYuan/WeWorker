@@ -7,6 +7,7 @@ export interface RuntimeContextInput {
   identityPrompt: string
   toolDefinitions?: string
   skillIndex?: string
+  loadedSkills?: string
   mcpDynamicTools?: string
   subagentDefinitions?: string
 }
@@ -30,7 +31,7 @@ export function createRuntimeContext(input: RuntimeContextInput): RuntimeContext
     system_prompt: classifiedSystem.system_prompt,
     rules: classifiedSystem.rules,
     tool_definitions: input.toolDefinitions ?? '',
-    skills: input.skillIndex ?? '',
+    skills: [input.skillIndex, input.loadedSkills].filter(Boolean).join('\n\n'),
     mcp_dynamic_tools: input.mcpDynamicTools ?? '',
     subagent_definitions: input.subagentDefinitions ?? '',
   }

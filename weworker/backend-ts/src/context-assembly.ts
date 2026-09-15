@@ -31,6 +31,7 @@ export function buildContextAssembly(input: {
   prompt: string
   toolDefinitions?: string
   skillIndex?: string
+  loadedSkills?: string
   mcpDynamicTools?: string
   subagentDefinitions?: string
   recalledMemory?: string
@@ -42,7 +43,7 @@ export function buildContextAssembly(input: {
     work: createWorkContext({ conversation: input.prompt }),
     longTerm: createLongTermMemoryContext({ recalledMemory: input.recalledMemory }),
     sdkSystemPrompt: input.systemPrompt,
-    sdkPrompt: input.prompt,
+    sdkPrompt: input.loadedSkills ? `${input.loadedSkills}\n\n${input.prompt}` : input.prompt,
     contextLimit: input.contextLimit,
     compaction: input.compaction,
   })

@@ -704,7 +704,9 @@ export class WecomChannel implements Channel {
         memoryScope: { user: `wecom:${userId}` },
         channelAskUserHandler: askUserHandler,
       })) {
-        if (event.type === 'text_delta' && event.content) {
+        if (event.type === 'skill_context' && event.skillContext) {
+          assistantContent.push(event.skillContext)
+        } else if (event.type === 'text_delta' && event.content) {
           fullText += event.content
           currentTextChunk += event.content
           // Flush to WeCom periodically to avoid flooding

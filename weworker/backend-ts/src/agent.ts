@@ -55,6 +55,7 @@ import {
 } from './memory/memory-extractor.js'
 import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic-auth.js'
 import { renderPrompt } from './prompt-loader.js'
+import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
 
 const log = createLogger('agent')
 
@@ -150,7 +151,8 @@ export function buildConfiguredModelEnv(
 }
 
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'context_compaction_start' | 'context_compaction_end' | 'memory_status' | 'memory_candidate' | 'memory_parse'
+  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'skill_context' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'context_compaction_start' | 'context_compaction_end' | 'memory_status' | 'memory_candidate' | 'memory_parse'
+  skillContext?: LoadedSkillContext
   content?: string
   id?: string
   name?: string
@@ -988,6 +990,13 @@ export async function* streamChat(
   }
 
   const memoryEnabled = opts.memoryEnabled !== false
+  const skillRoots = channelPermissionMode === 'qa_only' ? [] : [
+    path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
+    path.join(getUserDirectory(), '.claude', 'skills'),
+  ]
+  const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
+  const skillContextCollector = createSkillContextCollector(skillRoots)
+  log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
   const storedCompactedConversation = takeStoredCompactedConversation(opts.workId, messages.length)
   const latestMessage = messages[messages.length - 1]
   const promptRaw = storedCompactedConversation
@@ -1033,6 +1042,7 @@ export async function* streamChat(
       'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
     ].join('\n'),
     skillIndex: channelPermissionMode === 'qa_only' ? '' : buildEnabledSkillIndex(path.join(queryEnv.CLAUDE_CONFIG_DIR || '', 'skills')),
+    loadedSkills,
     mcpDynamicTools: getMcpToolDefinitionSummary(channelPermissionMode),
     subagentDefinitions: '',
     recalledMemory: longTermMemory.recalled,
@@ -1277,6 +1287,11 @@ export async function* streamChat(
         })
       }
       if (msg.type === 'assistant') assistantResponseCount += 1
+      for (const skillContext of skillContextCollector.observe(msg)) {
+        turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
+        log.info('skill_context_captured', { chars: skillContext.text.length })
+        yield { type: 'skill_context', skillContext }
+      }
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
         if (event.type === 'memory_parse') memoryParseCount += 1
         if (

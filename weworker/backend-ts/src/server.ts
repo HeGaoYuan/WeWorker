@@ -2363,7 +2363,9 @@ app.post('/works/:id/chat', async (req, res) => {
       memoryScope: initialMemoryScope,
       onAskUser: (event) => send(event),
     })) {
-      if (ev.type === 'text_delta' && ev.content) {
+      if (ev.type === 'skill_context' && ev.skillContext) {
+        assistantContent.push(ev.skillContext)
+      } else if (ev.type === 'text_delta' && ev.content) {
         send(ev)
         currentText += ev.content
       } else if (ev.type === 'memory_candidate' && ev.candidate) {

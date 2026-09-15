@@ -171,10 +171,13 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
   let assistantText = ''
   let actualInputTokens: number | undefined
   const toolCalls = new Map<string, { name: string; result?: string }>()
+  const skillTexts = new Map<string, string>()
 
   return {
     observe(event: TurnContextEvent): void {
-      if (event.type === 'text_delta' && event.content) {
+      if (event.type === 'skill_context' && event.id && event.content) {
+        skillTexts.set(event.id, event.content)
+      } else if (event.type === 'text_delta' && event.content) {
         assistantText += event.content
       } else if (event.type === 'tool_call_start' && event.id) {
         const existing = toolCalls.get(event.id)
@@ -194,8 +197,16 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
       const toolText = [...toolCalls.values()]
         .map((tool) => `\n[Tool] ${tool.name}${tool.result ? `\n${tool.result}` : ''}`)
         .join('')
+      const skillTokens = [...skillTexts.values()].reduce((sum, text) => sum + estimateContextTokens(text), 0)
+      const snapshot = {
+        ...requestSnapshot,
+        estimated_total_tokens: requestSnapshot.estimated_total_tokens + skillTokens,
+        categories: requestSnapshot.categories.map(item => item.id === 'skills'
+          ? { ...item, estimated_tokens: item.estimated_tokens + skillTokens }
+          : item),
+      }
       const context = buildTurnEndContextSnapshot(
-        requestSnapshot,
+        snapshot,
         `${assistantText}${toolText}`,
         actualInputTokens,
       )

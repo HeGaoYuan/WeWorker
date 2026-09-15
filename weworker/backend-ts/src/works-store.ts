@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
+import type { LoadedSkillContext } from './skill-context.js'
 
 const DB_DIR = path.join(os.homedir(), '.weworker')
 const DB_FILE = path.join(DB_DIR, 'works.db')
@@ -28,6 +29,7 @@ export interface Message {
 }
 
 export type ContentBlock =
+  | LoadedSkillContext
   | { type: 'text'; text: string }
   | { type: 'file_attachment'; name: string; path: string; size?: number; modified_at?: string; mime?: string }
   | { type: 'image_url'; image_url: { url: string } }

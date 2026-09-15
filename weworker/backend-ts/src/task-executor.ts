@@ -168,7 +168,9 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
       memoryTriggerHint: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',
       previousTaskFailed: previousExecution?.status === 'failed',
     })) {
-      if (event.type === 'text_delta' && event.content) {
+      if (event.type === 'skill_context' && event.skillContext) {
+        assistantContent.push(event.skillContext)
+      } else if (event.type === 'text_delta' && event.content) {
         currentText += event.content
       } else if (event.type === 'memory_candidate' && event.candidate) {
         memoryCandidate = event.candidate
