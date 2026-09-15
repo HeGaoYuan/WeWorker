@@ -133,3 +133,9 @@ test('macOS update metadata rejects mixed versions', () => {
     macMetadata('x64', '0.2.5'),
   ), /version mismatch/)
 })
+
+test('electron packaging uses the generated profile-specific extension', () => {
+  const extensionResource = packageJson.build.extraResources.find((entry) => entry.to === 'extension')
+  assert.equal(extensionResource.from, 'build/extension-dist/')
+  assert.equal(packageJson.build.extraResources.some((entry) => entry.to === 'extension/adapters'), false)
+})

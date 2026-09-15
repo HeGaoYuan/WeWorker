@@ -221,6 +221,16 @@ npm run build:mac   # macOS 当前原生架构
 
 普通 PR 不要求贡献者在所有平台生成安装包。修改 Electron 生命周期、打包资源、自动更新或平台相关代码时，应在 PR 中说明已经验证的平台和未验证的平台。
 
+默认命令始终使用公开的 `weworker/build-profile.json`。派生发行版可以把差异保存在仓库外或独立私有目录，通过环境变量叠加，不需要修改公共配置：
+
+```powershell
+$env:WEWORKER_BUILD_PROFILE = 'internal'
+$env:WEWORKER_BUILD_OVERLAY = '..\internal\config\build-overlay.json'
+npm run build:win
+```
+
+Overlay 只描述 Adapter、Provider 和 Extension 权限的增删。预处理结果写入 `weworker/build/`，不会回写 `extension/manifest.json` 或 Renderer 的 `package.json`。
+
 ## 敏感信息自检
 
 敏感信息扫描不在公开 GitHub Actions 中执行。提交 PR 前，贡献者必须在本地检查；合并前，维护者会在受控环境完成最终检查。

@@ -21,6 +21,7 @@ WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Elec
 - 已新增公开 PR CI，覆盖配置一致性、WebCLI、Backend、Renderer、官网、Electron 集成和 Extension 检查；敏感信息扫描和真实账号 E2E 不进入公开自动化。
 - 已补齐行为准则、支持指引、第三方声明、`.gitattributes`，并完善新仓库文件边界。
 - 发布工作流已改为仅手动触发，并只创建指定版本的草稿 Release，不再强制移动 Tag 或删除既有 Release。
+- 构建配置支持通过外部 Profile Overlay 叠加 Adapter、Provider 与扩展权限；安装包只读取生成的 `build/extension-dist/`，构建不再回写公共源配置。
 
 ## 验证结果
 

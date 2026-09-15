@@ -123,7 +123,7 @@ npm run build:win
 
 ### 构建配置：build-profile.json
 
-构建前需编辑 [`build-profile.json`](build-profile.json)，它决定了打包哪些适配器和 AI 提供商：
+公开发行版由 [`build-profile.json`](build-profile.json) 决定打包哪些适配器和 AI 提供商：
 
 ```json
 {
@@ -152,11 +152,21 @@ npm run build:win
 
 > **提示**：`adapters` 只控制打包哪些适配器，开发模式下（`npm run dev`）所有适配器都可用，不受此限制。如需查看所有可用适配器，见 `extension/adapters/` 目录。
 
+派生发行版不要直接修改公共 Profile 或 Extension Manifest。将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
+
+```powershell
+$env:WEWORKER_BUILD_PROFILE = 'internal'
+$env:WEWORKER_BUILD_OVERLAY = '..\internal\config\build-overlay.json'
+node scripts/prepare-build.cjs
+```
+
+Overlay 支持 `adapters.add/remove`、`providers.upsert/remove`、`defaultProvider`，以及 Extension 的 `permissions` 和访问范围增删。生成的 `build/extension-dist/` 既是打包输入，也可作为派生版扩展的手工加载目录。
+
 ### 构建流程说明
 
 `build:mac` / `build:win` 会依次执行以下步骤：
 
-1. **prepare-build** — 校验 `build-profile.json`，筛选适配器到 `build/adapters-dist/`，生成 `.build-defines.json`（providers 配置），同步版本号
+1. **prepare-build** — 合并并校验 Profile，生成 `.build-defines.json`、筛选后的 Adapter 和完整 `build/extension-dist/`；不修改源配置
 2. **build:webwright** — 从当前工作区源码构建当前平台、当前架构的 embedded `onedir`
 3. **build:renderer** — Vite 构建 React 前端
 4. **build:backend-ts** — esbuild 打包 TypeScript 后端为 `server.cjs`
@@ -184,19 +194,17 @@ Webwright 源码随 WeWorker 一次 checkout，不需要额外 PAT 或仓库 sec
 
 ### 发版清单
 
-发版前需手动完成以下步骤，构建过程中无需再关心版本同步（`prepare-build` 会自动处理）。
+发版前需手动完成以下步骤。`prepare-build` 会把应用版本写入生成的 Extension Manifest，并校验 Renderer 版本一致，但不会修改源文件。
 
 #### 1. 更新版本号
 
-编辑 `weworker/package.json` 的 `version` 字段，这是**唯一的版本号来源**：
+编辑 `weworker/package.json` 的 `version` 字段，并同步更新 `renderer/package.json`：
 
 ```json
 { "version": "0.2.0" }
 ```
 
-构建时 `prepare-build` 会自动同步到：
-- `extension/manifest.json` → Chrome 扩展版本（popup/sidepanel 展示、bridge 上报）
-- `renderer/package.json` → npm 包版本一致性
+构建时 `prepare-build` 会将该版本写入 `build/extension-dist/manifest.json`。如果 Renderer 版本不一致，构建会直接失败，避免构建过程回写工作区。
 
 应用内版本号展示链路：
 - 侧边栏 logo 旁、设置页底部 → Electron `app.getVersion()` → 读取 `package.json`

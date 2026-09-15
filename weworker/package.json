@@ -97,16 +97,8 @@
         ]
       },
       {
-        "from": "../extension",
-        "to": "extension",
-        "filter": [
-          "**/*",
-          "!adapters/**"
-        ]
-      },
-      {
-        "from": "build/adapters-dist/",
-        "to": "extension/adapters"
+        "from": "build/extension-dist/",
+        "to": "extension"
       }
     ],
     "mac": {

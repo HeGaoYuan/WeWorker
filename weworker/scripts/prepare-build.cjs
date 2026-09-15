@@ -4,11 +4,13 @@
  * prepare-build.cjs — 构建预处理脚本
  *
  * 职责：
- * 1. 读取并校验 weworker/build-profile.json
- * 2. 从各 adapter 的 manifest.json 筛选 adapter，输出到 build/adapters-dist/
+ * 1. 读取并校验公开 build profile，可选叠加仓库外部 overlay
+ * 2. 从各 adapter 的 manifest.json 筛选 adapter，输出完整 extension-dist
  * 3. 将 providers/defaultProvider 写入 build/.build-defines.json
  *
- * 用法：node scripts/prepare-build.cjs（从 weworker/ 目录运行）
+ * 用法：
+ *   node scripts/prepare-build.cjs --profile public
+ *   node scripts/prepare-build.cjs --profile internal --overlay ../../internal/config/build-overlay.json
  */
 
 const fs = require('fs');
@@ -19,12 +21,20 @@ const {
   buildRegistryFromManifests,
   loadManifestById,
 } = require('./adapter-registry-sync.cjs');
+const {
+  mergeBuildProfile,
+  mergeExtensionManifest,
+  parseBuildOptions,
+  readJson,
+} = require('./build-profile-overlay.cjs');
 
 const WEWORKER_ROOT = path.resolve(__dirname, '..');
 const PROFILE_PATH = path.resolve(WEWORKER_ROOT, 'build-profile.json');
 const ADAPTERS_SRC_DIR = path.resolve(__dirname, '../../extension/adapters');
 const ADAPTERS_DIST_DIR = path.resolve(WEWORKER_ROOT, 'build/adapters-dist');
 const BUILD_DEFINES_PATH = path.resolve(WEWORKER_ROOT, 'build/.build-defines.json');
+const EXTENSION_SRC_DIR = path.resolve(__dirname, '../../extension');
+const EXTENSION_DIST_DIR = path.resolve(WEWORKER_ROOT, 'build/extension-dist');
 
 /** 递归复制文件/目录（Windows 上对子目录用 copyFileSync 会 EPERM） */
 function copyTreeSync(src, dest) {
@@ -42,31 +52,18 @@ function copyTreeSync(src, dest) {
   }
 }
 
-// ── Task 2.1: 读取并校验 build-profile.json ──
+// ── Task 2.1: 读取、合并并校验 profile ──
 
-let rawJson;
-try {
-  rawJson = fs.readFileSync(PROFILE_PATH, 'utf-8');
-} catch (err) {
-  if (err.code === 'ENOENT') {
-    console.error(
-      `[prepare-build] ERROR: build-profile.json not found at ${PROFILE_PATH}\n` +
-      `  Please create the file. See the default template in the repository.`
-    );
-  } else {
-    console.error(`[prepare-build] ERROR: Failed to read build-profile.json: ${err.message}`);
-  }
-  process.exit(1);
-}
-
+let options;
 let profile;
+let overlay = {};
 try {
-  profile = JSON.parse(rawJson);
+  options = parseBuildOptions(process.argv.slice(2));
+  const baseProfile = readJson(PROFILE_PATH, 'build-profile.json');
+  if (options.overlayPath) overlay = readJson(options.overlayPath, 'build overlay');
+  profile = mergeBuildProfile(baseProfile, overlay);
 } catch (err) {
-  console.error(
-    `[prepare-build] ERROR: build-profile.json contains invalid JSON.\n` +
-    `  ${err.message}`
-  );
+  console.error(`[prepare-build] ERROR: ${err.message}`);
   process.exit(1);
 }
 
@@ -77,7 +74,11 @@ try {
   process.exit(1);
 }
 
-console.log('[prepare-build] build-profile.json validated successfully.');
+console.log(
+  `[prepare-build] Profile "${options.profileName}" validated` +
+  (options.overlayPath ? ` with overlay ${options.overlayPath}` : '') +
+  '.',
+);
 
 // ── Task 2.2: Adapter 筛选逻辑（manifest.json 为唯一数据源） ──
 
@@ -96,7 +97,8 @@ for (const id of requestedIds) {
   }
 }
 
-// 确保输出目录存在
+// 重新生成输出，防止上一次 profile 的 Adapter 残留。
+if (fs.existsSync(ADAPTERS_DIST_DIR)) fs.rmSync(ADAPTERS_DIST_DIR, { recursive: true, force: true });
 fs.mkdirSync(ADAPTERS_DIST_DIR, { recursive: true });
 
 const filteredRegistry = buildRegistryFromManifests(filteredAdapters, { defaultIcon: DEFAULT_ICON, preserveOrder: true });
@@ -139,6 +141,7 @@ fs.writeFileSync(
 // ── Task 2.3: 生成 .build-defines.json ──
 
 const buildDefines = {
+  profile: options.profileName,
   providers: profile.providers,
   defaultProvider: profile.defaultProvider,
   commitHash: (() => {
@@ -157,32 +160,38 @@ fs.writeFileSync(
 
 console.log(`[prepare-build] .build-defines.json written to ${BUILD_DEFINES_PATH}`);
 
-// ── Task 2.4: 同步 extension/manifest.json 版本号 ──
+// ── Task 2.4: 生成完整扩展目录，不回写 extension 源文件 ──
 
-const MANIFEST_PATH = path.resolve(__dirname, '../../extension/manifest.json');
+const MANIFEST_PATH = path.resolve(EXTENSION_SRC_DIR, 'manifest.json');
 const WEWORKER_PKG_PATH = path.resolve(WEWORKER_ROOT, 'package.json');
 const weworkerPkg = JSON.parse(fs.readFileSync(WEWORKER_PKG_PATH, 'utf-8'));
-const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8'));
+const sourceManifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8'));
+const generatedManifest = mergeExtensionManifest(sourceManifest, overlay.extension, weworkerPkg.version);
 
-if (manifest.version !== weworkerPkg.version) {
-  manifest.version = weworkerPkg.version;
-  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
-  console.log(`[prepare-build] extension/manifest.json version synced to ${weworkerPkg.version}`);
-} else {
-  console.log(`[prepare-build] extension/manifest.json version already ${manifest.version}, no change.`);
-}
+if (fs.existsSync(EXTENSION_DIST_DIR)) fs.rmSync(EXTENSION_DIST_DIR, { recursive: true, force: true });
+copyTreeSync(EXTENSION_SRC_DIR, EXTENSION_DIST_DIR);
+const extensionAdaptersDir = path.resolve(EXTENSION_DIST_DIR, 'adapters');
+if (fs.existsSync(extensionAdaptersDir)) fs.rmSync(extensionAdaptersDir, { recursive: true, force: true });
+copyTreeSync(ADAPTERS_DIST_DIR, extensionAdaptersDir);
+fs.writeFileSync(
+  path.resolve(EXTENSION_DIST_DIR, 'manifest.json'),
+  JSON.stringify(generatedManifest, null, 2) + '\n',
+  'utf-8',
+);
+console.log(`[prepare-build] Extension written to ${EXTENSION_DIST_DIR}`);
 
-// ── Task 2.5: 同步 renderer/package.json 版本号 ──
+// ── Task 2.5: 校验 Renderer 版本，不回写源文件 ──
 
 const RENDERER_PKG_PATH = path.resolve(WEWORKER_ROOT, 'renderer/package.json');
 const rendererPkg = JSON.parse(fs.readFileSync(RENDERER_PKG_PATH, 'utf-8'));
 
 if (rendererPkg.version !== weworkerPkg.version) {
-  rendererPkg.version = weworkerPkg.version;
-  fs.writeFileSync(RENDERER_PKG_PATH, JSON.stringify(rendererPkg, null, 2) + '\n', 'utf-8');
-  console.log(`[prepare-build] renderer/package.json version synced to ${weworkerPkg.version}`);
-} else {
-  console.log(`[prepare-build] renderer/package.json version already ${rendererPkg.version}, no change.`);
+  console.error(
+    `[prepare-build] ERROR: renderer/package.json version ${rendererPkg.version} does not match ` +
+    `weworker/package.json version ${weworkerPkg.version}.`,
+  );
+  process.exit(1);
 }
+console.log(`[prepare-build] Source versions are consistent at ${weworkerPkg.version}.`);
 
 console.log('[prepare-build] Done.');
