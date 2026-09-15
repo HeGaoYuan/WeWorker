@@ -1555,9 +1555,11 @@ app.post('/works', (req, res) => {
   if (zcf_role !== undefined || zcf_mode !== undefined) {
     const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
     const updated = store.updateWorkZcfPrefs(work.id, prefs)
+    broadcastSSE({ type: 'works_changed', workId: work.id })
     res.json(updated ?? work)
     return
   }
+  broadcastSSE({ type: 'works_changed', workId: work.id })
   res.json(work)
 })
 
@@ -2199,6 +2201,7 @@ app.post('/works/:id/chat', async (req, res) => {
       if (llmTitle) {
         store.updateTitle(workId, llmTitle)
         send({ type: 'title_update', title: llmTitle, workId })
+        broadcastSSE({ type: 'works_changed', workId })
       }
     })
   }
@@ -2220,6 +2223,7 @@ app.post('/works/:id/chat', async (req, res) => {
   if (await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
     finished = true
     res.off('close', onClose)
+    broadcastSSE({ type: 'works_changed', workId })
     res.end()
     return
   }
@@ -2419,6 +2423,7 @@ app.post('/works/:id/chat', async (req, res) => {
       send({ type: 'memory_status', status: 'processing', workId, eventId: event.eventId })
     }
     chatLog.info(` sending res.end() before background memory processing for workId=${workId}`)
+    broadcastSSE({ type: 'works_changed', workId })
     res.end()
     setImmediate(() => {
       let memoryStore: ReturnType<typeof getMemoryStore>
@@ -2460,6 +2465,7 @@ app.post('/works/:id/chat', async (req, res) => {
   }
 
   chatLog.info(` sending res.end() for workId=${workId}`)
+  broadcastSSE({ type: 'works_changed', workId })
   res.end()
 })
 
