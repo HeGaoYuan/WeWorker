@@ -2462,14 +2462,18 @@ app.post('/works/:id/chat', async (req, res) => {
       status: 'failed',
       workId,
       eventId: protocolEventId,
-      error: '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
+      error: protocolCheck.code === 'memory_block_parse_error'
+        ? 'AI 返回的长期记忆候选不符合协议，未写入长期记忆'
+        : '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
     })
     broadcastSSE({
       type: 'memory_status',
       status: 'failed',
       workId,
       eventId: protocolEventId,
-      error: '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
+      error: protocolCheck.code === 'memory_block_parse_error'
+        ? 'AI 返回的长期记忆候选不符合协议，未写入长期记忆'
+        : '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
     })
   }
 
@@ -2518,6 +2522,18 @@ app.post('/works/:id/chat', async (req, res) => {
       }
     })
     return
+  }
+
+  if (effectiveMemoryCandidate && plannedMemory.admitReason && plannedMemory.admitReason !== 'ignore') {
+    const admissionEventId = `${savedUserMessage.id}:memory-admission-${plannedMemory.admitReason}`
+    const error = `长期记忆候选未通过准入校验：${plannedMemory.admitReason}`
+    chatLog.info(`${tag} memory_admission_rejected`, {
+      reason: plannedMemory.admitReason,
+      event_id: admissionEventId,
+      memory_type: effectiveMemoryCandidate.memory_type,
+    })
+    send({ type: 'memory_status', status: 'failed', workId, eventId: admissionEventId, error })
+    broadcastSSE({ type: 'memory_status', status: 'failed', workId, eventId: admissionEventId, error })
   }
 
   chatLog.info(` sending res.end() for workId=${workId}`)

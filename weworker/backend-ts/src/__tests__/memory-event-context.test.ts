@@ -18,7 +18,18 @@ describe('memory event context', () => {
     expect(context.scope).toEqual({ user: 'local', site: 'billing.example.com' })
   })
 
-  it('derives a site and stable workflow from completed adapter calls', () => {
+  it('derives a site scope from a two-character CJK adapter name', () => {
+    const context = buildMemoryEventContext({
+      baseScope: { user: 'local' },
+      userMessage: '请打开京东查看账户余额。',
+      adapters: [{ id: 'jd.com', name: '京东', match: ['jd.com'] }],
+      toolCalls: [],
+    })
+
+    expect(context.scope).toEqual({ user: 'local', site: 'jd.com' })
+  })
+
+  it('derives a site from completed adapter calls without deciding memory value', () => {
     const context = buildMemoryEventContext({
       baseScope: { user: 'local' },
       userMessage: '帮我处理报销。',
@@ -35,7 +46,6 @@ describe('memory event context', () => {
     })
 
     expect(context.scope.site).toBe('billing.example.com')
-    expect(context.hasSuccessfulSiteWorkflow).toBe(true)
   })
 
   it('does not choose a site when the request references multiple adapters', () => {
@@ -49,7 +59,7 @@ describe('memory event context', () => {
     expect(context.scope).toEqual({ user: 'local' })
   })
 
-  it('does not treat a completed generic command that only mentions a site as a successful adapter workflow', () => {
+  it('derives scope from a completed generic command that mentions a site', () => {
     const context = buildMemoryEventContext({
       baseScope: { user: 'local' },
       userMessage: '检查费用管理示例是否可用。',
@@ -62,26 +72,5 @@ describe('memory event context', () => {
     })
 
     expect(context.scope.site).toBe('billing.example.com')
-    expect(context.hasSuccessfulSiteWorkflow).toBe(false)
-  })
-
-  it('keeps a failed adapter tool out of a successful workflow', () => {
-    const context = buildMemoryEventContext({
-      baseScope: { user: 'local' },
-      userMessage: '帮我提交报销。',
-      adapters,
-      toolCalls: [{
-        name: 'PowerShell',
-        args: { command: 'webcli call billing.example.com.submit_expense' },
-        status: 'failed',
-      }, {
-        name: 'PowerShell',
-        args: { command: 'webcli call billing.example.com.confirm_expense' },
-        status: 'done',
-      }],
-    })
-
-    expect(context.scope.site).toBe('billing.example.com')
-    expect(context.hasSuccessfulSiteWorkflow).toBe(false)
   })
 })

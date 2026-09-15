@@ -122,7 +122,7 @@ describe('long-term memory retrieval', () => {
   it('degrades to an empty context when recall has no match', () => {
     const store = createStore()
     store.create({
-      type: 'site_operation',
+      type: 'task_execution',
       key: 'invoice_submit',
       content: '提交发票前需要确认费用归属',
       scope: { user: 'user-a', site: 'costplus' },
@@ -134,5 +134,43 @@ describe('long-term memory retrieval', () => {
       scope: { user: 'user-a', site: 'costplus' },
       store,
     }).recalled).toBe('')
+  })
+
+  it('maps historical site_operation rows to task_execution during reads', () => {
+    const database = new DatabaseSync(':memory:')
+    const store = new MemoryStore(database)
+    stores.push(store)
+    const now = new Date().toISOString()
+    database.prepare(`
+      INSERT INTO memories (
+        id, type, key, content, facts_json,
+        user_scope, project_scope, site_scope, extension_scope,
+        status, confidence, source_event_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, 'active', ?, ?, ?, ?)
+    `).run(
+      'legacy-site-memory',
+      'site_operation',
+      'legacy_invoice_flow',
+      '历史费控流程先选择费用归属，再上传发票。',
+      '{}',
+      'user-a',
+      'billing.example.com',
+      0.8,
+      'legacy-event',
+      now,
+      now,
+    )
+    database.prepare(
+      'INSERT INTO memory_fts (memory_id, key, content, facts_json) VALUES (?, ?, ?, ?)',
+    ).run('legacy-site-memory', 'legacy_invoice_flow', '历史费控流程先选择费用归属，再上传发票。', '{}')
+
+    expect(store.listActive({ type: 'task_execution', scope: { user: 'user-a', site: 'billing.example.com' } })).toMatchObject([{
+      id: 'legacy-site-memory',
+      type: 'task_execution',
+      key: 'legacy_invoice_flow',
+    }])
+    expect(store.search({ query: '发票', scope: { user: 'user-a', site: 'billing.example.com' } })).toMatchObject([{
+      type: 'task_execution',
+    }])
   })
 })

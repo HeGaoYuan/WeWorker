@@ -28,16 +28,12 @@ function isRelevantScopedMemory(query: string, memory: MemoryRecord): boolean {
 
 export function retrieveMemories(store: MemoryStore, input: MemorySearchInput): MemoryRecord[] {
   const recalled = store.search(input)
-  const scopedTypes = input.scope?.site
-    ? ['site_operation', 'task_execution'] as const
-    : []
-
   // User preferences are applicable across tasks even when the new request
   // contains none of the words used when the preference was saved.
   const stableMemories = input.scope?.user
     ? [
         ...store.listActive({ scope: input.scope, type: 'user_usage', limit: input.limit }),
-        ...scopedTypes.flatMap((type) => store.listActive({ scope: input.scope, type, limit: input.limit }))
+        ...store.listActive({ scope: input.scope, type: 'task_execution', limit: input.limit })
           .filter((memory) => isRelevantScopedMemory(input.query, memory)),
       ]
     : []

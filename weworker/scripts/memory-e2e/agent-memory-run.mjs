@@ -144,13 +144,13 @@ const PHASES = {
     ],
   },
   B: {
-    name: 'site_operation 网站流程',
+    name: 'task_execution 网站任务经验',
     steps: [
       {
         id: 'B1',
         newWork: true,
         prompt: '记住，在 费用管理示例提交团建报销时，先选择费用归属，再上传发票，最后提交前让我确认。',
-        expect: '声明式 site_operation 候选；无工具时可能仅 agent_decision',
+        expect: '声明式 task_execution 候选；无工具时可能仅 agent_decision',
         turnTimeoutMs: 360000,
       },
       {
@@ -169,7 +169,7 @@ const PHASES = {
         id: 'B2',
         newWork: true,
         prompt: '请在 AIEP 中先检查页面和登录状态，再查询可用筛选项，最后查看最近一天的模型总览。只读，不要修改任何内容。请真实执行，不要编造结果。',
-        expect: '扩展连接时 ≥2 次成功 webcli；未登录时停在登录等待；不得伪造 site_operation 成功',
+        expect: '扩展连接时按完整上下文判断任务是否完成；未登录时停在登录等待；不得伪造成功 task_execution',
         requiresExtension: true,
         turnTimeoutMs: 360000,
       },
@@ -182,7 +182,7 @@ const PHASES = {
         id: 'T2',
         newWork: true,
         prompt: '请在 支持工单示例中查看我的待办，并打开一个工单的详情和审批进度。只读查询，不要审批、不要转交。请真实执行，不要编造结果。',
-        expect: '真实 webcli 调用；成功则 site_operation；未登录应等待登录而非编造',
+        expect: '真实 webcli 调用；成功或可复用失败均归入 task_execution；未登录应等待登录而非编造',
         requiresExtension: true,
         turnTimeoutMs: 360000,
       },
@@ -190,7 +190,7 @@ const PHASES = {
         id: 'T3-AIEP-fail',
         newWork: true,
         prompt: '请在 AIEP 中先检查页面和登录状态，再查询模型总览。只读，不要修改任何内容。请真实执行，不要编造结果。',
-        expect: '扩展未登录/失败时 task_execution 失败路径，不得伪造成功 site_operation',
+        expect: '扩展未登录/失败时记录分类 task_execution 失败路径，不得伪造成功经验',
         requiresExtension: true,
         turnTimeoutMs: 360000,
       },
@@ -203,7 +203,7 @@ const PHASES = {
         id: 'T1',
         newWork: true,
         prompt: '帮我在小红书搜索蛋糕推荐，只判断这个请求在当前 WeWorker 里能不能执行，不要编造结果。',
-        expect: '说明 xiaohongshu.com 禁用/不可用，不调用工具，不写成功 site_operation',
+        expect: '说明 xiaohongshu.com 禁用/不可用，不调用工具，不写成功 task_execution',
       },
       {
         id: 'T7',

@@ -168,26 +168,25 @@ function streamErrors(record) {
 function judgeScenario(record, status) {
   const memSaved = record.memoryStatuses.some((e) => e.status === 'saved')
   const memProcessing = record.memoryStatuses.some((e) => e.status === 'processing')
-  const siteOps = record.dbDiff.added.filter((r) => r.type === 'site_operation')
   const taskOps = record.dbDiff.added.filter((r) => r.type === 'task_execution')
   const recoveredEvents = record.dbDiff.newEvents.filter((e) => String(e.event_id || '').includes('recover'))
 
   let verdict = '待判定'
   if (record.id === 'T2') {
     if (status.extension !== 'connected') verdict = '阻塞：扩展未连接'
-    else if (siteOps.length > 0 || memSaved) verdict = '通过或部分通过'
-    else if (record.toolSteps >= 2 && !memSaved) verdict = '未通过：工具执行但未落库 site_operation'
+    else if (taskOps.length > 0 || memSaved) verdict = '通过或部分通过'
+    else if (record.toolSteps >= 2 && !memSaved) verdict = '未通过：工具执行但未落库 task_execution'
     else if (record.ok && record.toolSteps === 0) verdict = '未通过：未执行工具'
     else verdict = record.ok ? '待核对' : `失败：${record.error || 'chat error'}`
   } else if (record.id === 'B2-AIEP') {
     if (status.extension !== 'connected') verdict = '阻塞：扩展未连接'
-    else if (siteOps.length > 0 && memSaved) verdict = '通过'
-    else if (record.toolSteps >= 2 && !siteOps.length) verdict = '未通过：多次工具调用但未写入 site_operation'
+    else if (taskOps.length > 0 && memSaved) verdict = '通过'
+    else if (record.toolSteps >= 2 && !taskOps.length) verdict = '未通过：多次工具调用但未写入 task_execution'
     else verdict = record.ok ? '部分通过/待核对' : `失败：${record.error || 'chat error'}`
   } else if (record.id === 'T5-B1') {
-    if (siteOps.length > 0 && memSaved) verdict = '通过'
-    else if (memSaved && !siteOps.length) verdict = '未通过：有记忆状态但无 site_operation'
-    else if (!memSaved && !siteOps.length) verdict = '未通过：声明式流程未落库'
+    if (taskOps.length > 0 && memSaved) verdict = '通过'
+    else if (memSaved && !taskOps.length) verdict = '未通过：有记忆状态但无 task_execution'
+    else if (!memSaved && !taskOps.length) verdict = '未通过：声明式流程未落库'
     else verdict = '待核对'
   } else if (record.id === 'C2+T11' || record.id === 'T11') {
     if (streamErrors(record).length) verdict = `失败：${streamErrors(record)[0]}`

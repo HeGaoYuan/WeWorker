@@ -63,7 +63,7 @@ describe('真实用户输入记忆场景', () => {
     expect(nextConversationPrompt).toContain('用户默认使用中文，回复尽量简洁。')
   })
 
-  it('场景二：用户明确说明网站固定操作，下一次同网站任务可以复用', async () => {
+  it('场景二：用户明确说明任务固定操作，下一次同网站任务可以复用', async () => {
     const store = createStore()
     const scope = { user: 'scenario-user', site: 'billing.example.com' }
 
@@ -73,7 +73,7 @@ describe('真实用户输入记忆场景', () => {
       scope,
       candidate: {
         action: 'create',
-        memory_type: 'site_operation',
+        memory_type: 'task_execution',
         key: 'expense_submit_order',
         content: '费用管理示例提交团建报销时，先选择费用归属，再上传发票，提交前询问用户确认。',
         facts: { site: 'billing.example.com', requiresConfirmation: true },

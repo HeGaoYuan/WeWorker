@@ -30,6 +30,17 @@ describe('memory protocol observability', () => {
     })
   })
 
+  it('flags a malformed remembered candidate even without shell execution', () => {
+    expect(isMemoryProtocolFailure({
+      toolCalls: [],
+      parseOutcome: 'present_parse_error',
+    })).toEqual({
+      violated: true,
+      code: 'memory_block_parse_error',
+      hasTerminalShell: false,
+    })
+  })
+
   it('does not treat ignore or successful parse as protocol failure', () => {
     const tools = [{ name: 'PowerShell', status: 'failed' as const }]
     expect(isMemoryProtocolFailure({

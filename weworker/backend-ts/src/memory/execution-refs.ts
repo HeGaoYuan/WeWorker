@@ -20,8 +20,7 @@ export interface ExecutionRecordRow {
 
 export type ExecutionRefsRejectReason =
   | 'execution_refs_mismatch'
-  | 'site_operation_refs_required'
-  | 'declarative_site_invalid'
+  | 'declarative_task_invalid'
   | 'user_usage_refs_ignored'
 
 function asRef(raw: unknown): ExecutionRef | null {
@@ -68,16 +67,16 @@ export function matchExecutionRefs(
   return { ok: true, matchedIds }
 }
 
-export function isDeclarativeSiteOperation(input: {
+export function isDeclarativeTaskExecution(input: {
   memoryType: string
   facts?: Record<string, unknown>
   confidence?: number
   site?: string
 }): boolean {
-  if (input.memoryType !== 'site_operation') return false
+  if (input.memoryType !== 'task_execution') return false
   if (input.facts?.declarative !== true) return false
   if ((input.confidence ?? 1) > 0.6) return false
-  return Boolean(input.site)
+  return true
 }
 
 export type ValidateExecutionRefsResult =
@@ -87,9 +86,8 @@ export type ValidateExecutionRefsResult =
 /**
  * Gate candidate against turn ExecutionRecords.
  * - user_usage: skip refs (ok)
- * - declarative site_operation: no refs required; must pass §3.5 shape
- * - verified site_operation: ≥1 webcli ref and all refs match
- * - task_execution: if turn has shell/webcli records, refs required and must match
+ * - declarative task_execution: no refs required; must pass §3.5 shape
+ * - task_execution: if turn has shell/webcli records, refs are checked when present
  * - when refs present on any type (except user_usage): must match
  */
 export function validateExecutionRefs(input: {
@@ -108,29 +106,13 @@ export function validateExecutionRefs(input: {
     return { ok: true, matchedIds: [] }
   }
 
-  if (input.memoryType === 'site_operation') {
-    if (input.facts?.declarative === true) {
-      if (!isDeclarativeSiteOperation(input) || refs.length > 0) {
-        return { ok: false, reason: 'declarative_site_invalid' }
-      }
-      return { ok: true, matchedIds: [] }
-    }
-    const webcliRefs = refs.filter((r) => r.kind === 'webcli')
-    if (webcliRefs.length === 0) {
-      // Phase 0.5 transitional: allow empty refs when no ExecutionRecords yet
-      // (Agent main-path webcli gap until Phase 2). Callers may still use
-      // toolCalls workflow gate. When records exist, verified requires refs.
-      if (input.records.some((r) => r.kind === 'webcli')) {
-        return { ok: false, reason: 'site_operation_refs_required' }
-      }
-      return { ok: true, matchedIds: [] }
-    }
-    const matched = matchExecutionRefs(refs, input.records)
-    if (!matched.ok) return { ok: false, reason: 'execution_refs_mismatch', matchedIds: matched.matchedIds }
-    return { ok: true, matchedIds: matched.matchedIds }
-  }
-
   if (input.memoryType === 'task_execution') {
+    if (input.facts?.declarative === true) {
+      if (!isDeclarativeTaskExecution(input) || refs.length > 0) {
+        return { ok: false, reason: 'declarative_task_invalid' }
+      }
+      return { ok: true, matchedIds: [] }
+    }
     if (hasShellOrWebcli && refs.length === 0) {
       // Transitional: no hard reject until shell-runner writes records widely.
       return { ok: true, matchedIds: [] }

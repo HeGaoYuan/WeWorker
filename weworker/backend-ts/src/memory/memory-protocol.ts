@@ -1,6 +1,6 @@
 /**
  * Memory protocol observability (Phase P).
- * Detects "shell executed but hidden block missing/broken" — does NOT synthesize
+ * Detects malformed or missing hidden memory output — does NOT synthesize
  * content, admit candidates, or trigger a second model request.
  */
 import type { MemoryToolCall } from './memory-event-context.js'
@@ -9,6 +9,7 @@ import type { MemoryParseOutcome } from './memory-extractor.js'
 export type MemoryProtocolViolation =
   | 'shell_missing_block'
   | 'shell_parse_error'
+  | 'memory_block_parse_error'
 
 export interface MemoryProtocolCheckInput {
   toolCalls: MemoryToolCall[]
@@ -37,14 +38,19 @@ export function hasTerminalShellTool(toolCalls: MemoryToolCall[]): boolean {
  */
 export function isMemoryProtocolFailure(input: MemoryProtocolCheckInput): MemoryProtocolCheckResult {
   const hasTerminalShell = hasTerminalShellTool(input.toolCalls)
-  if (!hasTerminalShell || input.aborted) {
+  if (input.aborted) {
     return { violated: false, hasTerminalShell }
   }
+  if (input.parseOutcome === 'present_parse_error') {
+    return {
+      violated: true,
+      code: hasTerminalShell ? 'shell_parse_error' : 'memory_block_parse_error',
+      hasTerminalShell,
+    }
+  }
+  if (!hasTerminalShell) return { violated: false, hasTerminalShell }
   if (input.parseOutcome === 'missing') {
     return { violated: true, code: 'shell_missing_block', hasTerminalShell }
-  }
-  if (input.parseOutcome === 'present_parse_error') {
-    return { violated: true, code: 'shell_parse_error', hasTerminalShell }
   }
   return { violated: false, hasTerminalShell }
 }

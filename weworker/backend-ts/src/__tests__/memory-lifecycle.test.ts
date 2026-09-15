@@ -16,7 +16,7 @@ function createStore(): MemoryStore {
 }
 
 describe('memory lifecycle', () => {
-  it('allows implicit and site workflow events to enter AI analysis without explicit memory words', async () => {
+  it('allows implicit and task workflow events to enter AI analysis without explicit memory words', async () => {
     const store = createStore()
     const implicit = await processMemoryEvent({
       eventId: 'event-implicit-user',
@@ -32,12 +32,12 @@ describe('memory lifecycle', () => {
     })
     const workflow = await processMemoryEvent({
       eventId: 'event-site-workflow',
-      expectedMemoryType: 'site_operation',
+      expectedMemoryType: 'task_execution',
       scope: { user: 'local', site: 'billing.example.com' },
       store,
       candidate: {
         action: 'create',
-        memory_type: 'site_operation',
+        memory_type: 'task_execution',
         key: 'expense_workflow',
         content: '团建报销使用固定提交流程。',
       },
@@ -56,7 +56,7 @@ describe('memory lifecycle', () => {
       store,
       candidate: {
         action: 'create',
-        memory_type: 'site_operation',
+        memory_type: 'task_execution',
         key: 'wrong_type',
         content: '错误类型',
       },
@@ -215,7 +215,7 @@ describe('memory lifecycle', () => {
         action: 'create',
         memory_type: 'user_usage',
         key: 'api_key',
-        content: 'api_key=sk-sensitive-value',
+        content: 'api_key=SENSITIVE_VALUE_PLACEHOLDER',
         scope: { user: 'local' },
       },
     })

@@ -4,12 +4,13 @@
  * Evidence tiers: provisional (declarative) | ledger (tool_use webcli extract) | verified (Bridge — not this phase).
  */
 import type { MemoryAdapterIdentity, MemoryToolCall } from './memory-event-context.js'
-import {
-  isDeclarativeSiteOperation,
-  parseExecutionRefs,
-  type ExecutionRecordView,
-} from './execution-refs.js'
-import type { MemoryScope, MemoryUpdateCandidate } from './memory-types.js'
+import { isDeclarativeTaskExecution, parseExecutionRefs, type ExecutionRecordRow } from './execution-refs.js'
+import type {
+  MemoryFailureKind,
+  MemoryScope,
+  MemoryTaskAssessment,
+  MemoryUpdateCandidate,
+} from './memory-types.js'
 
 export type MemoryVerification = 'provisional' | 'ledger' | 'verified'
 
@@ -21,7 +22,8 @@ export type MemoryAdmitReason =
   | 'unknown_site'
   | 'disabled_site'
   | 'declarative_invalid'
-  | 'site_evidence_insufficient'
+  | 'execution_evidence_insufficient'
+  | 'task_assessment_insufficient'
   | 'turn_failed'
 
 export interface LedgerWebcliHit {
@@ -75,8 +77,53 @@ function isKnownAdapter(site: string, adapters: MemoryAdapterIdentity[]): boolea
   return adapters.some((a) => a.id === site)
 }
 
-function hasFailedTool(toolCalls: MemoryToolCall[]): boolean {
-  return toolCalls.some((tool) => tool.status === 'failed' || tool.status === 'error')
+function executionRefsMatchLedger(refs: ReturnType<typeof parseExecutionRefs>, hits: LedgerWebcliHit[]): boolean {
+  const remaining = hits.slice()
+  for (const ref of refs) {
+    if (ref.kind !== 'webcli' || !ref.tool) continue
+    const index = remaining.findIndex((hit) => hit.tool === ref.tool && (
+      ref.required === 'any' || (ref.required === 'success' && hit.ok) || (ref.required === 'failed' && !hit.ok)
+    ))
+    if (index < 0) return false
+    remaining.splice(index, 1)
+  }
+  return true
+}
+
+export function getTaskAssessment(candidate: MemoryUpdateCandidate): MemoryTaskAssessment | undefined {
+  const raw = candidate.facts?.task_assessment
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const assessment = raw as unknown as Record<string, unknown>
+  if (typeof assessment.completed !== 'boolean') return undefined
+  if (assessment.recovered !== undefined && typeof assessment.recovered !== 'boolean') return undefined
+  if (!isFailureKind(assessment.failure_kind)) return undefined
+  if (assessment.retryable !== undefined && typeof assessment.retryable !== 'boolean') return undefined
+  if (assessment.recovered === true && assessment.completed !== true) return undefined
+  if (assessment.completed === false && assessment.failure_kind === undefined) return undefined
+  if (assessment.subtasks !== undefined && (!Array.isArray(assessment.subtasks) || assessment.subtasks.some((subtask) => {
+    if (!subtask || typeof subtask !== 'object' || Array.isArray(subtask)) return true
+    const value = subtask as Record<string, unknown>
+    if (typeof value.summary !== 'string' || !value.summary.trim() || typeof value.completed !== 'boolean') return true
+    if (!isFailureKind(value.failure_kind)) return true
+    if (value.retryable !== undefined && typeof value.retryable !== 'boolean') return true
+    return value.completed === false && value.failure_kind === undefined
+      || (value.reusable !== undefined && typeof value.reusable !== 'boolean')
+  }))) return undefined
+  return assessment as unknown as MemoryTaskAssessment
+}
+
+function isFailureKind(value: unknown): value is MemoryFailureKind | undefined {
+  return value === undefined
+    || value === 'environmental'
+    || value === 'procedural'
+    || value === 'capability'
+    || value === 'mixed'
+    || value === 'unknown'
+}
+
+export function hasTaskFailure(candidate: MemoryUpdateCandidate): boolean {
+  const assessment = getTaskAssessment(candidate)
+  return assessment !== undefined && !assessment.completed
 }
 
 /**
@@ -91,7 +138,7 @@ export function admitMemoryCandidate(input: {
   toolCalls: MemoryToolCall[]
   turnSucceeded: boolean
   /** Optional ExecutionRecords; unused for verified until Bridge. */
-  records?: ExecutionRecordView[]
+  records?: ExecutionRecordRow[]
 }): MemoryAdmissionResult {
   const candidate = input.candidate
   if (!candidate) return { ok: false, reason: 'no_candidate', scope: input.baseScope }
@@ -114,53 +161,43 @@ export function admitMemoryCandidate(input: {
   }
 
   if (candidate.memory_type === 'task_execution') {
-    if (!input.turnSucceeded && input.toolCalls.length === 0) {
-      return { ok: false, reason: 'turn_failed', scope: input.baseScope }
+    const assessment = getTaskAssessment(candidate)
+    const scope = resolveTaskScope(candidate, input.baseScope, input.adapters, input.enabledAdapterIds)
+    if (!scope.ok) return scope
+    const refs = parseExecutionRefs(candidate.facts)
+    const hasExecution = input.toolCalls.some((tool) => tool.status === 'done' || tool.status === 'failed')
+    if (candidate.facts?.declarative === true) {
+      if (!isDeclarativeTaskExecution({
+        memoryType: candidate.memory_type,
+        facts: candidate.facts,
+        confidence: candidate.confidence,
+        site: scope.scope.site,
+      }) || refs.length > 0 || input.toolCalls.length > 0 || !input.turnSucceeded) {
+        return { ok: false, reason: 'declarative_invalid', scope: scope.scope }
+      }
+      return {
+        ok: true,
+        reason: 'admitted',
+        scope: scope.scope,
+        verification: 'provisional',
+        factsPatch: { verification: 'provisional', declarative: true },
+        confidenceCap: 0.6,
+      }
+    }
+    if (!assessment) {
+      return { ok: false, reason: 'task_assessment_insufficient', scope: scope.scope }
+    }
+    if (!hasExecution) return { ok: false, reason: 'execution_evidence_insufficient', scope: scope.scope }
+    if (refs.length > 0 && !executionRefsMatchLedger(refs, extractLedgerWebcliHits(input.toolCalls))) {
+      return { ok: false, reason: 'execution_evidence_insufficient', scope: scope.scope }
     }
     return {
       ok: true,
       reason: 'admitted',
-      scope: { ...input.baseScope, ...(candidate.scope || {}) },
+      scope: scope.scope,
       verification: 'ledger',
       factsPatch: { verification: 'ledger' },
     }
-  }
-
-  if (candidate.memory_type === 'site_operation') {
-    const site = String(candidate.scope?.site || '').trim()
-    if (!site) {
-      // Fallback: unique successful ledger adapter (evidence), not NL fuzzy.
-      const hits = extractLedgerWebcliHits(input.toolCalls).filter((h) => h.ok)
-      const adapters = [...new Set(hits.map((h) => h.adapterId))]
-      if (adapters.length === 1 && isKnownAdapter(adapters[0], input.adapters)) {
-        if (enabled && !enabled.has(adapters[0])) {
-          return { ok: false, reason: 'disabled_site', scope: { ...input.baseScope, site: adapters[0] } }
-        }
-        return admitSiteWithEvidence({
-          candidate,
-          baseScope: input.baseScope,
-          site: adapters[0],
-          toolCalls: input.toolCalls,
-          turnSucceeded: input.turnSucceeded,
-          enabled,
-        })
-      }
-      return { ok: false, reason: 'missing_site', scope: input.baseScope }
-    }
-    if (!isKnownAdapter(site, input.adapters)) {
-      return { ok: false, reason: 'unknown_site', scope: input.baseScope }
-    }
-    if (enabled && !enabled.has(site)) {
-      return { ok: false, reason: 'disabled_site', scope: { ...input.baseScope, site } }
-    }
-    return admitSiteWithEvidence({
-      candidate,
-      baseScope: input.baseScope,
-      site,
-      toolCalls: input.toolCalls,
-      turnSucceeded: input.turnSucceeded,
-      enabled,
-    })
   }
 
   if (candidate.memory_type.startsWith('extension:')) {
@@ -179,71 +216,16 @@ export function admitMemoryCandidate(input: {
   return { ok: false, reason: 'no_candidate', scope: input.baseScope }
 }
 
-function admitSiteWithEvidence(input: {
-  candidate: MemoryUpdateCandidate
-  baseScope: MemoryScope
-  site: string
-  toolCalls: MemoryToolCall[]
-  turnSucceeded: boolean
-  enabled: Set<string> | null
-}): MemoryAdmissionResult {
-  const scope: MemoryScope = { ...input.baseScope, site: input.site }
-  const refs = parseExecutionRefs(input.candidate.facts)
-  const declarative = isDeclarativeSiteOperation({
-    memoryType: 'site_operation',
-    facts: input.candidate.facts,
-    confidence: input.candidate.confidence,
-    site: input.site,
-  })
-
-  const noTools = input.toolCalls.length === 0
-  const conf = input.candidate.confidence ?? 1
-
-  // Declarative / no-execution remember: provisional only (never verified).
-  if (noTools || input.candidate.facts?.declarative === true) {
-    if (refs.length > 0) {
-      return { ok: false, reason: 'declarative_invalid', scope }
-    }
-    if (!input.turnSucceeded) {
-      return { ok: false, reason: 'turn_failed', scope }
-    }
-    // Explicit declarative flag, or low-confidence remember-without-tools.
-    if (input.candidate.facts?.declarative === true) {
-      if (!declarative) {
-        return { ok: false, reason: 'declarative_invalid', scope }
-      }
-    } else if (conf > 0.6) {
-      // High confidence without tools = fake verified → reject
-      return { ok: false, reason: 'site_evidence_insufficient', scope }
-    }
-    return {
-      ok: true,
-      reason: 'admitted',
-      scope,
-      verification: 'provisional',
-      factsPatch: { verification: 'provisional', declarative: true },
-      confidenceCap: 0.6,
-    }
-  }
-
-  // Ledger evidence from tool_use (shell status + webcli call extract). Not Bridge verified.
-  if (!input.turnSucceeded || hasFailedTool(input.toolCalls)) {
-    return { ok: false, reason: 'site_evidence_insufficient', scope }
-  }
-  const hits = extractLedgerWebcliHits(input.toolCalls).filter(
-    (h) => h.adapterId === input.site || h.tool.startsWith(`${input.site}.`),
-  )
-  const okHits = hits.filter((h) => h.ok)
-  // ≥2 distinct successful tool ids = reusable workflow; ≥1 alone is observation — reject.
-  const distinctOk = new Set(okHits.map((h) => h.tool))
-  if (distinctOk.size < 2) {
-    return { ok: false, reason: 'site_evidence_insufficient', scope }
-  }
-  return {
-    ok: true,
-    reason: 'admitted',
-    scope,
-    verification: 'ledger',
-    factsPatch: { verification: 'ledger' },
-  }
+function resolveTaskScope(
+  candidate: MemoryUpdateCandidate,
+  baseScope: MemoryScope,
+  adapters: MemoryAdapterIdentity[],
+  enabledAdapterIds?: Set<string> | string[],
+): { ok: true; scope: MemoryScope } | { ok: false; reason: MemoryAdmitReason; scope: MemoryScope } {
+  const site = String(candidate.scope?.site || '').trim()
+  if (!site) return { ok: true, scope: { ...baseScope, ...(candidate.scope || {}) } }
+  if (!isKnownAdapter(site, adapters)) return { ok: false, reason: 'unknown_site', scope: baseScope }
+  const enabled = enabledAdapterIds instanceof Set ? enabledAdapterIds : enabledAdapterIds ? new Set(enabledAdapterIds) : null
+  if (enabled && !enabled.has(site)) return { ok: false, reason: 'disabled_site', scope: { ...baseScope, site } }
+  return { ok: true, scope: { ...baseScope, ...(candidate.scope || {}), site } }
 }

@@ -14,9 +14,6 @@ export function applyMemoryUpdate(
 ): MemoryApplyResult {
   if (candidate.action === 'ignore') return { status: 'ignored' }
   assertSafeMemoryCandidate(candidate)
-  if (candidate.memory_type === 'site_operation' && !eventScope.site) {
-    throw new Error('site operation memory requires a site scope')
-  }
   const related = candidate.related_memory_ids ?? []
   const values = {
     type: candidate.memory_type,

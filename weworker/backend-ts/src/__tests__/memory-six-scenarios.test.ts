@@ -119,7 +119,7 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     const message = '记住，在费用管理示例提交团建报销时，先选择费用归属，再上传发票，最后提交前问我确认。'
     const candidate: MemoryUpdateCandidate = {
       action: 'create',
-      memory_type: 'site_operation',
+      memory_type: 'task_execution',
       key: 'expense_submit_order',
       content: '团建报销先选择费用归属，再上传发票，提交前询问确认。',
       facts: { declarative: true },
@@ -154,14 +154,15 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     expect(recalled(store, '继续处理团建报销', { user: 'user-a', site: 'support.example.com' })).not.toContain('先选择费用归属')
   })
 
-  it('场景四：成功网站工具链触发流程分析，失败步骤和敏感参数不作为成功流程', async () => {
+  it('场景四：任务失败也可记录分类经验，但不会伪造成成功经验', async () => {
     const store = createStore()
     const message = '帮我提交团建报销。'
     const candidate: MemoryUpdateCandidate = {
       action: 'create',
-      memory_type: 'site_operation',
+      memory_type: 'task_execution',
       key: 'expense_tool_flow',
       content: '团建报销使用费控提交工具完成。',
+      facts: { task_assessment: { completed: true } },
       scope: { user: 'user-a', site: 'billing.example.com' },
     }
     const plan = planCompletedChatMemoryEvents({
@@ -183,8 +184,8 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     })
 
     expect(plan.events).toMatchObject([{
-      trigger: 'site_workflow_completed',
-      expectedMemoryType: 'site_operation',
+      trigger: 'task_completed',
+      expectedMemoryType: 'task_execution',
       scope: { user: 'user-a', site: 'billing.example.com' },
     }])
     const result = await applyPlannedEvent({
@@ -192,6 +193,14 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       event: plan.events[0],
       candidate,
     })
+    const failedCandidate: MemoryUpdateCandidate = {
+      action: 'create',
+      memory_type: 'task_execution',
+      key: 'expense_tool_failure',
+      content: '费控提交工具失败时，先检查扩展连接和页面状态，再决定是否重试。',
+      facts: { task_assessment: { completed: false, failure_kind: 'environmental', retryable: true } },
+      scope: { user: 'user-a', site: 'billing.example.com' },
+    }
     const failedPlan = planCompletedChatMemoryEvents({
       baseEventId: 'site-failed',
       baseScope: { user: 'user-a' },
@@ -199,11 +208,21 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       adapters,
       toolCalls: [{ name: 'PowerShell', args: { command: 'webcli call billing.example.com.submit_expense' }, status: 'failed' }],
       turnSucceeded: true,
-      candidate,
+      candidate: failedCandidate,
     })
 
     expect(result.status).toBe('saved')
-    expect(failedPlan.events).toHaveLength(0)
+    expect(failedPlan.events).toMatchObject([{
+      trigger: 'task_failed',
+      expectedMemoryType: 'task_execution',
+    }])
+    const failedResult = await applyPlannedEvent({
+      store,
+      event: failedPlan.events[0],
+      candidate: failedCandidate,
+    })
+
+    expect(failedResult.status).toBe('saved')
     expect(store.search({ query: 'SECRET PRIVATE', scope: plan.scope })).toHaveLength(0)
   })
 
@@ -215,6 +234,8 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       memory_type: 'task_execution',
       key: 'invoice_summary_success',
       content: '发票汇总先按月份分组，再核对合计金额。',
+      facts: { declarative: true },
+      confidence: 0.55,
     }
     const plan = planCompletedChatMemoryEvents({
       baseEventId: 'task-explicit',
@@ -228,7 +249,10 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     const saved = await applyPlannedEvent({
       store,
       event: plan.events[0],
-      candidate,
+      candidate: {
+        ...candidate,
+        facts: { ...candidate.facts, ...plan.events[0].factsPatch },
+      },
     })
     const oneOff = planCompletedChatMemoryEvents({
       baseEventId: 'task-explicit-ignore',
@@ -285,6 +309,76 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     expect(store.search({ query: 'SECRET PRIVATE', scope: plan.scope })).toHaveLength(0)
   })
 
+  it('任务事件使用 AI 的总体状态，而不是工具失败数量', () => {
+    const completedAfterRetry = planCompletedChatMemoryEvents({
+      baseEventId: 'completed-after-retry',
+      baseScope: { user: 'user-a' },
+      userMessage: '查询 支持工单示例 待办。',
+      adapters,
+      toolCalls: [{
+        name: 'PowerShell',
+        args: { command: 'webcli call support.example.com.open' },
+        status: 'failed',
+      }, {
+        name: 'PowerShell',
+        args: { command: 'webcli call support.example.com.list_tickets' },
+        status: 'done',
+      }],
+      turnSucceeded: true,
+      candidate: {
+        action: 'create',
+        memory_type: 'task_execution',
+        key: 'itsm_query_retry',
+        content: '查询 支持工单示例 待办时，首次入口失败后改用可用入口继续完成查询。',
+       facts: { task_assessment: { completed: true } },
+      },
+    })
+
+    const failed = planCompletedChatMemoryEvents({
+      baseEventId: 'failed-by-summary',
+      baseScope: { user: 'user-a' },
+      userMessage: '提交报销。',
+      adapters,
+      toolCalls: [{
+        name: 'PowerShell',
+        args: { command: 'webcli call billing.example.com.submit_expense' },
+        status: 'done',
+      }],
+      turnSucceeded: true,
+      candidate: {
+        action: 'create',
+        memory_type: 'task_execution',
+        key: 'expense_partial',
+        content: '报销提交未完成，需补充后续操作。',
+         facts: { task_assessment: { completed: false, failure_kind: 'procedural' } },
+      },
+    })
+
+    const recovered = planCompletedChatMemoryEvents({
+      baseEventId: 'recovered-by-summary',
+      baseScope: { user: 'user-a' },
+      userMessage: '继续查询 支持工单示例 待办。',
+      adapters,
+      toolCalls: [{
+        name: 'PowerShell',
+        args: { command: 'webcli call support.example.com.list_tickets' },
+        status: 'done',
+      }],
+      turnSucceeded: true,
+      candidate: {
+        action: 'create',
+        memory_type: 'task_execution',
+        key: 'itsm_recovered',
+        content: '修正入口后成功恢复 支持工单示例待办查询。',
+        facts: { task_assessment: { completed: true, recovered: true, failure_kind: 'procedural' } },
+      },
+    })
+
+    expect(completedAfterRetry.events[0]?.trigger).toBe('task_completed')
+    expect(failed.events[0]?.trigger).toBe('task_failed')
+    expect(recovered.events[0]?.trigger).toBe('task_recovered')
+  })
+
   it('失败工具不会被图片事件或回合成功标记覆盖成成功流程', () => {
     const plan = planCompletedChatMemoryEvents({
       baseEventId: 'failed-workflow',
@@ -299,7 +393,7 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       turnSucceeded: true,
       candidate: {
         action: 'create',
-        memory_type: 'site_operation',
+        memory_type: 'task_execution',
         key: 'failed_expense_flow',
         content: '报销使用提交流程。',
       },

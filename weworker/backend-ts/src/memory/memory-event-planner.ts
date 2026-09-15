@@ -3,7 +3,7 @@ import {
   type MemoryAdapterIdentity,
   type MemoryToolCall,
 } from './memory-event-context.js'
-import { admitMemoryCandidate } from './memory-admission.js'
+import { admitMemoryCandidate, getTaskAssessment, hasTaskFailure } from './memory-admission.js'
 import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory-types.js'
 import type { MemoryParseOutcome } from './memory-extractor.js'
 
@@ -18,9 +18,6 @@ export interface PlannedMemoryEvent {
   admitReason?: string
 }
 
-function hasFailedTool(toolCalls: MemoryToolCall[]): boolean {
-  return toolCalls.some((tool) => tool.status === 'failed' || tool.status === 'error')
-}
 
 /**
  * Resolve the memory candidate for a completed chat turn.
@@ -95,19 +92,21 @@ export function planCompletedChatMemoryEvents(input: {
       expectedMemoryType: 'user_usage',
       ...meta,
     })
-  } else if (candidate.memory_type === 'site_operation') {
-    events.push({
-      eventId: `${input.baseEventId}:agent-site-operation`,
-      trigger: admission.verification === 'provisional' ? 'agent_decision' : 'site_workflow_completed',
-      scope,
-      expectedMemoryType: 'site_operation',
-      ...meta,
-    })
   } else if (candidate.memory_type === 'task_execution') {
-    const failed = hasFailedTool(input.toolCalls) || !input.turnSucceeded
+    const assessment = getTaskAssessment(candidate)
+    const failed = hasTaskFailure(candidate)
+    const taskTrigger = candidate.facts?.declarative === true
+      ? 'agent_decision'
+      : assessment?.recovered === true
+      ? 'task_recovered'
+      : failed
+        ? 'task_failed'
+        : 'task_completed'
     events.push({
-      eventId: `${input.baseEventId}:agent-task-${input.toolCalls.length > 0 ? (failed ? 'failed' : 'completed') : 'declared'}`,
-      trigger: input.toolCalls.length > 0 ? (failed ? 'task_failed' : 'task_completed') : 'agent_decision',
+      eventId: taskTrigger === 'agent_decision'
+        ? `${input.baseEventId}:agent-task-declarative`
+        : `${input.baseEventId}:agent-task-${taskTrigger.replace('task_', '')}`,
+      trigger: taskTrigger,
       scope,
       expectedMemoryType: 'task_execution',
       ...meta,
