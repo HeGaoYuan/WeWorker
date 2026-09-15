@@ -31,10 +31,9 @@ interface MemoryRow {
 }
 
 function rowToRecord(row: MemoryRow): MemoryRecord {
-  const type = row.type === 'site_operation' ? 'task_execution' : row.type as MemoryType
   return {
     id: row.id,
-    type,
+    type: row.type as MemoryType,
     key: row.key,
     content: row.content,
     facts: JSON.parse(row.facts_json || '{}') as Record<string, unknown>,
@@ -323,13 +322,8 @@ export class MemoryStore {
     appendScopeFilter(clauses, values, 'site_scope', scope.site)
     appendScopeFilter(clauses, values, 'extension_scope', scope.extension)
     if (input.type) {
-      if (input.type === 'task_execution') {
-        clauses.push("(m.type = ? OR m.type = 'site_operation')")
-        values.push(input.type)
-      } else {
-        clauses.push('m.type = ?')
-        values.push(input.type)
-      }
+      clauses.push('m.type = ?')
+      values.push(input.type)
     }
     const rows = this.database.prepare(`
       SELECT m.*

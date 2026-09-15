@@ -1,4 +1,4 @@
-export const CONVERSATION_COMPACTION_TRIGGER_RATIO = 0.8
+export const CONVERSATION_COMPACTION_TRIGGER_RATIO = 0.9
 export const CONVERSATION_COMPACTION_TARGET_RATIO = 0.55
 export const MIN_CONVERSATION_COMPACTION_TOKENS = 256
 
@@ -21,15 +21,15 @@ export function planConversationCompaction(input: {
   const availableTokens = Math.max(1, contextLimit - nonConversationTokens)
   const triggerTokens = Math.min(availableTokens, Math.max(
     MIN_CONVERSATION_COMPACTION_TOKENS,
-    Math.floor(availableTokens * CONVERSATION_COMPACTION_TRIGGER_RATIO),
+    Math.floor(contextLimit * CONVERSATION_COMPACTION_TRIGGER_RATIO) - nonConversationTokens,
   ))
   const targetTokens = Math.max(
     1,
-    Math.floor(availableTokens * CONVERSATION_COMPACTION_TARGET_RATIO),
+    Math.floor(contextLimit * CONVERSATION_COMPACTION_TARGET_RATIO) - nonConversationTokens,
   )
 
   return {
-    shouldCompact: conversationTokens > triggerTokens,
+    shouldCompact: nonConversationTokens + conversationTokens >= Math.floor(contextLimit * CONVERSATION_COMPACTION_TRIGGER_RATIO),
     conversationTokens,
     availableTokens,
     triggerTokens,

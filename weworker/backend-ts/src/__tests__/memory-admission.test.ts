@@ -73,7 +73,7 @@ describe('memory admission (candidate-first)', () => {
     expect(result.reason).toBe('execution_evidence_insufficient')
   })
 
-  it('rejects an executed memory candidate without an AI task assessment', () => {
+  it('admits an executed memory candidate without optional task assessment', () => {
     const result = admitMemoryCandidate({
       candidate: {
         action: 'create',
@@ -90,8 +90,7 @@ describe('memory admission (candidate-first)', () => {
       }],
       turnSucceeded: true,
     })
-    expect(result.ok).toBe(false)
-    expect(result.reason).toBe('task_assessment_insufficient')
+    expect(result).toMatchObject({ ok: true, verification: 'ledger' })
   })
 
   it.each([
@@ -124,7 +123,7 @@ describe('memory admission (candidate-first)', () => {
     expect(result).toMatchObject({ ok: true, verification: 'ledger' })
   })
 
-  it('rejects an incomplete task memory without a failure classification', () => {
+  it('does not require a failure classification in optional task assessment', () => {
     const result = admitMemoryCandidate({
       candidate: {
         action: 'create',
@@ -139,7 +138,7 @@ describe('memory admission (candidate-first)', () => {
       turnSucceeded: true,
     })
 
-    expect(result).toMatchObject({ ok: false, reason: 'task_assessment_insufficient' })
+    expect(result).toMatchObject({ ok: true, verification: 'ledger' })
   })
 
   it('rejects a recovered assessment that is not completed', () => {
@@ -157,7 +156,7 @@ describe('memory admission (candidate-first)', () => {
       turnSucceeded: true,
     })
 
-    expect(result).toMatchObject({ ok: false, reason: 'task_assessment_insufficient' })
+    expect(result).toMatchObject({ ok: false, reason: 'execution_evidence_insufficient' })
   })
 
   it('does not let a transport-level turn failure override AI completion assessment', () => {
@@ -303,8 +302,7 @@ describe('memory admission (candidate-first)', () => {
       }],
       turnSucceeded: true,
     })
-    expect(result.ok).toBe(false)
-    expect(result.reason).toBe('task_assessment_insufficient')
+    expect(result).toMatchObject({ ok: true, verification: 'ledger' })
   })
 
   it('rejects disabled site even with declarative task flag', () => {

@@ -184,9 +184,6 @@ export function admitMemoryCandidate(input: {
         confidenceCap: 0.6,
       }
     }
-    if (!assessment) {
-      return { ok: false, reason: 'task_assessment_insufficient', scope: scope.scope }
-    }
     if (!hasExecution) return { ok: false, reason: 'execution_evidence_insufficient', scope: scope.scope }
     if (refs.length > 0 && !executionRefsMatchLedger(refs, extractLedgerWebcliHits(input.toolCalls))) {
       return { ok: false, reason: 'execution_evidence_insufficient', scope: scope.scope }

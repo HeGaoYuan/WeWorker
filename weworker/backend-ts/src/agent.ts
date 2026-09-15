@@ -1,7 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type {
   SDKMessage,
+  McpServerConfig,
   SettingSource,
+  HookCallback,
+  HookJSONOutput,
   SpawnOptions as ClaudeSpawnOptions,
   SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk' // used in mapSdkMessage parameter type
@@ -44,8 +47,8 @@ import type { ConversationCompactionSnapshot } from './context/context-types.js'
 import type { MemoryScope } from './memory/memory-types.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import {
-  appendMemoryUserTurnReminder,
   buildMemoryOutputProtocolPrompt,
+  MEMORY_USER_TURN_REMINDER,
   parseAssistantMemoryOutput,
   summarizeAssistantMemoryParse,
   type MemoryParseSummary,
@@ -54,6 +57,27 @@ import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic
 import { renderPrompt } from './prompt-loader.js'
 
 const log = createLogger('agent')
+
+const compactedConversationByWork = new Map<string, {
+  sourceMessageCount: number
+  prompt: string
+}>()
+
+function takeStoredCompactedConversation(workId: string | undefined, messageCount: number): { prompt: string; includesCurrent: boolean } | undefined {
+  if (!workId) return undefined
+  const stored = compactedConversationByWork.get(workId)
+  if (!stored) return undefined
+  if (messageCount !== stored.sourceMessageCount && messageCount !== stored.sourceMessageCount + 1) {
+    if (messageCount > stored.sourceMessageCount + 1) compactedConversationByWork.delete(workId)
+    return undefined
+  }
+  compactedConversationByWork.delete(workId)
+  return { prompt: stored.prompt, includesCurrent: messageCount === stored.sourceMessageCount }
+}
+
+export function clearStoredConversationCompaction(workId: string): void {
+  compactedConversationByWork.delete(workId)
+}
 
 const MODEL_AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
@@ -144,7 +168,11 @@ export interface SSEEvent {
   error?: string
   candidate?: MemoryUpdateCandidate
   memoryParse?: MemoryParseSummary
-  compaction?: Partial<ConversationCompactionSnapshot> & { status?: 'started' | 'completed' | 'failed'; error?: string }
+  compaction?: Partial<ConversationCompactionSnapshot> & {
+    status?: 'started' | 'completed' | 'skipped' | 'failed'
+    reason?: 'no_droppable_history' | 'summary_unavailable' | 'summary_failed'
+    error?: string
+  }
 }
 
 /** Per-turn token & prompt-cache metrics, emitted once per streamChat turn. */
@@ -158,6 +186,7 @@ export interface UsageEvent {
   total_cost_usd?: number
   duration_ms?: number
   num_turns?: number
+  kind?: 'turn' | 'post_compaction_probe'
 }
 
 export async function generateAssistantStatusLine(
@@ -485,15 +514,92 @@ async function summarizeConversationOnly(input: {
   })
 
   try {
+    let receivedResult = false
     for await (const message of summaryQuery) {
       if (message.type !== 'result') continue
-      const result = message as unknown as { subtype?: string; result?: string }
-      if (result.subtype === 'success' && typeof result.result === 'string') return result.result.trim()
+      receivedResult = true
+      const result = message as unknown as { subtype?: string; result?: string; is_error?: boolean; errors?: string[] }
+      const summary = typeof result.result === 'string' ? result.result.trim() : ''
+      if (result.subtype === 'success' && summary) return summary
+      const providerErrors = Array.isArray(result.errors) ? result.errors.filter(Boolean).join('; ') : ''
+      const detail = providerErrors || (result.subtype
+        ? `摘要器返回状态 ${result.subtype}`
+        : '摘要器未返回状态')
+      log.error('conversation compaction summary failed', {
+        detail,
+        is_error: result.is_error === true,
+        subtype: result.subtype,
+        received_result: receivedResult,
+        has_result_text: Boolean(summary),
+      })
+      throw new Error(detail)
     }
+    const detail = '摘要器未返回成功结果'
+    log.error('conversation compaction summary failed', { detail, received_result: receivedResult })
+    throw new Error(detail)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    if (detail.startsWith('对话压缩摘要失败：')) throw error
+    log.error('conversation compaction summary request failed', detail)
+    throw new Error(`对话压缩摘要失败：${detail}`)
   } finally {
     summaryQuery.close()
   }
-  return ''
+}
+
+async function probeContextUsage(input: {
+  contextAssembly: { sdk: { system_prompt: string; prompt: string } }
+  settings: Settings
+  abortController?: AbortController
+  claudeSetup: { pathToClaudeCodeExecutable?: string }
+  spawnClaudeCodeProcess: (spawnArgs: ClaudeSpawnOptions) => SpawnedProcess
+  env: NodeJS.ProcessEnv
+  mcpServer: McpServerConfig
+  disallowedTools: string[]
+  settingSources: SettingSource[]
+}): Promise<UsageEvent> {
+  const probeQuery = query({
+    prompt: input.contextAssembly.sdk.prompt,
+    options: {
+      abortController: input.abortController,
+      model: input.settings.model,
+      systemPrompt: input.contextAssembly.sdk.system_prompt,
+      mcpServers: { weworker: input.mcpServer },
+      disallowedTools: input.disallowedTools,
+      canUseTool: async () => ({ behavior: 'deny', message: '上下文 token 探针不执行工具' }),
+      permissionMode: 'dontAsk',
+      includePartialMessages: false,
+      settingSources: input.settingSources,
+      persistSession: false,
+      maxTurns: 1,
+      cwd: getUserDirectory(),
+      pathToClaudeCodeExecutable: input.claudeSetup.pathToClaudeCodeExecutable,
+      spawnClaudeCodeProcess: input.spawnClaudeCodeProcess,
+      env: input.env,
+    },
+  })
+
+  try {
+    for await (const message of probeQuery) {
+      if (message.type !== 'result') continue
+      const result = message as unknown as {
+        subtype?: string
+        usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
+        errors?: string[]
+      }
+      if (result.usage && result.subtype === 'success') {
+        return {
+          ...computeUsageMetrics(result.usage),
+          kind: 'post_compaction_probe',
+        }
+      }
+      const detail = (result.errors ?? []).filter(Boolean).join('; ') || `上下文 token 探针返回状态 ${result.subtype ?? 'unknown'}`
+      throw new Error(detail)
+    }
+    throw new Error('上下文 token 探针未返回结果')
+  } finally {
+    probeQuery.close()
+  }
 }
 
 function stringifyPromptValue(value: unknown): string {
@@ -790,6 +896,8 @@ export async function* streamChat(
     memoryExpectedType?: import('./memory/memory-types.js').MemoryType;
     memoryTriggerHint?: import('./memory/memory-types.js').MemoryEventTrigger | 'chat';
     previousTaskFailed?: boolean;
+    forceCompaction?: boolean;
+    compactionOnly?: boolean;
   } = {},
 ): AsyncGenerator<SSEEvent> {
   // Claude Code discovers user Skills when each query starts. If a website was
@@ -872,15 +980,22 @@ export async function* streamChat(
   const toolPolicy = createWeWorkerToolPolicy(channelPermissionMode)
   const canUseTool: typeof toolPolicy = async (toolName, input, context) => {
     const policyDecision = await toolPolicy(toolName, input, context)
+    if (!policyDecision) {
+      return { behavior: 'deny', message: `Tool permission was not resolved: ${toolName}`, interrupt: false }
+    }
     if (policyDecision.behavior === 'deny') return policyDecision
     return filesystemToolGuard(toolName, input as Record<string, unknown>)
   }
 
   const memoryEnabled = opts.memoryEnabled !== false
-  const promptRaw = buildPromptString(messages)
-  // Attention: full protocol stays in system; a one-line hard reminder is appended
-  // to the end of each turn's user prompt (absolute request tail for the user turn).
-  const prompt = memoryEnabled ? appendMemoryUserTurnReminder(promptRaw) : promptRaw
+  const storedCompactedConversation = takeStoredCompactedConversation(opts.workId, messages.length)
+  const latestMessage = messages[messages.length - 1]
+  const promptRaw = storedCompactedConversation
+    ? storedCompactedConversation.includesCurrent || !latestMessage
+      ? storedCompactedConversation.prompt
+      : `${storedCompactedConversation.prompt}\n\nUser: ${messagePromptText(latestMessage)}`
+    : buildPromptString(messages)
+  const prompt = promptRaw
   const memoryQuery = messages.length > 0
     ? messagePromptText(messages[messages.length - 1]).slice(0, 2_000)
     : ''
@@ -936,8 +1051,10 @@ export async function* streamChat(
     conversationTokens,
   })
   let contextAssembly = fullContextAssembly
+  let compactionEventEmitted = false
+  let compactionCompleted = false
 
-  if (compactionPlan.shouldCompact && messages.length > 1) {
+  if ((compactionPlan.shouldCompact || opts.forceCompaction) && messages.length > 1) {
     const historyMessages = messages.slice(0, -1)
     const currentMessage = messages[messages.length - 1]
     const currentTokens = estimateContextTokens(messagePromptText(currentMessage))
@@ -946,18 +1063,19 @@ export async function* streamChat(
       Math.max(1, compactionPlan.targetTokens - currentTokens),
       (message) => estimateContextTokens(messagePromptText(message)),
     )
+    const compactionBase = {
+      mode: 'conversation_only' as const,
+      before_tokens: conversationTokens,
+      after_tokens: 0,
+      summarized_message_count: recentSelection.dropped.length,
+      retained_message_count: recentSelection.retained.length + 1,
+    }
     if (recentSelection.dropped.length > 0) {
       const summarySource = recentSelection.dropped
         .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${messagePromptText(message)}`)
         .filter((text) => text.trim())
         .join('\n\n')
-      const compactionBase = {
-        mode: 'conversation_only' as const,
-        before_tokens: conversationTokens,
-        after_tokens: 0,
-        summarized_message_count: recentSelection.dropped.length,
-        retained_message_count: recentSelection.retained.length + 1,
-      }
+      compactionEventEmitted = true
       yield { type: 'context_compaction_start', compaction: { ...compactionBase, status: 'started' } }
       try {
         const summary = await summarizeConversationOnly({
@@ -974,33 +1092,121 @@ export async function* streamChat(
             summary: clampPromptText(summary, 16_000),
             recentConversation,
           })
-          const compactedPrompt = memoryEnabled
-            ? appendMemoryUserTurnReminder(compactedConversation)
-            : compactedConversation
+          const compactedPrompt = compactedConversation
           const compaction = {
             ...compactionBase,
             after_tokens: estimateContextTokens(compactedPrompt),
           }
           contextAssembly = buildAssembly(compactedPrompt, compaction)
+          compactionCompleted = true
+          if (opts.compactionOnly && opts.workId) {
+            compactedConversationByWork.set(opts.workId, {
+              sourceMessageCount: messages.length,
+              prompt: compactedConversation,
+            })
+          }
+          compactionEventEmitted = true
           yield { type: 'context_compaction_end', compaction: { ...compaction, status: 'completed' } }
         } else {
-          yield { type: 'context_compaction_end', compaction: { ...compactionBase, status: 'failed', error: '摘要器未返回内容' } }
+          compactionEventEmitted = true
+          yield { type: 'context_compaction_end', compaction: { ...compactionBase, status: 'failed', reason: 'summary_unavailable', error: '摘要器未返回内容' } }
         }
       } catch (error) {
         if (abortController?.signal.aborted) throw error
+        compactionEventEmitted = true
         yield {
           type: 'context_compaction_end',
           compaction: {
             ...compactionBase,
             status: 'failed',
+            reason: 'summary_failed',
             error: error instanceof Error ? error.message : String(error),
           },
         }
       }
+    } else {
+      compactionEventEmitted = true
+      yield {
+        type: 'context_compaction_end',
+        compaction: {
+          ...compactionBase,
+          after_tokens: conversationTokens,
+          status: 'skipped',
+          reason: 'no_droppable_history',
+        },
+      }
+    }
+  }
+  if (opts.forceCompaction && !compactionEventEmitted) {
+    yield {
+      type: 'context_compaction_end',
+      compaction: {
+        mode: 'conversation_only',
+        before_tokens: conversationTokens,
+        after_tokens: conversationTokens,
+        summarized_message_count: 0,
+        retained_message_count: messages.length,
+        status: 'skipped',
+        reason: 'no_droppable_history',
+      },
     }
   }
   yield { type: 'context_snapshot', context: contextAssembly.snapshot }
+  if (opts.compactionOnly) {
+    if (compactionCompleted) {
+      try {
+        const usage = await probeContextUsage({
+          contextAssembly,
+          settings,
+          abortController,
+          claudeSetup,
+          spawnClaudeCodeProcess,
+          env: envWithWebcli,
+          mcpServer,
+          disallowedTools,
+          settingSources,
+        })
+        yield { type: 'usage', usage } as SSEEvent
+      } catch (error) {
+        log.error('post-compaction usage probe failed', error instanceof Error ? error.message : String(error))
+      }
+    }
+    yield { type: 'done' }
+    return
+  }
   const turnContextCollector = createTurnContextCollector(contextAssembly.snapshot)
+  let memoryUserPromptInjectionCount = 0
+  let memoryPostToolBatchInjectionCount = 0
+  const memoryUserPromptSubmitHook: HookCallback = async (): Promise<HookJSONOutput> => {
+    memoryUserPromptInjectionCount += 1
+    log.info('memory_reminder_injected', {
+      source: 'user_prompt_submit',
+      sequence: memoryUserPromptInjectionCount,
+      present: true,
+    })
+    return {
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: MEMORY_USER_TURN_REMINDER,
+      },
+    }
+  }
+  const memoryPostToolBatchHook: HookCallback = async (): Promise<HookJSONOutput> => {
+    memoryPostToolBatchInjectionCount += 1
+    log.info('memory_reminder_injected', {
+      source: 'post_tool_batch',
+      sequence: memoryPostToolBatchInjectionCount,
+      present: true,
+    })
+    return {
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'PostToolBatch',
+        additionalContext: MEMORY_USER_TURN_REMINDER,
+      },
+    }
+  }
 
   const queryHandle = query({
     prompt: contextAssembly.sdk.prompt,
@@ -1020,6 +1226,10 @@ export async function* streamChat(
       pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
       spawnClaudeCodeProcess,
       env: envWithWebcli,
+      hooks: memoryEnabled ? {
+        UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }],
+        PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }],
+      } : undefined,
     },
   })
 
@@ -1047,12 +1257,28 @@ export async function* streamChat(
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
     let completed = false
+    let assistantResponseCount = 0
+    let memoryParseCount = 0
+    let sdkUserEventCount = 0
+    let sdkUserReminderObservedCount = 0
     for await (const msg of queryHandle) {
       if (!firstEventReceived) {
         firstEventReceived = true
         log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
       }
+      if (msg.type === 'user') {
+        sdkUserEventCount += 1
+        const serialized = JSON.stringify(msg)
+        const reminderObserved = serialized.includes(MEMORY_USER_TURN_REMINDER)
+        if (reminderObserved) sdkUserReminderObservedCount += 1
+        log.info('memory_reminder_observed', {
+          source: 'sdk_user_event',
+          present: reminderObserved,
+        })
+      }
+      if (msg.type === 'assistant') assistantResponseCount += 1
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
+        if (event.type === 'memory_parse') memoryParseCount += 1
         if (
           event.type === 'text_delta'
           || event.type === 'tool_call_start'
@@ -1072,6 +1298,14 @@ export async function* streamChat(
       for (const event of turnContextCollector.finish()) yield event
     }
     log.info(` for-await loop completed normally 鈥?total=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+    log.info('memory_context_check', {
+      user_prompt_injections: memoryUserPromptInjectionCount,
+      post_tool_batch_injections: memoryPostToolBatchInjectionCount,
+      assistant_responses: assistantResponseCount,
+      memory_parse_events: memoryParseCount,
+      sdk_user_events: sdkUserEventCount,
+      sdk_user_reminders_observed: sdkUserReminderObservedCount,
+    })
   } catch (e) {
     // Silently ignore abort errors (user cancelled)
     if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('aborted'))) {

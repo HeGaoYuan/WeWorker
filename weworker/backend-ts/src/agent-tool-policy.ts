@@ -63,10 +63,12 @@ export async function canUseWeWorkerTool(
   input: Record<string, unknown>,
   context?: Parameters<CanUseTool>[2],
 ): Promise<PermissionResult> {
-  if (!context) {
-    return createWeWorkerToolPolicy('no_bash')(toolName, input, {} as Parameters<CanUseTool>[2])
-  }
-  return createWeWorkerToolPolicy('no_bash')(toolName, input, context)
+  const result = await createWeWorkerToolPolicy('no_bash')(
+    toolName,
+    input,
+    context ?? {} as Parameters<CanUseTool>[2],
+  )
+  return result ?? deny(`Tool permission was not resolved: ${toolName}`)
 }
 
 export const WEWORKER_ALLOWED_TOOLS = [

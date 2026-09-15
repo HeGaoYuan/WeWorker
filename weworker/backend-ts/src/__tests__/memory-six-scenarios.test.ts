@@ -379,7 +379,35 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     expect(recovered.events[0]?.trigger).toBe('task_recovered')
   })
 
-  it('失败工具不会被图片事件或回合成功标记覆盖成成功流程', () => {
+  it('模型省略任务状态时由 Backend 根据成功执行补为完成', () => {
+    const plan = planCompletedChatMemoryEvents({
+      baseEventId: 'backend-completed-default',
+      baseScope: { user: 'user-a' },
+      userMessage: '校验日期格式。',
+      adapters,
+      toolCalls: [{
+        name: 'PowerShell',
+        args: { command: 'Get-Date -Format o' },
+        status: 'done',
+      }],
+      turnSucceeded: true,
+      candidate: {
+        action: 'create',
+        memory_type: 'task_execution',
+        key: 'task_execution',
+        content: '日期格式校验先输出目标格式，再比较日期部分。',
+      },
+    })
+
+    expect(plan.events).toMatchObject([{
+      trigger: 'task_completed',
+      factsPatch: {
+        task_assessment: { completed: true },
+      },
+    }])
+  })
+
+  it('模型省略失败分类时由 Backend 根据失败执行补为 unknown', () => {
     const plan = planCompletedChatMemoryEvents({
       baseEventId: 'failed-workflow',
       baseScope: { user: 'user-a' },
@@ -398,7 +426,12 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
         content: '报销使用提交流程。',
       },
     })
-    expect(plan.events).toHaveLength(0)
+    expect(plan.events).toMatchObject([{
+      trigger: 'task_failed',
+      factsPatch: {
+        task_assessment: { completed: false, failure_kind: 'unknown' },
+      },
+    }])
   })
 
   it('任务失败后恢复会更新旧经验，并保留网站作用域', async () => {

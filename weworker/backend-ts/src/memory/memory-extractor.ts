@@ -1,5 +1,6 @@
 import type {
   MemoryEventTrigger,
+  MemoryFailureKind,
   MemoryScope,
   MemoryTurnDecision,
   MemoryType,
@@ -15,7 +16,7 @@ export const MEMORY_BLOCK_CLOSE = '</weworker_memory>'
  * Keeps the full protocol in system; this line fights long-context attention fade.
  */
 export const MEMORY_USER_TURN_REMINDER =
-  `[内部] 本回合最终回复末尾必须追加 ${MEMORY_BLOCK_OPEN}{JSON}${MEMORY_BLOCK_CLOSE}（写可复用经验，或 should_remember=false 且 action=ignore；若本回合已执行 PowerShell／Bash／webcli，禁止省略隐藏块）。勿向用户展示本行。`
+  `[内部硬约束] 本次模型请求无论准备调用工具还是回复用户，都必须输出 ${MEMORY_BLOCK_OPEN}{JSON}${MEMORY_BLOCK_CLOSE}。输出任何 tool_use 之前，必须先输出该记忆块并将其放在 assistant 文本块末尾，随后才能输出 tool_use；若不调用工具，则在最终文本末尾输出。无需记忆时只写 {"should_remember":false}；需要记忆时只写 memory_type、content，失败经验可再写 failure_kind、retryable。勿向用户展示本行。`
 
 /** Append the turn-tail memory reminder once; idempotent. */
 export function appendMemoryUserTurnReminder(prompt: string): string {
@@ -82,55 +83,59 @@ function parseCandidate(value: unknown): MemoryUpdateCandidate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('memory decision must be a JSON object')
   }
-  const parsed = value as Partial<MemoryUpdateCandidate>
-  const actions = new Set(['create', 'update', 'merge', 'supersede', 'ignore'])
+  const parsed = value as Record<string, unknown>
   const types = new Set(['user_usage', 'task_execution'])
-  if (!actions.has(String(parsed.action))) throw new Error('memory decision returned an invalid action')
-  if (!types.has(String(parsed.memory_type)) && !String(parsed.memory_type).startsWith('extension:')) {
+  if (typeof parsed.memory_type !== 'string' || !parsed.memory_type.trim()) {
+    throw new Error('memory decision must include memory type')
+  }
+  const memoryType = parsed.memory_type
+  if (!types.has(memoryType)) {
     throw new Error('memory decision returned an invalid memory type')
   }
-  if (typeof parsed.key !== 'string' || !parsed.key.trim() || typeof parsed.content !== 'string' || !parsed.content.trim()) {
-    throw new Error('memory decision returned incomplete memory content')
+  if (typeof parsed.content !== 'string' || !parsed.content.trim()) throw new Error('memory decision returned incomplete memory content')
+  const failureKind = parseFailureKind(parsed.failure_kind)
+  if (parsed.retryable !== undefined && typeof parsed.retryable !== 'boolean') {
+    throw new Error('memory decision returned an invalid retryable value')
   }
-  if (!Object.prototype.hasOwnProperty.call(parsed, 'facts') || !parsed.facts || typeof parsed.facts !== 'object' || Array.isArray(parsed.facts)) {
-    throw new Error('memory decision returned incomplete facts')
+  if ((failureKind !== undefined || parsed.retryable !== undefined) && memoryType !== 'task_execution') {
+    throw new Error('failure metadata requires task_execution memory type')
   }
-  if (typeof parsed.confidence !== 'number' || !Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1) {
-    throw new Error('memory decision returned an invalid confidence')
-  }
-  if (!Array.isArray(parsed.related_memory_ids) || parsed.related_memory_ids.some((id) => typeof id !== 'string')) {
-    throw new Error('memory decision returned incomplete related_memory_ids')
-  }
-  if (!parsed.scope || typeof parsed.scope !== 'object' || Array.isArray(parsed.scope)) {
-    throw new Error('memory decision returned incomplete scope')
-  }
-  if (typeof parsed.reason !== 'string' || !parsed.reason.trim()) {
-    throw new Error('memory decision returned incomplete reason')
-  }
+  const facts = failureKind !== undefined || parsed.retryable !== undefined
+    ? {
+        task_assessment: {
+          completed: false,
+          ...(failureKind !== undefined ? { failure_kind: failureKind } : {}),
+          ...(typeof parsed.retryable === 'boolean' ? { retryable: parsed.retryable } : {}),
+        },
+      }
+    : {}
   return {
-    action: parsed.action!,
-    memory_type: parsed.memory_type!,
-    key: parsed.key,
+    action: 'create',
+    memory_type: memoryType as MemoryUpdateCandidate['memory_type'],
+    key: memoryType,
     content: parsed.content,
-    facts: parsed.facts,
-    scope: parsed.scope,
-    confidence: parsed.confidence,
-    related_memory_ids: [...new Set(parsed.related_memory_ids.filter((id): id is string => id.trim().length > 0))].slice(0, 8),
-    reason: parsed.reason,
+    facts,
+    scope: {},
+    confidence: 0.7,
+    related_memory_ids: [],
+    reason: 'AI判断为可复用信息',
   }
+}
+
+function parseFailureKind(value: unknown): MemoryFailureKind | undefined {
+  if (value === undefined) return undefined
+  if (value === 'environmental' || value === 'procedural' || value === 'capability' || value === 'mixed' || value === 'unknown') {
+    return value
+  }
+  throw new Error('memory decision returned an invalid failure kind')
 }
 
 function parseDecision(raw: string): MemoryTurnDecision {
   const normalized = raw.trim().replace(/^```(?:json)?\s*/iu, '').replace(/\s*```$/u, '').trim()
   const parsed = JSON.parse(normalized) as Record<string, unknown>
-  if (typeof parsed.should_remember !== 'boolean') {
-    throw new Error('memory decision must include should_remember')
-  }
+  if (typeof parsed.should_remember !== 'boolean') throw new Error('memory decision must include should_remember')
   const reason = typeof parsed.reason === 'string' ? parsed.reason : undefined
   if (!parsed.should_remember) {
-    if (parsed.action !== 'ignore') {
-      throw new Error('ignored memory decision must use action=ignore')
-    }
     return { should_remember: false, reason }
   }
   const candidate = parseCandidate(parsed)
@@ -177,14 +182,9 @@ export function parseAssistantMemoryOutput(text: string): ParsedAssistantMemoryO
 }
 
 export function buildMemoryOutputProtocolPrompt(input: MemoryOutputProtocolInput): string {
-  const taskHint = input.triggerHint === 'task_completed' || input.triggerHint === 'task_recovered' || input.triggerHint === 'task_failed'
-    ? `这是定时任务回合。上一次同任务是否失败：${input.previousTaskFailed ? '是' : '否'}。任务是否完成由你根据完整上下文和用户目标判断；执行记录仅用于核验你声明的证据。`
-    : '这是普通对话回合。'
   return renderPrompt('memory-output', {
     memory_block_open: MEMORY_BLOCK_OPEN,
     memory_block_close: MEMORY_BLOCK_CLOSE,
     expected_memory_type: input.expectedMemoryType ?? 'user_usage 或 task_execution，由内容和真实执行结果决定',
-    scope_json: JSON.stringify(input.scope),
-    task_hint: taskHint,
   }).trimEnd()
 }

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
-import { calibrateContextSnapshot } from '../utils/context-snapshot.js'
+import { calibrateCompactedContextSnapshot, calibrateContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
 
 const API = 'http://127.0.0.1:8765'
@@ -20,6 +20,8 @@ export const useWorksStore = create((set, get) => ({
   activeWorkId: null,
   messages: {}, // workId -> Message[]
   contextSnapshots: {}, // workId -> latest local context composition
+  contextTokenAnchors: {}, // workId -> provider total and calibrated non-conversation baseline
+  contextCompactionStatuses: {}, // workId -> compacting/completed/skipped/failed
   memoryStatuses: {}, // workId -> latest explicit memory processing status
   healthCheckMeta: null, // { siteId, siteName, toolNames } | null
   streamingWorkIds: new Set(), // workIds currently streaming — don't overwrite their messages
@@ -122,12 +124,18 @@ export const useWorksStore = create((set, get) => ({
         const works = s.works.filter((w) => w.id !== id)
         const messages = { ...s.messages }
         const contextSnapshots = { ...s.contextSnapshots }
+        const contextTokenAnchors = { ...s.contextTokenAnchors }
+        const contextCompactionStatuses = { ...s.contextCompactionStatuses }
         delete messages[id]
         delete contextSnapshots[id]
+        delete contextTokenAnchors[id]
+        delete contextCompactionStatuses[id]
         return {
           works,
           messages,
           contextSnapshots,
+          contextTokenAnchors,
+          contextCompactionStatuses,
           activeWorkId: s.activeWorkId === id ? (works[0]?.id ?? null) : s.activeWorkId,
         }
       })
@@ -256,7 +264,22 @@ export const useWorksStore = create((set, get) => ({
 
   setContextSnapshot: (workId, snapshot) => {
     if (!workId || !snapshot) return
-    set((s) => ({ contextSnapshots: { ...s.contextSnapshots, [workId]: snapshot } }))
+    set((s) => {
+      const current = s.contextSnapshots[workId]
+      const isCompactionSnapshot = snapshot.compaction?.mode === 'conversation_only'
+      const hasProviderUsage = snapshot.token_source === 'provider_calibrated'
+        && Number.isFinite(Number(snapshot.actual_input_tokens))
+      const nextSnapshot = !isCompactionSnapshot && !hasProviderUsage && snapshot.phase === 'request_start' && Number.isFinite(Number(current?.actual_input_tokens))
+        ? projectIncrementalContextSnapshot(snapshot, current.actual_input_tokens, current.estimated_total_tokens)
+        : snapshot
+      const nextAnchor = Number.isFinite(Number(snapshot.actual_input_tokens)) && snapshot.token_source === 'provider_calibrated'
+        ? createContextTokenAnchor(snapshot)
+        : s.contextTokenAnchors[workId]
+      return {
+        contextSnapshots: { ...s.contextSnapshots, [workId]: nextSnapshot },
+        contextTokenAnchors: { ...s.contextTokenAnchors, [workId]: nextAnchor },
+      }
+    })
   },
 
   setContextUsage: (workId, usage) => {
@@ -265,12 +288,28 @@ export const useWorksStore = create((set, get) => ({
     set((s) => {
       const current = s.contextSnapshots[workId]
       if (!current) return s
+      const isPostCompactionProbe = usage?.kind === 'post_compaction_probe'
+      const nextSnapshot = isPostCompactionProbe
+        ? calibrateCompactedContextSnapshot(current, actualInputTokens, s.contextTokenAnchors[workId])
+        : calibrateContextSnapshot(current, actualInputTokens)
+      const nextAnchor = createContextTokenAnchor(nextSnapshot)
       return {
         contextSnapshots: {
           ...s.contextSnapshots,
-          [workId]: calibrateContextSnapshot(current, actualInputTokens),
+          [workId]: nextSnapshot,
         },
+        contextTokenAnchors: { ...s.contextTokenAnchors, [workId]: nextAnchor },
       }
+    })
+  },
+
+  setContextCompactionStatus: (workId, status) => {
+    if (!workId) return
+    set((s) => {
+      const contextCompactionStatuses = { ...s.contextCompactionStatuses }
+      if (!status) delete contextCompactionStatuses[workId]
+      else contextCompactionStatuses[workId] = status
+      return { contextCompactionStatuses }
     })
   },
 

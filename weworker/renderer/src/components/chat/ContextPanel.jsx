@@ -4,12 +4,16 @@ import {
   CONTEXT_CATEGORY_META,
   CONTEXT_SCOPE_LABELS,
   contextUsagePercent,
+  createEmptyContextSnapshot,
   formatContextTokens,
   normalizeContextSnapshot,
 } from '../../utils/context-snapshot.js'
 
-export default function ContextPanel({ snapshot }) {
-  const normalized = useMemo(() => normalizeContextSnapshot(snapshot), [snapshot])
+export default function ContextPanel({ snapshot, contextLimit }) {
+  const normalized = useMemo(
+    () => normalizeContextSnapshot(snapshot || createEmptyContextSnapshot(contextLimit)),
+    [snapshot, contextLimit],
+  )
   const [open, setOpen] = useState(false)
   const buttonRef = useRef(null)
   const [placement, setPlacement] = useState(null)

@@ -15,6 +15,25 @@ export const CONTEXT_SCOPE_LABELS = {
   long_term: '长期上下文',
 }
 
+export function createEmptyContextSnapshot(contextLimit = 1000000) {
+  const normalizedLimit = Math.max(1, Number(contextLimit) || 1000000)
+  return {
+    version: 1,
+    phase: 'request_start',
+    estimated_total_tokens: 0,
+    context_limit: normalizedLimit,
+    actual_input_tokens: null,
+    token_source: 'estimated',
+    displayed_total_tokens: 0,
+    categories: Object.entries(CONTEXT_CATEGORY_META).map(([id, meta]) => ({
+      id,
+      scope: meta.scope,
+      estimated_tokens: 0,
+      calibrated_tokens: null,
+    })),
+  }
+}
+
 export function normalizeContextSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return null
   const categories = Array.isArray(snapshot.categories)
@@ -90,6 +109,103 @@ export function calibrateContextSnapshot(snapshot, actualInputTokens) {
     displayed_total_tokens: normalizedActualTotal,
     categories: categories.map((item, index) => ({ ...item, calibrated_tokens: allocations[index].whole })),
   }
+}
+
+export function createContextTokenAnchor(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null
+  const actualTotal = Number(snapshot.actual_input_tokens)
+  if (!Number.isFinite(actualTotal)) return null
+  const categories = Array.isArray(snapshot.categories) ? snapshot.categories : []
+  const conversation = categories.find((item) => item?.id === 'conversation')
+  const explicitConversationTokens = conversation?.calibrated_tokens == null
+    ? Number.NaN
+    : Number(conversation.calibrated_tokens)
+  const calibratedConversation = Number.isFinite(explicitConversationTokens)
+    ? explicitConversationTokens
+    : calibrateContextSnapshot(snapshot, actualTotal).categories.find((item) => item?.id === 'conversation')?.calibrated_tokens
+  const conversationTokens = Math.max(0, Number(calibratedConversation) || 0)
+  return {
+    actual_input_tokens: Math.max(0, Math.round(actualTotal)),
+    non_conversation_tokens: Math.max(0, Math.round(actualTotal) - conversationTokens),
+  }
+}
+
+export function calibrateCompactedContextSnapshot(snapshot, actualInputTokens, anchor) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot
+  const actualTotal = Number(actualInputTokens)
+  const nonConversationTokens = Number(anchor?.non_conversation_tokens)
+  if (!Number.isFinite(actualTotal) || !Number.isFinite(nonConversationTokens)) {
+    return calibrateContextSnapshot(snapshot, actualInputTokens)
+  }
+  const normalizedActualTotal = Math.max(0, Math.round(actualTotal))
+  const categories = Array.isArray(snapshot.categories) ? snapshot.categories : []
+  const nonConversationTarget = Math.min(normalizedActualTotal, Math.max(0, Math.round(nonConversationTokens)))
+  const conversationTarget = normalizedActualTotal - nonConversationTarget
+  const nonConversationCategories = categories.filter((item) => item?.id !== 'conversation')
+  const estimatedTotal = nonConversationCategories.reduce((sum, item) => sum + Math.max(0, Number(item?.estimated_tokens) || 0), 0)
+  const allocations = new Map()
+  let allocated = 0
+  for (const item of nonConversationCategories) {
+    const weight = Math.max(0, Number(item?.estimated_tokens) || 0)
+    const value = estimatedTotal > 0 ? Math.floor(nonConversationTarget * weight / estimatedTotal) : 0
+    allocations.set(item.id, value)
+    allocated += value
+  }
+  const remainder = nonConversationTarget - allocated
+  for (let index = 0; index < remainder; index += 1) {
+    const item = nonConversationCategories[index % Math.max(1, nonConversationCategories.length)]
+    if (item) allocations.set(item.id, (allocations.get(item.id) || 0) + 1)
+  }
+
+  return {
+    ...snapshot,
+    actual_input_tokens: normalizedActualTotal,
+    token_source: 'provider_calibrated',
+    displayed_total_tokens: normalizedActualTotal,
+    categories: categories.map((item) => ({
+      ...item,
+      calibrated_tokens: item.id === 'conversation' ? conversationTarget : (allocations.get(item.id) || 0),
+    })),
+  }
+}
+
+export function projectContextSnapshot(snapshot, displayedTotalTokens) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot
+  const projectedTotal = Math.max(0, Math.round(Number(displayedTotalTokens) || 0))
+  const categories = Array.isArray(snapshot.categories) ? snapshot.categories : []
+  const estimatedTotal = categories.reduce((sum, item) => sum + (Math.max(0, Number(item.estimated_tokens) || 0)), 0)
+  if (estimatedTotal <= 0) {
+    return {
+      ...snapshot,
+      displayed_total_tokens: projectedTotal,
+      categories: categories.map((item) => ({ ...item, calibrated_tokens: 0 })),
+    }
+  }
+
+  const allocations = categories.map((item, index) => {
+    const exact = projectedTotal * Math.max(0, Number(item.estimated_tokens) || 0) / estimatedTotal
+    const whole = Math.floor(exact)
+    return { index, whole, remainder: exact - whole }
+  })
+  let remaining = projectedTotal - allocations.reduce((sum, item) => sum + item.whole, 0)
+  allocations.sort((left, right) => right.remainder - left.remainder || left.index - right.index)
+  for (let index = 0; index < remaining; index += 1) allocations[index % allocations.length].whole += 1
+  allocations.sort((left, right) => left.index - right.index)
+
+  return {
+    ...snapshot,
+    displayed_total_tokens: projectedTotal,
+    categories: categories.map((item, index) => ({ ...item, calibrated_tokens: allocations[index].whole })),
+  }
+}
+
+export function projectIncrementalContextSnapshot(snapshot, baseActualTokens, previousRequestStartEstimatedTotalTokens) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot
+  const currentEstimatedTotal = Math.max(0, Math.round(Number(snapshot.estimated_total_tokens) || 0))
+  const previousEstimatedTotal = Math.max(0, Math.round(Number(previousRequestStartEstimatedTotalTokens) || 0))
+  const baseActualTotal = Math.max(0, Math.round(Number(baseActualTokens) || 0))
+  const delta = Math.max(0, currentEstimatedTotal - previousEstimatedTotal)
+  return projectContextSnapshot(snapshot, baseActualTotal + delta)
 }
 
 export function formatContextTokens(value) {

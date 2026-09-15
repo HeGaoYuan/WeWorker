@@ -101,7 +101,7 @@ import {
 import { appendAssistantStatusLine, extractAssistantStatusLine, finalizeAssistantTextWithStatus } from './assistant-status.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext } from './memory/memory-event-context.js'
-import { planCompletedChatMemoryEvents, resolveChatMemoryCandidate, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
+import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
 import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
 import type { MemoryParseOutcome } from './memory/memory-extractor.js'
 import { getMemoryStore } from './memory/memory-store.js'
@@ -2102,13 +2102,76 @@ app.post('/terminal/assist', async (req, res) => {
 
 import { generateTitle, generateTitleWithLLM } from './title-utils.js'
 
+async function streamConversationCompaction(
+  workId: string,
+  messages: store.Message[],
+  settings: ReturnType<typeof getSettings>,
+  send: (event: object) => void,
+): Promise<{ status: 'completed' | 'skipped'; reason?: string }> {
+  let completed = false
+  let skipped = false
+  let skipReason = ''
+  let failureReason = ''
+  for await (const event of streamChat(messages, settings, undefined, {
+    workId,
+    forceCompaction: true,
+    compactionOnly: true,
+  })) {
+    if (event.type === 'context_compaction_start' || event.type === 'context_compaction_end') {
+      send(event)
+      if (event.type === 'context_compaction_end' && event.compaction?.status === 'completed') completed = true
+      if (event.type === 'context_compaction_end' && event.compaction?.status === 'skipped') {
+        skipped = true
+        skipReason = event.compaction.reason || 'no_droppable_history'
+      }
+      if (event.type === 'context_compaction_end' && event.compaction?.status === 'failed') {
+        failureReason = event.compaction.error || '摘要器未完成压缩'
+      }
+    }
+    if (event.type === 'context_snapshot') send(event)
+    if (event.type === 'usage') send(event)
+    if (event.type === 'error') {
+      failureReason = event.content || '压缩请求返回错误'
+      break
+    }
+  }
+  if (completed) return { status: 'completed' }
+  if (skipped) return { status: 'skipped', reason: skipReason }
+  const detail = failureReason || '对话压缩未完成'
+  chatLog.error('conversation compaction failed', { workId, detail })
+  throw new Error(detail)
+}
+
+app.post('/works/:id/compact', async (req, res) => {
+  const workId = req.params.id
+  const work = store.getWorkWithMessages(workId)
+  if (!work) {
+    res.status(404).json({ detail: 'Work not found' })
+    return
+  }
+  const settings = getSettings()
+  const events: object[] = []
+  try {
+    const result = await streamConversationCompaction(workId, work.messages, settings, (event) => {
+      events.push(event)
+    })
+    res.json({ ok: true, ...result, events })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    chatLog.error('conversation compaction route failed', { workId, detail })
+    res.status(500).json({ ok: false, detail })
+    return
+  }
+})
+
 
 app.post('/works/:id/chat', async (req, res) => {
   const workId = req.params.id
-  const { message, modelMessage, attachments } = req.body as {
+  const { message, modelMessage, attachments, retryCompaction } = req.body as {
     message: string;
     modelMessage?: string;
     attachments?: Array<{ path?: string; name?: string }>;
+    retryCompaction?: boolean;
   }
 
   if (!message?.trim() && (!Array.isArray(attachments) || attachments.length === 0)) {
@@ -2124,24 +2187,39 @@ app.post('/works/:id/chat', async (req, res) => {
 
   let userContent: store.ContentBlock[] = []
   let importedAttachments: store.ContentBlock[] = []
-  try {
-    importedAttachments = Array.isArray(attachments) ? importChatAttachments(attachments) : []
-    userContent = [
-      ...importedAttachments,
-      ...(message?.trim() ? [{ type: 'text' as const, text: message }] : []),
-    ]
-  } catch (e) {
-    res.status(400).json({ detail: e instanceof Error ? e.message : 'failed to import attachments' })
-    return
-  }
+  let savedUserMessage: store.Message | null = null
+  if (retryCompaction === true) {
+    const existingWork = store.getWorkWithMessages(workId)
+    if (!existingWork) {
+      res.status(404).json({ detail: 'Work not found' })
+      return
+    }
+    savedUserMessage = [...existingWork.messages].reverse().find((msg) => msg.role === 'user') ?? null
+    if (!savedUserMessage) {
+      res.status(400).json({ detail: '没有可重试的用户消息' })
+      return
+    }
+    userContent = savedUserMessage.content
+  } else {
+    try {
+      importedAttachments = Array.isArray(attachments) ? importChatAttachments(attachments) : []
+      userContent = [
+        ...importedAttachments,
+        ...(message?.trim() ? [{ type: 'text' as const, text: message }] : []),
+      ]
+    } catch (e) {
+      res.status(400).json({ detail: e instanceof Error ? e.message : 'failed to import attachments' })
+      return
+    }
 
-  // Save user message
-  const savedUserMessage = store.appendMessage(workId, 'user', userContent)
+    // Save user message
+    savedUserMessage = store.appendMessage(workId, 'user', userContent)
+  }
 
   // Auto-title from first message: immediate fallback, then async LLM refinement
   const isFirstMessage = !work.title
   const titleSource = message?.trim() || importedAttachments.map((block) => block.type === 'file_attachment' ? block.name : '').filter(Boolean).join(', ')
-  if (isFirstMessage) {
+  if (isFirstMessage && retryCompaction !== true) {
     store.updateTitle(workId, generateTitle(titleSource))
   }
 
@@ -2190,12 +2268,26 @@ app.post('/works/:id/chat', async (req, res) => {
   const assistantContent: store.ContentBlock[] = []
   let currentText = ''
   const toolCallMap = new Map<string, { name: string; args: unknown }>()
+  let memoryCandidateIndex = 0
+  const memoryCandidates: MemoryUpdateCandidate[] = []
 
   const send = (event: object) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
 
-  send({ type: 'user_message_saved', message: savedUserMessage })
+  const processMemoryCandidate = (candidate: MemoryUpdateCandidate) => {
+    memoryCandidateIndex += 1
+    memoryCandidates.push(candidate)
+    chatLog.info(`${tag} memory_candidate_received`, {
+      candidate_index: memoryCandidateIndex,
+      candidate_action: candidate.action,
+      candidate_memory_type: candidate.memory_type,
+    })
+  }
+
+  if (retryCompaction !== true) {
+    send({ type: 'user_message_saved', message: savedUserMessage })
+  }
 
   // Fire async LLM title generation (non-blocking)
   if (isFirstMessage) {
@@ -2237,8 +2329,9 @@ app.post('/works/:id/chat', async (req, res) => {
 
   let turnSucceeded = false
   let streamFailed = false
-  let memoryCandidate: MemoryUpdateCandidate | undefined
-  let memoryParseOutcome: MemoryParseOutcome = 'missing'
+  // Each assistant response owns an independent memory decision. Keep every
+  // decision; a later response must not overwrite an earlier one.
+  const memoryParseOutcomes: MemoryParseOutcome[] = []
   let memoryAdapters: Array<{ id: string; name: string; match: string[] }> = []
   let enabledAdapterIds = new Set<string>()
   let initialMemoryScope = { user: 'local' }
@@ -2274,9 +2367,9 @@ app.post('/works/:id/chat', async (req, res) => {
         send(ev)
         currentText += ev.content
       } else if (ev.type === 'memory_candidate' && ev.candidate) {
-        memoryCandidate = ev.candidate
+        processMemoryCandidate(ev.candidate)
       } else if (ev.type === 'memory_parse' && ev.memoryParse) {
-        memoryParseOutcome = ev.memoryParse.outcome
+        memoryParseOutcomes.push(ev.memoryParse.outcome)
       } else if (ev.type === 'context_compaction_start' || ev.type === 'context_compaction_end') {
         send(ev)
       } else if (ev.type === 'tool_call_start' && ev.id) {
@@ -2417,20 +2510,34 @@ app.post('/works/:id/chat', async (req, res) => {
   const toolCallsForMemory = assistantContent
     .filter((block): block is Extract<store.ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
     .map((block) => ({ name: block.name, args: block.args, status: block.status }))
-  const resolvedMemory = resolveChatMemoryCandidate({
-    candidate: memoryCandidate,
-    parseOutcome: memoryParseOutcome,
-  })
-  const effectiveMemoryCandidate = resolvedMemory.candidate
-  const plannedMemory = planCompletedChatMemoryEvents({
-    baseEventId: savedUserMessage.id,
-    baseScope: { user: 'local' },
-    userMessage: message,
-    adapters: memoryAdapters,
-    enabledAdapterIds,
-    toolCalls: toolCallsForMemory,
-    turnSucceeded,
-    candidate: effectiveMemoryCandidate,
+  const memoryParseOutcome = memoryParseOutcomes.length > 0
+    ? memoryParseOutcomes.includes('present_parse_error')
+      ? 'present_parse_error'
+      : memoryParseOutcomes.includes('present_ok')
+        ? 'present_ok'
+        : memoryParseOutcomes.includes('present_ignore')
+          ? 'present_ignore'
+          : 'missing'
+    : 'missing' as MemoryParseOutcome
+  const plannedMemoryEvents = memoryCandidates.flatMap((candidate, index) => {
+    const planned = planCompletedChatMemoryEvents({
+      baseEventId: `${savedUserMessage.id}:model-${index + 1}`,
+      baseScope: { user: 'local' },
+      userMessage: message,
+      adapters: memoryAdapters,
+      enabledAdapterIds,
+      toolCalls: toolCallsForMemory,
+      turnSucceeded,
+      candidate,
+    })
+    chatLog.info(`${tag} memory_candidate_plan`, {
+      candidate_index: index + 1,
+      candidate_action: candidate.action,
+      candidate_memory_type: candidate.memory_type,
+      admit_reason: planned.admitReason,
+      event_count: planned.events.length,
+    })
+    return planned.events.map((event) => ({ event, candidate }))
   })
 
   const protocolCheck = isMemoryProtocolFailure({
@@ -2440,15 +2547,10 @@ app.post('/works/:id/chat', async (req, res) => {
   })
 
   chatLog.info(`${tag} memory_plan`, {
-    has_candidate: Boolean(effectiveMemoryCandidate),
-    candidate_source: resolvedMemory.source,
+    has_candidate: memoryCandidateIndex > 0,
+    candidate_count: memoryCandidateIndex,
     parse_outcome: memoryParseOutcome,
-    candidate_action: effectiveMemoryCandidate?.action,
-    candidate_memory_type: effectiveMemoryCandidate?.memory_type,
     turn_succeeded: turnSucceeded,
-    admit_reason: plannedMemory.admitReason,
-    event_count: plannedMemory.events.length,
-    event_triggers: plannedMemory.events.map((event) => event.trigger),
     has_terminal_shell: protocolCheck.hasTerminalShell,
     protocol_violation: protocolCheck.violated ? protocolCheck.code : undefined,
   })
@@ -2479,11 +2581,10 @@ app.post('/works/:id/chat', async (req, res) => {
     })
   }
 
-  if (plannedMemory.events.length > 0) {
-    for (const event of plannedMemory.events) {
+  if (plannedMemoryEvents.length > 0) {
+    for (const { event } of plannedMemoryEvents) {
       send({ type: 'memory_status', status: 'processing', workId, eventId: event.eventId })
     }
-    chatLog.info(` sending res.end() before background memory processing for workId=${workId}`)
     broadcastSSE({ type: 'works_changed', workId })
     res.end()
     setImmediate(() => {
@@ -2492,13 +2593,13 @@ app.post('/works/:id/chat', async (req, res) => {
         memoryStore = getMemoryStore()
       } catch (error) {
         chatLog.info(`${tag} memory store unavailable: ${error instanceof Error ? error.message : String(error)}`)
-        for (const event of plannedMemory.events) {
+        for (const { event } of plannedMemoryEvents) {
           broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
         }
         return
       }
-      for (const event of plannedMemory.events) {
-        const patched = applyAdmissionToCandidate(effectiveMemoryCandidate!, event)
+      for (const { event, candidate } of plannedMemoryEvents) {
+        const patched = applyAdmissionToCandidate(candidate, event)
         void processMemoryEvent({
           eventId: event.eventId,
           scope: event.scope,
@@ -2514,28 +2615,11 @@ app.post('/works/:id/chat', async (req, res) => {
             ...(memoryResult.status === 'failed' ? { error: memoryResult.error } : {}),
           })
         }).catch(() => {
-          broadcastSSE({
-            type: 'memory_status',
-            workId,
-            eventId: event.eventId,
-            status: 'failed',
-          })
+          broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
         })
       }
     })
     return
-  }
-
-  if (effectiveMemoryCandidate && plannedMemory.admitReason && plannedMemory.admitReason !== 'ignore') {
-    const admissionEventId = `${savedUserMessage.id}:memory-admission-${plannedMemory.admitReason}`
-    const error = `长期记忆候选未通过准入校验：${plannedMemory.admitReason}`
-    chatLog.info(`${tag} memory_admission_rejected`, {
-      reason: plannedMemory.admitReason,
-      event_id: admissionEventId,
-      memory_type: effectiveMemoryCandidate.memory_type,
-    })
-    send({ type: 'memory_status', status: 'failed', workId, eventId: admissionEventId, error })
-    broadcastSSE({ type: 'memory_status', status: 'failed', workId, eventId: admissionEventId, error })
   }
 
   chatLog.info(` sending res.end() for workId=${workId}`)

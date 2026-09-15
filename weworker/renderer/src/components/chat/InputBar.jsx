@@ -67,6 +67,7 @@ export default function InputBar({
   const hasAttachments = attachments.length > 0
   const attachmentLimit = Math.max(1, Number(maxAttachments) || DEFAULT_MAX_ATTACHMENTS)
   const pasteTextAttachmentThreshold = useSettingsStore((s) => s.pasteTextAttachmentThreshold)
+  const contextLimit = useSettingsStore((s) => s.contextLimit)
   const textAttachmentThreshold = Math.max(1, Number(pasteTextAttachmentThreshold) || DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD)
   const overAttachmentLimit = attachments.length > attachmentLimit
   const inputDisabled = !!disabled || !!streaming
@@ -673,7 +674,7 @@ export default function InputBar({
         {uploadBtn}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        {!isWelcome && <ContextPanel snapshot={contextSnapshot} />}
+        <ContextPanel snapshot={contextSnapshot} contextLimit={contextLimit} />
         {actionBtn}
       </div>
     </div>

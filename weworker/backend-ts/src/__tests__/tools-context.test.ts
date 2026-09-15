@@ -27,10 +27,14 @@ describe('MCP tool context', () => {
     const secondAbort = new AbortController()
     const firstServer = buildMcpServer({ workId: 'work-1', abortSignal: firstAbort.signal })
     const secondServer = buildMcpServer({ workId: 'work-2', abortSignal: secondAbort.signal })
+    type RegisteredTool = { handler: (input: { command: string }) => Promise<unknown> }
+    type ServerWithRegisteredTools = { _registeredTools: Record<string, RegisteredTool> }
+    const firstTools = firstServer.instance as unknown as ServerWithRegisteredTools
+    const secondTools = secondServer.instance as unknown as ServerWithRegisteredTools
 
-    await firstServer.instance._registeredTools.weworker_powershell.handler({ command: 'echo first' })
-    await secondServer.instance._registeredTools.weworker_powershell.handler({ command: 'echo second' })
-    await firstServer.instance._registeredTools.weworker_powershell.handler({ command: 'echo again' })
+    await firstTools._registeredTools.weworker_powershell.handler({ command: 'echo first' })
+    await secondTools._registeredTools.weworker_powershell.handler({ command: 'echo second' })
+    await firstTools._registeredTools.weworker_powershell.handler({ command: 'echo again' })
 
     expect(runWeWorkerPowerShell.mock.calls.map(([options]) => ({
       command: options.command,

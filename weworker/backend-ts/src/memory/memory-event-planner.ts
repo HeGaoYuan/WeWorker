@@ -3,8 +3,8 @@ import {
   type MemoryAdapterIdentity,
   type MemoryToolCall,
 } from './memory-event-context.js'
-import { admitMemoryCandidate, getTaskAssessment, hasTaskFailure } from './memory-admission.js'
-import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory-types.js'
+import { admitMemoryCandidate, getTaskAssessment } from './memory-admission.js'
+import type { MemoryEventTrigger, MemoryScope, MemoryTaskAssessment, MemoryType, MemoryUpdateCandidate } from './memory-types.js'
 import type { MemoryParseOutcome } from './memory-extractor.js'
 
 export interface PlannedMemoryEvent {
@@ -93,15 +93,26 @@ export function planCompletedChatMemoryEvents(input: {
       ...meta,
     })
   } else if (candidate.memory_type === 'task_execution') {
-    const assessment = getTaskAssessment(candidate)
-    const failed = hasTaskFailure(candidate)
+    const assessment = getTaskAssessment(candidate) ?? deriveTaskAssessment(input.toolCalls)
+    const failed = assessment !== undefined && !assessment.completed
+    const taskMeta = assessment && !getTaskAssessment(candidate)
+      ? {
+          ...meta,
+          factsPatch: {
+            ...(meta.factsPatch || {}),
+            task_assessment: assessment,
+          },
+        }
+      : meta
     const taskTrigger = candidate.facts?.declarative === true
       ? 'agent_decision'
       : assessment?.recovered === true
       ? 'task_recovered'
       : failed
         ? 'task_failed'
-        : 'task_completed'
+        : assessment?.completed === true
+          ? 'task_completed'
+          : 'agent_decision'
     events.push({
       eventId: taskTrigger === 'agent_decision'
         ? `${input.baseEventId}:agent-task-declarative`
@@ -109,7 +120,7 @@ export function planCompletedChatMemoryEvents(input: {
       trigger: taskTrigger,
       scope,
       expectedMemoryType: 'task_execution',
-      ...meta,
+      ...taskMeta,
     })
   } else if (candidate.memory_type.startsWith('extension:') && scope.extension) {
     events.push({
@@ -122,6 +133,13 @@ export function planCompletedChatMemoryEvents(input: {
   }
 
   return { scope, events, admitReason: admission.reason }
+}
+
+function deriveTaskAssessment(toolCalls: MemoryToolCall[]): MemoryTaskAssessment | undefined {
+  const terminalCalls = toolCalls.filter((tool) => tool.status === 'done' || tool.status === 'failed')
+  if (!terminalCalls.length) return undefined
+  if (terminalCalls.some((tool) => tool.status === 'done')) return { completed: true }
+  return { completed: false, failure_kind: 'unknown' }
 }
 
 export function planTaskMemoryEvent(input: {

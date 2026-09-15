@@ -156,7 +156,7 @@ describe('long-term memory retrieval', () => {
     expect(recalled.recalled).toContain('powershell_markdown_audit_report')
   })
 
-  it('maps historical site_operation rows to task_execution during reads', () => {
+  it('retrieves task_execution rows within a site scope', () => {
     const database = new DatabaseSync(':memory:')
     const store = new MemoryStore(database)
     stores.push(store)
@@ -169,7 +169,7 @@ describe('long-term memory retrieval', () => {
       ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, 'active', ?, ?, ?, ?)
     `).run(
       'legacy-site-memory',
-      'site_operation',
+      'task_execution',
       'legacy_invoice_flow',
       '历史费控流程先选择费用归属，再上传发票。',
       '{}',

@@ -30,4 +30,31 @@ describe('agent SDK security config', () => {
     expect(agentSource).toContain("type: 'context_compaction_end'")
     expect(agentSource).toContain('systemPrompt: contextAssembly.sdk.system_prompt')
   })
+
+  it('keeps post-compaction usage probing read-only and non-persistent', () => {
+    expect(agentSource).toContain('probeContextUsage')
+    expect(agentSource).toContain("kind: 'post_compaction_probe'")
+    expect(agentSource).toContain("canUseTool: async () => ({ behavior: 'deny'")
+    expect(agentSource).toContain("permissionMode: 'dontAsk'")
+    expect(agentSource).toContain('persistSession: false')
+    expect(agentSource).toContain('post-compaction usage probe failed')
+  })
+
+  it('injects the memory reminder before each next model request', () => {
+    expect(agentSource).toContain('const memoryUserPromptSubmitHook: HookCallback')
+    expect(agentSource).toContain('const memoryPostToolBatchHook: HookCallback')
+    expect(agentSource).toContain('UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }]')
+    expect(agentSource).toContain('PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }]')
+    expect(agentSource).not.toContain('PostToolUse: [{ hooks: [memoryPostToolUseHook] }]')
+    expect(agentSource).toContain('additionalContext: MEMORY_USER_TURN_REMINDER')
+    expect(agentSource).toContain("log.info('memory_reminder_injected'")
+    expect(agentSource).toContain("log.info('memory_reminder_observed'")
+  })
+
+  it('logs and propagates conversation compaction summary failures', () => {
+    expect(agentSource).toContain("log.error('conversation compaction summary failed'")
+    expect(agentSource).toContain("log.error('conversation compaction summary request failed'")
+    expect(agentSource).toContain('providerErrors')
+    expect(agentSource).toContain('throw new Error(`对话压缩摘要失败：${detail}`)')
+  })
 })
