@@ -101,7 +101,9 @@ import {
 import { appendAssistantStatusLine, extractAssistantStatusLine, finalizeAssistantTextWithStatus } from './assistant-status.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext } from './memory/memory-event-context.js'
-import { planCompletedChatMemoryEvents } from './memory/memory-event-planner.js'
+import { planCompletedChatMemoryEvents, resolveChatMemoryCandidate, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
+import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
+import type { MemoryParseOutcome } from './memory/memory-extractor.js'
 import { getMemoryStore } from './memory/memory-store.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
@@ -2236,7 +2238,9 @@ app.post('/works/:id/chat', async (req, res) => {
   let turnSucceeded = false
   let streamFailed = false
   let memoryCandidate: MemoryUpdateCandidate | undefined
+  let memoryParseOutcome: MemoryParseOutcome = 'missing'
   let memoryAdapters: Array<{ id: string; name: string; match: string[] }> = []
+  let enabledAdapterIds = new Set<string>()
   let initialMemoryScope = { user: 'local' }
   try {
     chatLog.info(`${tag} 鈻?turn start`)
@@ -2244,7 +2248,7 @@ app.post('/works/:id/chat', async (req, res) => {
     send({ type: 'turn_start', turnId, workId })
     // Build the set of enabled adapter IDs from config
     const allAdapters = parseAllAdapters()
-    const enabledAdapterIds = new Set(
+    enabledAdapterIds = new Set(
       [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled)).map(([id]) => id)
     )
     memoryAdapters = [...allAdapters.values()].map((adapter) => ({
@@ -2271,6 +2275,8 @@ app.post('/works/:id/chat', async (req, res) => {
         currentText += ev.content
       } else if (ev.type === 'memory_candidate' && ev.candidate) {
         memoryCandidate = ev.candidate
+      } else if (ev.type === 'memory_parse' && ev.memoryParse) {
+        memoryParseOutcome = ev.memoryParse.outcome
       } else if (ev.type === 'tool_call_start' && ev.id) {
         // Deduplicate: streaming mode sends tool_call_start twice (stream_event + assistant message)
         const isUpdate = toolCallMap.has(ev.id)
@@ -2406,17 +2412,66 @@ app.post('/works/:id/chat', async (req, res) => {
     store.appendMessage(workId, 'assistant', assistantContent)
   }
 
+  const toolCallsForMemory = assistantContent
+    .filter((block): block is Extract<store.ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
+    .map((block) => ({ name: block.name, args: block.args, status: block.status }))
+  const resolvedMemory = resolveChatMemoryCandidate({
+    candidate: memoryCandidate,
+    parseOutcome: memoryParseOutcome,
+  })
+  const effectiveMemoryCandidate = resolvedMemory.candidate
   const plannedMemory = planCompletedChatMemoryEvents({
     baseEventId: savedUserMessage.id,
     baseScope: { user: 'local' },
     userMessage: message,
     adapters: memoryAdapters,
-    toolCalls: assistantContent
-      .filter((block): block is Extract<store.ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
-      .map((block) => ({ name: block.name, args: block.args, status: block.status })),
+    enabledAdapterIds,
+    toolCalls: toolCallsForMemory,
     turnSucceeded,
-    candidate: memoryCandidate,
+    candidate: effectiveMemoryCandidate,
   })
+
+  const protocolCheck = isMemoryProtocolFailure({
+    toolCalls: toolCallsForMemory,
+    parseOutcome: memoryParseOutcome,
+    aborted: abortController.signal.aborted,
+  })
+
+  chatLog.info(`${tag} memory_plan`, {
+    has_candidate: Boolean(effectiveMemoryCandidate),
+    candidate_source: resolvedMemory.source,
+    parse_outcome: memoryParseOutcome,
+    candidate_action: effectiveMemoryCandidate?.action,
+    candidate_memory_type: effectiveMemoryCandidate?.memory_type,
+    turn_succeeded: turnSucceeded,
+    admit_reason: plannedMemory.admitReason,
+    event_count: plannedMemory.events.length,
+    event_triggers: plannedMemory.events.map((event) => event.trigger),
+    has_terminal_shell: protocolCheck.hasTerminalShell,
+    protocol_violation: protocolCheck.violated ? protocolCheck.code : undefined,
+  })
+
+  if (protocolCheck.violated) {
+    const protocolEventId = `${savedUserMessage.id}:protocol-${protocolCheck.code}`
+    chatLog.info(`${tag} memory_protocol_violation`, {
+      code: protocolCheck.code,
+      parse_outcome: memoryParseOutcome,
+    })
+    send({
+      type: 'memory_status',
+      status: 'failed',
+      workId,
+      eventId: protocolEventId,
+      error: '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
+    })
+    broadcastSSE({
+      type: 'memory_status',
+      status: 'failed',
+      workId,
+      eventId: protocolEventId,
+      error: '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
+    })
+  }
 
   if (plannedMemory.events.length > 0) {
     for (const event of plannedMemory.events) {
@@ -2437,12 +2492,13 @@ app.post('/works/:id/chat', async (req, res) => {
         return
       }
       for (const event of plannedMemory.events) {
+        const patched = applyAdmissionToCandidate(effectiveMemoryCandidate!, event)
         void processMemoryEvent({
           eventId: event.eventId,
           scope: event.scope,
           expectedMemoryType: event.expectedMemoryType,
           store: memoryStore,
-          candidate: memoryCandidate!,
+          candidate: patched,
         }).then((memoryResult) => {
           broadcastSSE({
             type: 'memory_status',

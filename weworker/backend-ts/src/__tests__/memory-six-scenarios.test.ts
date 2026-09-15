@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { recallLongTermMemory } from '../context/long-term-context.js'
-import { planCompletedChatMemoryEvents, planTaskMemoryEvent } from '../memory/memory-event-planner.js'
+import { planCompletedChatMemoryEvents, planTaskMemoryEvent, resolveChatMemoryCandidate } from '../memory/memory-event-planner.js'
 import { processMemoryEvent } from '../memory/memory-lifecycle.js'
 import { MemoryStore } from '../memory/memory-store.js'
 import type { MemoryScope, MemoryUpdateCandidate } from '../memory/memory-types.js'
@@ -122,6 +122,9 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       memory_type: 'site_operation',
       key: 'expense_submit_order',
       content: '团建报销先选择费用归属，再上传发票，提交前询问确认。',
+      facts: { declarative: true },
+      scope: { user: 'user-a', site: 'billing.example.com' },
+      confidence: 0.55,
     }
     const plan = planCompletedChatMemoryEvents({
       baseEventId: 'site-explicit',
@@ -133,15 +136,21 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       candidate,
     })
 
-    expect(plan.scope.site).toBe('billing.example.com')
+    expect(plan.events).toHaveLength(1)
+    expect(plan.events[0].scope.site).toBe('billing.example.com')
+    expect(plan.events[0].factsPatch?.verification).toBe('provisional')
     const result = await applyPlannedEvent({
       store,
       event: plan.events[0],
-      candidate,
+      candidate: {
+        ...candidate,
+        facts: { ...candidate.facts, ...plan.events[0].factsPatch },
+        confidence: 0.55,
+      },
     })
 
     expect(result.status).toBe('saved')
-    expect(recalled(store, '继续处理团建报销', plan.scope)).toContain('先选择费用归属')
+    expect(recalled(store, '继续处理团建报销', plan.events[0].scope)).toContain('先选择费用归属')
     expect(recalled(store, '继续处理团建报销', { user: 'user-a', site: 'support.example.com' })).not.toContain('先选择费用归属')
   })
 
@@ -153,6 +162,7 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
       memory_type: 'site_operation',
       key: 'expense_tool_flow',
       content: '团建报销使用费控提交工具完成。',
+      scope: { user: 'user-a', site: 'billing.example.com' },
     }
     const plan = planCompletedChatMemoryEvents({
       baseEventId: 'site-implicit',
@@ -348,5 +358,46 @@ describe('长期记忆 3 类经验 x 2 种发现方式', () => {
     expect(recovered.status).toBe('saved')
     expect(recoveredPlan.scope.site).toBe('support.example.com')
     expect(store.get(oldMemory.id)?.content).toContain('登录后可继续原查询')
+  })
+
+  it('模型省略隐藏块时不合成 fallback 候选', () => {
+    const resolved = resolveChatMemoryCandidate({
+      parseOutcome: 'missing',
+    })
+    expect(resolved.source).toBe('none')
+    expect(resolved.candidate).toBeUndefined()
+
+    const withShell = resolveChatMemoryCandidate({
+      parseOutcome: 'missing',
+    })
+    expect(withShell.source).toBe('none')
+
+    const ignored = resolveChatMemoryCandidate({
+      parseOutcome: 'present_ignore',
+    })
+    expect(ignored.source).toBe('none')
+    expect(ignored.candidate).toBeUndefined()
+
+    const explicitIgnore = resolveChatMemoryCandidate({
+      candidate: {
+        action: 'ignore',
+        memory_type: 'task_execution',
+        key: 'x',
+        content: 'x',
+      },
+    })
+    expect(explicitIgnore.source).toBe('none')
+
+    const model = resolveChatMemoryCandidate({
+      candidate: {
+        action: 'create',
+        memory_type: 'task_execution',
+        key: 'verify_ok',
+        content: '可用 Write-Output 做快速验证。',
+      },
+      parseOutcome: 'present_ok',
+    })
+    expect(model.source).toBe('model')
+    expect(model.candidate?.key).toBe('verify_ok')
   })
 })

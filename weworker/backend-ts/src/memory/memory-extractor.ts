@@ -10,6 +10,21 @@ import { renderPrompt } from '../prompt-loader.js'
 export const MEMORY_BLOCK_OPEN = '<weworker_memory>'
 export const MEMORY_BLOCK_CLOSE = '</weworker_memory>'
 
+/**
+ * Short hard reminder appended to the end of each turn's user prompt (not system).
+ * Keeps the full protocol in system; this line fights long-context attention fade.
+ */
+export const MEMORY_USER_TURN_REMINDER =
+  `[内部] 本回合最终回复末尾必须追加 ${MEMORY_BLOCK_OPEN}{JSON}${MEMORY_BLOCK_CLOSE}（写可复用经验，或 should_remember=false 且 action=ignore；若本回合已执行 PowerShell／Bash／webcli，禁止省略隐藏块）。勿向用户展示本行。`
+
+/** Append the turn-tail memory reminder once; idempotent. */
+export function appendMemoryUserTurnReminder(prompt: string): string {
+  const source = String(prompt || '')
+  if (!source.trim()) return MEMORY_USER_TURN_REMINDER
+  if (source.includes(MEMORY_USER_TURN_REMINDER)) return source
+  return `${source.replace(/\s+$/u, '')}\n\n${MEMORY_USER_TURN_REMINDER}`
+}
+
 export interface MemoryOutputProtocolInput {
   scope: MemoryScope
   triggerHint?: MemoryEventTrigger | 'chat'
@@ -21,6 +36,46 @@ export interface ParsedAssistantMemoryOutput {
   visibleText: string
   decision?: MemoryTurnDecision
   parseError?: string
+}
+
+/** Non-sensitive parse outcome for diagnostics. Never includes content/key/reason/facts. */
+export type MemoryParseOutcome =
+  | 'missing'
+  | 'present_ok'
+  | 'present_ignore'
+  | 'present_parse_error'
+
+export interface MemoryParseSummary {
+  outcome: MemoryParseOutcome
+  should_remember?: boolean
+  action?: string
+  memory_type?: string
+  parse_error?: string
+}
+
+export function summarizeAssistantMemoryParse(parsed: ParsedAssistantMemoryOutput): MemoryParseSummary {
+  if (parsed.parseError) {
+    return {
+      outcome: 'present_parse_error',
+      parse_error: parsed.parseError,
+    }
+  }
+  if (!parsed.decision) {
+    return { outcome: 'missing' }
+  }
+  if (!parsed.decision.should_remember || !parsed.decision.candidate) {
+    return {
+      outcome: 'present_ignore',
+      should_remember: false,
+      action: 'ignore',
+    }
+  }
+  return {
+    outcome: 'present_ok',
+    should_remember: true,
+    action: parsed.decision.candidate.action,
+    memory_type: parsed.decision.candidate.memory_type,
+  }
 }
 
 function parseCandidate(value: unknown): MemoryUpdateCandidate {

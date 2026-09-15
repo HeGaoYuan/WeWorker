@@ -3,78 +3,126 @@ import {
   type MemoryAdapterIdentity,
   type MemoryToolCall,
 } from './memory-event-context.js'
+import { admitMemoryCandidate } from './memory-admission.js'
 import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory-types.js'
+import type { MemoryParseOutcome } from './memory-extractor.js'
 
 export interface PlannedMemoryEvent {
   eventId: string
   trigger: MemoryEventTrigger
   scope: MemoryScope
   expectedMemoryType?: MemoryType
+  /** Merged into candidate.facts before persist. */
+  factsPatch?: Record<string, unknown>
+  confidenceCap?: number
+  admitReason?: string
 }
 
 function hasFailedTool(toolCalls: MemoryToolCall[]): boolean {
   return toolCalls.some((tool) => tool.status === 'failed' || tool.status === 'error')
 }
 
+/**
+ * Resolve the memory candidate for a completed chat turn.
+ * Model hidden block is the sole author; missing/ignore blocks never synthesize fallback content.
+ */
+export function resolveChatMemoryCandidate(input: {
+  candidate?: MemoryUpdateCandidate
+  parseOutcome?: MemoryParseOutcome
+}): { candidate?: MemoryUpdateCandidate; source: 'model' | 'none' } {
+  if (input.candidate) {
+    if (input.candidate.action === 'ignore') {
+      return { source: 'none' }
+    }
+    return { candidate: input.candidate, source: 'model' }
+  }
+  if (input.parseOutcome === 'present_ignore') {
+    return { source: 'none' }
+  }
+  return { source: 'none' }
+}
+
+/**
+ * Plan memory events using candidate-first admission (no NL fuzzy veto).
+ */
 export function planCompletedChatMemoryEvents(input: {
   baseEventId: string
   baseScope: MemoryScope
   userMessage: string
   adapters: MemoryAdapterIdentity[]
+  enabledAdapterIds?: Set<string> | string[]
   toolCalls: MemoryToolCall[]
   turnSucceeded: boolean
   candidate?: MemoryUpdateCandidate
-}): { scope: MemoryScope; events: PlannedMemoryEvent[] } {
+}): { scope: MemoryScope; events: PlannedMemoryEvent[]; admitReason?: string } {
+  // Context retained for telemetry / recall hints only — not admission.
   const context = buildMemoryEventContext({
     baseScope: input.baseScope,
     userMessage: input.userMessage,
     adapters: input.adapters,
     toolCalls: input.toolCalls,
   })
-  const events: PlannedMemoryEvent[] = []
   const candidate = input.candidate
-  if (!candidate || candidate.action === 'ignore') return { scope: context.scope, events }
-  const hasStableSiteWorkflow = input.turnSucceeded && !hasFailedTool(input.toolCalls) && context.hasSuccessfulSiteWorkflow
+  if (!candidate || candidate.action === 'ignore') {
+    return { scope: context.scope, events: [], admitReason: 'ignore' }
+  }
+
+  const admission = admitMemoryCandidate({
+    candidate,
+    baseScope: input.baseScope,
+    adapters: input.adapters,
+    enabledAdapterIds: input.enabledAdapterIds,
+    toolCalls: input.toolCalls,
+    turnSucceeded: input.turnSucceeded,
+  })
+  if (!admission.ok) {
+    return { scope: admission.scope, events: [], admitReason: admission.reason }
+  }
+
+  const scope = admission.scope
+  const events: PlannedMemoryEvent[] = []
+  const meta = {
+    factsPatch: admission.factsPatch,
+    confidenceCap: admission.confidenceCap,
+    admitReason: admission.reason,
+  }
 
   if (candidate.memory_type === 'user_usage') {
     events.push({
       eventId: `${input.baseEventId}:agent-user-usage`,
       trigger: 'agent_decision',
-      scope: context.scope,
+      scope,
       expectedMemoryType: 'user_usage',
+      ...meta,
     })
-  }
-
-  const hasSafeDeclaredSiteWorkflow = input.turnSucceeded && !hasFailedTool(input.toolCalls) && input.toolCalls.length === 0 && Boolean(context.scope.site)
-  if (candidate.memory_type === 'site_operation' && (hasStableSiteWorkflow || hasSafeDeclaredSiteWorkflow)) {
+  } else if (candidate.memory_type === 'site_operation') {
     events.push({
       eventId: `${input.baseEventId}:agent-site-operation`,
-      trigger: 'site_workflow_completed',
-      scope: context.scope,
+      trigger: admission.verification === 'provisional' ? 'agent_decision' : 'site_workflow_completed',
+      scope,
       expectedMemoryType: 'site_operation',
+      ...meta,
     })
-  }
-
-  if (candidate.memory_type === 'task_execution') {
+  } else if (candidate.memory_type === 'task_execution') {
     const failed = hasFailedTool(input.toolCalls) || !input.turnSucceeded
     events.push({
       eventId: `${input.baseEventId}:agent-task-${input.toolCalls.length > 0 ? (failed ? 'failed' : 'completed') : 'declared'}`,
       trigger: input.toolCalls.length > 0 ? (failed ? 'task_failed' : 'task_completed') : 'agent_decision',
-      scope: context.scope,
+      scope,
       expectedMemoryType: 'task_execution',
+      ...meta,
     })
-  }
-
-  if (candidate.memory_type.startsWith('extension:') && context.scope.extension) {
+  } else if (candidate.memory_type.startsWith('extension:') && scope.extension) {
     events.push({
       eventId: `${input.baseEventId}:agent-extension`,
       trigger: 'agent_decision',
-      scope: context.scope,
+      scope,
       expectedMemoryType: candidate.memory_type,
+      ...meta,
     })
   }
 
-  return { scope: context.scope, events }
+  return { scope, events, admitReason: admission.reason }
 }
 
 export function planTaskMemoryEvent(input: {
@@ -99,5 +147,23 @@ export function planTaskMemoryEvent(input: {
       scope: context.scope,
       expectedMemoryType: 'task_execution',
     },
+  }
+}
+
+/** Apply admission patches onto a candidate before persist. */
+export function applyAdmissionToCandidate(
+  candidate: MemoryUpdateCandidate,
+  event: PlannedMemoryEvent,
+): MemoryUpdateCandidate {
+  const facts = { ...(candidate.facts || {}), ...(event.factsPatch || {}) }
+  let confidence = candidate.confidence
+  if (typeof event.confidenceCap === 'number') {
+    confidence = Math.min(confidence ?? event.confidenceCap, event.confidenceCap)
+  }
+  return {
+    ...candidate,
+    facts,
+    confidence,
+    scope: { ...(candidate.scope || {}), ...event.scope },
   }
 }

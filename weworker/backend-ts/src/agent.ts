@@ -36,7 +36,13 @@ import {
 } from './context-assembly.js'
 import type { MemoryScope } from './memory/memory-types.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
-import { buildMemoryOutputProtocolPrompt, parseAssistantMemoryOutput } from './memory/memory-extractor.js'
+import {
+  appendMemoryUserTurnReminder,
+  buildMemoryOutputProtocolPrompt,
+  parseAssistantMemoryOutput,
+  summarizeAssistantMemoryParse,
+  type MemoryParseSummary,
+} from './memory/memory-extractor.js'
 import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic-auth.js'
 import { renderPrompt } from './prompt-loader.js'
 
@@ -113,7 +119,7 @@ export function buildConfiguredModelEnv(
 }
 
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'memory_status' | 'memory_candidate'
+  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'memory_status' | 'memory_candidate' | 'memory_parse'
   content?: string
   id?: string
   name?: string
@@ -130,6 +136,7 @@ export interface SSEEvent {
   eventId?: string
   error?: string
   candidate?: MemoryUpdateCandidate
+  memoryParse?: MemoryParseSummary
 }
 
 /** Per-turn token & prompt-cache metrics, emitted once per streamChat turn. */
@@ -580,6 +587,9 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       if (buf?.text) {
         const cleaned = stripBase64Images(buf.text)
         const parsed = parseAssistantMemoryOutput(cleaned)
+        const memoryParse = summarizeAssistantMemoryParse(parsed)
+        log.info('memory_parse', memoryParse)
+        yield { type: 'memory_parse', memoryParse }
         if (parsed.visibleText) yield { type: 'text_delta', content: parsed.visibleText }
         if (parsed.decision?.should_remember && parsed.decision.candidate) {
           yield { type: 'memory_candidate', candidate: parsed.decision.candidate }
@@ -625,6 +635,9 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
         if (block.type === 'text' && block.text) {
           const cleaned = stripBase64Images(block.text)
           const parsed = parseAssistantMemoryOutput(cleaned)
+          const memoryParse = summarizeAssistantMemoryParse(parsed)
+          log.info('memory_parse', memoryParse)
+          yield { type: 'memory_parse', memoryParse }
           if (parsed.visibleText) yield { type: 'text_delta', content: parsed.visibleText }
           if (parsed.decision?.should_remember && parsed.decision.candidate) {
             yield { type: 'memory_candidate', candidate: parsed.decision.candidate }
@@ -787,28 +800,32 @@ export async function* streamChat(
     return filesystemToolGuard(toolName, input as Record<string, unknown>)
   }
 
-  const prompt = buildPromptString(messages)
+  const memoryEnabled = opts.memoryEnabled !== false
+  const promptRaw = buildPromptString(messages)
+  // Attention: full protocol stays in system; a one-line hard reminder is appended
+  // to the end of each turn's user prompt (absolute request tail for the user turn).
+  const prompt = memoryEnabled ? appendMemoryUserTurnReminder(promptRaw) : promptRaw
   const memoryQuery = messages.length > 0
     ? messagePromptText(messages[messages.length - 1]).slice(0, 2_000)
     : ''
   const identityPrompt = channelPermissionMode === 'qa_only'
     ? '你是 WeWorker 问答助手。'
     : '你是 WeWorker，一个通过 Adapter 操作网页的 AI 助手。'
-  const longTermMemory = opts.memoryEnabled === false
-    ? { recalled: '' }
-    : recallLongTermMemory({
+  const longTermMemory = memoryEnabled
+    ? recallLongTermMemory({
       query: memoryQuery,
       scope: opts.memoryScope ?? { user: 'local' },
       limit: 8,
     })
-  const memoryProtocol = opts.memoryEnabled === false
-    ? ''
-    : buildMemoryOutputProtocolPrompt({
+    : { recalled: '' }
+  const memoryProtocol = memoryEnabled
+    ? buildMemoryOutputProtocolPrompt({
       scope: opts.memoryScope ?? { user: 'local' },
       triggerHint: opts.memoryTriggerHint ?? 'chat',
       expectedMemoryType: opts.memoryExpectedType,
       previousTaskFailed: opts.previousTaskFailed,
     })
+    : ''
   const systemPrompt = buildSystemPrompt({
     channelPermissionMode,
     zcfRole: opts.zcfRole,

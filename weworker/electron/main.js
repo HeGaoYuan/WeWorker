@@ -203,7 +203,10 @@ async function createWindow() {
   if (isDev) {
     const rendererUrl = process.env.WEWORKER_DEV_SERVER_URL || 'http://localhost:5173'
     mainWindow.loadURL(rendererUrl)
-    mainWindow.webContents.openDevTools()
+    // UI E2E attaches over CDP; auto DevTools steals the only page handle puppeteer sees.
+    if (!process.env.WEWORKER_E2E) {
+      mainWindow.webContents.openDevTools()
+    }
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'))
   }
