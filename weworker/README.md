@@ -55,9 +55,8 @@ weworker/
 |------|---------|------|
 | Node.js | ≥ 18 | 运行时 & 构建工具 |
 | npm | 随 Node.js | 包管理 |
-| uv | 当前稳定版 | 同步并运行内置 Webwright |
+| uv | 当前稳定版 | 管理 Python 环境并构建 Windows 解密工具 |
 | CPython | 3.14.6 | 正式构建 Webwright embedded runtime |
-| Python 3 + PyInstaller | — | 仅 Windows 构建 `sd_decrypt.exe` |
 
 Webwright 源码由 WeWorker 主仓库直接管理在 `components/webwright/`，普通克隆即可取得完整源码：
 
@@ -109,13 +108,7 @@ npm run build:mac
 
 ### Windows
 
-需先安装 Python 3 和 PyInstaller：
-
-```bash
-pip install pyinstaller
-```
-
-然后执行：
+构建脚本会通过 `uv` 在 `build/decrypt-venv/` 创建隔离环境，不需要修改系统 Python：
 
 ```bash
 npm run build:win

@@ -20,7 +20,7 @@
     "build:bridge:win": "node scripts/bundle-bridge.cjs",
     "build:webcli": "node scripts/bundle-webcli.cjs",
     "build:mac": "node scripts/prepare-build.cjs && npm run build:webwright && npm run build:renderer && npm run build:backend-ts && npm run build:bridge && npm run build:webcli && node scripts/build-electron-current-arch.cjs --mac",
-    "build:decrypt": "python -m PyInstaller --onefile --name sd_decrypt --distpath build/decrypt-dist --workpath build/decrypt-work --specpath build scripts/sd_decrypt.py --noconfirm",
+    "build:decrypt": "node scripts/build-decrypt.cjs",
     "build:win": "node scripts/prepare-build.cjs && npm run build:webwright && npm run build:renderer && npm run build:backend-ts && npm run build:bridge:win && npm run build:webcli && npm run build:decrypt && node scripts/build-electron-current-arch.cjs --win",
     "install:all": "npm run ensure:webwright && npm run sync:webwright && npm install && cd renderer && npm install && cd ../backend-ts && npm install && cd ../../webcli && npm install && cd ../weworker && npm run build:webcli"
   },

@@ -4,7 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "prepare:sites": "node scripts/prepare-sites.mjs",
+    "predev": "npm run prepare:sites",
     "dev": "vite",
+    "prebuild": "npm run prepare:sites",
     "build": "vite build",
     "preview": "vite preview"
   },

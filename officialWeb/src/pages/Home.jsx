@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import WeWorkerAnimation from '../components/WeWorkerAnimation.jsx'
-import sitesData from '../lib/sites.json'
+import sitesData from '../lib/sites.generated.json'
 
 // Collect all site names for the feature description
 const ALL_SITE_NAMES = sitesData.groups

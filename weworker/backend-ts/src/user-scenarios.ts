@@ -37,6 +37,12 @@ export const LEGACY_OFFICIAL_SCENARIO_TITLES: Record<string, readonly string[]> 
   'xiaohongshu.com': ['搜索笔记', '发现流行'],
 }
 
+export function registerLegacyOfficialScenarioTitles(
+  titles: Record<string, readonly string[]>,
+): void {
+  Object.assign(LEGACY_OFFICIAL_SCENARIO_TITLES, titles)
+}
+
 function userScenariosFile(): string {
   return process.env.WEWORKER_SCENARIOS_FILE || DEFAULT_USER_SCENARIOS_FILE
 }

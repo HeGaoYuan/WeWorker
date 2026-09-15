@@ -5,6 +5,9 @@ const fs = require('fs')
 const BACKEND_TS_ROOT = path.resolve(__dirname, '../backend-ts')
 const OUT_DIR = path.resolve(__dirname, '../build/backend-ts-dist')
 const OUT_FILE = path.join(OUT_DIR, 'server.cjs')
+const PROFILE_ENTRY = process.env.WEWORKER_BACKEND_PROFILE_ENTRY
+  ? path.resolve(process.env.WEWORKER_BACKEND_PROFILE_ENTRY)
+  : null
 
 const KEYRING_PLATFORM_PACKAGES = {
   'win32-x64': '@napi-rs/keyring-win32-x64-msvc',
@@ -78,7 +81,16 @@ const platformPackage = KEYRING_PLATFORM_PACKAGES[`${process.platform}-${process
 if (platformPackage) keyringExternals.push(platformPackage)
 
 esbuild.buildSync({
-  entryPoints: [path.resolve(BACKEND_TS_ROOT, 'src/server.ts')],
+  ...(PROFILE_ENTRY
+    ? {
+        stdin: {
+          contents: `import ${JSON.stringify(PROFILE_ENTRY.replace(/\\/g, '/'))};\nimport ${JSON.stringify(path.resolve(BACKEND_TS_ROOT, 'src/server.ts').replace(/\\/g, '/'))};`,
+          loader: 'ts',
+          resolveDir: path.dirname(PROFILE_ENTRY),
+          sourcefile: 'backend-profile-entry.ts',
+        },
+      }
+    : { entryPoints: [path.resolve(BACKEND_TS_ROOT, 'src/server.ts')] }),
   bundle: true,
   platform: 'node',
   format: 'cjs',
@@ -99,4 +111,13 @@ esbuild.buildSync({
 
 copyKeyringNativeDeps()
 
-console.log('Backend-TS bundle created: build/backend-ts-dist/server.cjs')
+fs.writeFileSync(
+  path.join(OUT_DIR, '.profile.json'),
+  JSON.stringify({
+    profile: PROFILE_ENTRY ? (process.env.WEWORKER_BUILD_PROFILE || 'custom') : 'public',
+    entry: PROFILE_ENTRY ? path.basename(PROFILE_ENTRY) : null,
+  }, null, 2) + '\n',
+  'utf-8',
+)
+
+console.log(`Backend-TS bundle created: build/backend-ts-dist/server.cjs (profile=${PROFILE_ENTRY ? path.basename(PROFILE_ENTRY) : 'public'})`)

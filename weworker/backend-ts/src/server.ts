@@ -76,6 +76,7 @@ import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow } from './site-memory.js'
 import * as store from './works-store.js'
+import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, generateAssistantStatusLine, streamChat } from './agent.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
 import {
@@ -2181,6 +2182,15 @@ app.post('/works/:id/chat', async (req, res) => {
   let execMsTotal = 0
 
   const tag = `[${workId}][${turnId}]`
+
+  // Optional product profiles may answer a query before the normal LLM route.
+  // The public profile has no registered route and always falls through.
+  if (await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
+    finished = true
+    res.off('close', onClose)
+    res.end()
+    return
+  }
 
   const unsubscribeTerminalEvents = onTerminalEvent((event) => {
     if (event.workId !== workId) return

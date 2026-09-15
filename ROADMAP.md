@@ -22,6 +22,11 @@ WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Elec
 - 已补齐行为准则、支持指引、第三方声明、`.gitattributes`，并完善新仓库文件边界。
 - 发布工作流已改为仅手动触发，并只创建指定版本的草稿 Release，不再强制移动 Tag 或删除既有 Release。
 - 构建配置支持通过外部 Profile Overlay 叠加 Adapter、Provider 与扩展权限；安装包只读取生成的 `build/extension-dist/`，构建不再回写公共源配置。
+- 官网站点清单支持外部 Overlay，源码只保留公开站点基线，开发与构建前自动生成最终清单。
+- Backend 提供可注册的 Profile 查询路由入口；默认公开构建保持空实现，定制能力可由独立入口参与开发和打包。
+- Extension 页面运行时跨域访问改由内置 Adapter manifest 的 `runtime_allowed_hosts` 显式声明，公共 Service Worker 不再包含产品域名映射。
+- WebCLI 包清单使用公共超集，定制仓库可按需提供命令目录资产而无需修改公共依赖或 package 配置。
+- Windows 解密工具改由 `uv` 创建隔离、固定版本的构建环境，不再依赖系统 Python 预装 PyInstaller/pywin32。
 
 ## 验证结果
 
@@ -32,6 +37,10 @@ WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Elec
 - Electron 集成测试通过（22 项），公开配置校验及校验器测试通过。
 - Windows 本地全量测试基线：WebCLI 234/243、Backend 283/288 通过；剩余失败为 Windows 文件系统/符号链接差异、已变更的 PowerShell 平台文案和过期测试 mock，需在后续开发中修复或在 Ubuntu CI 复核。
 - Git 差异格式检查通过。
+- 官网清单 Overlay 单测与公开生产构建通过（2 个公开分组、3 个站点）。
+- Backend Profile 聚焦测试、Adapter scaffold/用户场景测试、类型检查与公开 bundle 验证通过；公开 bundle 标记为 `public`。
+- Extension manifest 跨域授权聚焦测试通过；公开 Profile 成功生成 4 个实际打包 Adapter。
+- Windows 解密工具在隔离环境中成功生成 `sd_decrypt.exe`。
 
 ## 进行中
 

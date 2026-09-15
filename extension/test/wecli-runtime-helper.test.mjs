@@ -241,7 +241,13 @@ function loadServiceWorker(options = {}) {
     btoa: (value) => Buffer.from(value, 'binary').toString('base64'),
     chrome,
     console: { log() {}, warn() {}, error() {} },
-    fetch: async () => ({ ok: false, json: async () => [] }),
+    fetch: async (url) => {
+      const adapterHost = new URL(tabs[0].url).hostname
+      if (String(url).endsWith(`/adapters/${adapterHost}/manifest.json`) && options.runtimeAllowedHosts) {
+        return { ok: true, json: async () => ({ runtime_allowed_hosts: options.runtimeAllowedHosts }) }
+      }
+      return { ok: false, json: async () => [] }
+    },
     setTimeout: () => 0,
     clearTimeout() {},
   })
@@ -368,6 +374,7 @@ test('service worker provides host-scoped privileged runtime helpers', async () 
 test('service worker allows ProjectDemo runtime helpers to read SDL sibling-domain cookies', async () => {
   const { request, cookieCalls } = loadServiceWorker({
     tab: { id: 7, url: 'https://project.example.com/workbench', windowId: 1 },
+    runtimeAllowedHosts: ['sdl.example.com'],
   })
 
   assert.equal((await request('cookies_get', { url: 'http://sdl.example.com/' })).ok, true)

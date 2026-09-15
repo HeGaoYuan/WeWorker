@@ -6983,23 +6983,24 @@ async function handleWecliRuntimeRequest(msg, sender) {
   const action = String(msg.action || '');
   const payload = msg.payload || {};
   const traceID = msg.traceID || null;
+  const allowedHosts = await loadRuntimeAllowedHostsForTab(tab);
 
   switch (action) {
     case 'cookies_get':
       traceLog(traceID, `[ServiceWorkerRuntime] cookies_get ${String(payload.domain || payload.domains || payload.url || tab.url)}`);
-      return getRuntimeCookies(tab, payload);
+      return getRuntimeCookies(tab, payload, allowedHosts);
     case 'storage_get':
       traceLog(traceID, `[ServiceWorkerRuntime] storage_get ${String(payload.key || '')}`);
       return getRuntimeStorageValue(tab, payload);
     case 'navigate':
       traceLog(traceID, `[ServiceWorkerRuntime] navigate ${String(payload.url || '')}`);
-      return navigateRuntimeTab(tab, payload);
+      return navigateRuntimeTab(tab, payload, allowedHosts);
     case 'main_world_eval':
       traceLog(traceID, `[ServiceWorkerRuntime] main_world_eval`);
       return runRuntimeMainWorldEval(tab, payload);
     case 'download':
       traceLog(traceID, `[ServiceWorkerRuntime] download ${String(payload.url || payload.filename || '')}`);
-      return runRuntimeDownload(tab, payload);
+      return runRuntimeDownload(tab, payload, allowedHosts);
     case 'set_file_input':
       return handleCdpAction(tab.id, {
         __cdp_action: 'set_file_input',
@@ -7010,7 +7011,7 @@ async function handleWecliRuntimeRequest(msg, sender) {
       return runRuntimeBridgeRequest('wecli_backend_fetch', payload, traceID);
     case 'browser_fetch':
       traceLog(traceID, `[ServiceWorkerRuntime] browser_fetch tab=${tab.id} ${String(payload.url || '')}`);
-      return runRuntimeBrowserFetch(tab, payload);
+      return runRuntimeBrowserFetch(tab, payload, allowedHosts);
     case 'backend_file_read':
       return runRuntimeBridgeRequest('wecli_backend_file_read', payload, traceID);
     case 'backend_xlsx_read':
@@ -7059,7 +7060,7 @@ async function runRuntimeBridgeRequest(type, payload, traceID = null) {
   return result.result;
 }
 
-async function getRuntimeCookies(tab, payload) {
+async function getRuntimeCookies(tab, payload, allowedHosts = directRuntimeContext?.allowedHosts) {
   if (!chrome.cookies?.getAll) {
     throw createRuntimeHelperError('MISSING_PERMISSION', 'chrome.cookies is unavailable');
   }
@@ -7068,12 +7069,12 @@ async function getRuntimeCookies(tab, payload) {
   if (domains.length) {
     cookies = [];
     for (const domain of domains) {
-      assertRuntimeCookieDomainAllowed(tab, domain);
+      assertRuntimeCookieDomainAllowed(tab, domain, allowedHosts);
       cookies.push(...await chrome.cookies.getAll({ domain }));
     }
   } else {
     const url = String(payload.url || tab.url);
-    assertRuntimeUrlAllowed(tab, url);
+    assertRuntimeUrlAllowed(tab, url, allowedHosts);
     cookies = await chrome.cookies.getAll({ url });
   }
   const names = Array.isArray(payload.names) ? new Set(payload.names.map(String)) : null;
@@ -7328,10 +7329,10 @@ async function getDirectRuntimeStorageValue(payload) {
   throw createStorageContextRequiredError(storageScope, area, key, { storageScope, host, url: payload.url });
 }
 
-async function navigateRuntimeTab(tab, payload) {
+async function navigateRuntimeTab(tab, payload, allowedHosts = directRuntimeContext?.allowedHosts) {
   const url = String(payload.url || '');
   if (!url) throw createRuntimeHelperError('INVALID_ARGS', 'navigate requires url');
-  assertRuntimeUrlAllowed(tab, url);
+  assertRuntimeUrlAllowed(tab, url, allowedHosts);
   const updated = await chrome.tabs.update(tab.id, { url, active: payload.active !== false });
   return { tabId: updated.id, url: updated.url || url };
 }
@@ -7369,10 +7370,10 @@ function normalizeRuntimeBrowserFetchHeaders(headers = {}) {
   return result;
 }
 
-async function runRuntimeBrowserFetch(tab, payload = {}) {
+async function runRuntimeBrowserFetch(tab, payload = {}, allowedHosts = directRuntimeContext?.allowedHosts) {
   const url = String(payload.url || '');
   if (!url) throw createRuntimeHelperError('INVALID_ARGS', 'browser_fetch requires url');
-  assertRuntimeUrlAllowed(tab, url);
+  assertRuntimeUrlAllowed(tab, url, allowedHosts);
 
   const options = payload && typeof payload.options === 'object' && !Array.isArray(payload.options)
     ? payload.options
@@ -7433,13 +7434,13 @@ async function runRuntimeBrowserFetch(tab, payload = {}) {
   };
 }
 
-async function runRuntimeDownload(tab, payload) {
+async function runRuntimeDownload(tab, payload, allowedHosts = directRuntimeContext?.allowedHosts) {
   if (!chrome.downloads?.download) {
     throw createRuntimeHelperError('MISSING_PERMISSION', 'chrome.downloads is unavailable');
   }
   const url = String(payload.url || '');
   if (!url) throw createRuntimeHelperError('INVALID_ARGS', 'download requires url');
-  assertRuntimeUrlAllowed(tab, url);
+  assertRuntimeUrlAllowed(tab, url, allowedHosts);
   const filename = payload.filename ? sanitizeDownloadFilename(String(payload.filename)) : undefined;
   const downloadId = await chrome.downloads.download({
     url,
@@ -7449,7 +7450,20 @@ async function runRuntimeDownload(tab, payload) {
   return { downloadId, ...(filename ? { filename } : {}) };
 }
 
-function assertRuntimeUrlAllowed(tab, targetUrl) {
+async function loadRuntimeAllowedHostsForTab(tab) {
+  let tabHost;
+  try {
+    tabHost = new URL(tab.url).hostname;
+  } catch {
+    return [];
+  }
+  // Page helpers only trust manifests bundled with the extension. A web page
+  // cannot expand its own cross-host authority through message payloads.
+  const manifest = await loadAdapterManifest(tabHost);
+  return normalizeRouteHosts(manifest?.runtime_allowed_hosts);
+}
+
+function assertRuntimeUrlAllowed(tab, targetUrl, allowedHosts = directRuntimeContext?.allowedHosts) {
   let tabHost;
   let targetHost;
   try {
@@ -7458,12 +7472,12 @@ function assertRuntimeUrlAllowed(tab, targetUrl) {
   } catch {
     throw createRuntimeHelperError('INVALID_URL', `Invalid helper URL: ${targetUrl}`);
   }
-  if (!isRuntimeHelperHostAllowed(tabHost, targetHost, directRuntimeContext?.allowedHosts)) {
+  if (!isRuntimeHelperHostAllowed(tabHost, targetHost, allowedHosts)) {
     throw createRuntimeHelperError('HOST_NOT_ALLOWED', `Runtime helper URL host "${targetHost}" is not allowed for tab host "${tabHost}"`, { tabHost, targetHost });
   }
 }
 
-function assertRuntimeCookieDomainAllowed(tab, domain) {
+function assertRuntimeCookieDomainAllowed(tab, domain, allowedHosts = directRuntimeContext?.allowedHosts) {
   let tabHost;
   try {
     tabHost = new URL(tab.url).hostname;
@@ -7471,7 +7485,7 @@ function assertRuntimeCookieDomainAllowed(tab, domain) {
     throw createRuntimeHelperError('INVALID_URL', `Invalid tab URL: ${tab.url}`);
   }
   const targetHost = String(domain || '').replace(/^\.+/, '').toLowerCase();
-  if (!targetHost || !isRuntimeHelperHostAllowed(tabHost, targetHost, directRuntimeContext?.allowedHosts)) {
+  if (!targetHost || !isRuntimeHelperHostAllowed(tabHost, targetHost, allowedHosts)) {
     throw createRuntimeHelperError('HOST_NOT_ALLOWED', `Runtime helper cookie domain "${targetHost}" is not allowed for tab host "${tabHost}"`, { tabHost, targetHost });
   }
 }
