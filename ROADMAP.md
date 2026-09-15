@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Electron 桌面端、React Renderer、TypeScript Backend、WebCLI、浏览器扩展、公开网站 Adapter，以及内嵌的网站探索agent源码。
+WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上按模块迁移旧开发分支中未进入 `main` 的通用能力。迁移不引入旧 Git 历史，且保持现有 Profile/Overlay 配置架构不变。
 
 ## 已完成
 
@@ -27,6 +27,8 @@ WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Elec
 - Extension 页面运行时跨域访问改由内置 Adapter manifest 的 `runtime_allowed_hosts` 显式声明，公共 Service Worker 不再包含产品域名映射。
 - WebCLI 包清单使用公共超集，定制仓库可按需提供命令目录资产而无需修改公共依赖或 package 配置。
 - Windows 解密工具改由 `uv` 创建隔离、固定版本的构建环境，不再依赖系统 Python 预装 PyInstaller/pywin32。
+- 已从清理后的公开 `main` 创建全新本地 `develop`，旧仓库 `develop` 仅作为只读迁移来源。
+- 首个低风险增量已迁入：Backend 显式固定 `@emnapi/runtime` 构建依赖，不涉及业务配置或内部资产。
 
 ## 验证结果
 
@@ -41,14 +43,15 @@ WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Elec
 - Backend Profile 聚焦测试、Adapter scaffold/用户场景测试、类型检查与公开 bundle 验证通过；公开 bundle 标记为 `public`。
 - Extension manifest 跨域授权聚焦测试通过；公开 Profile 成功生成 4 个实际打包 Adapter。
 - Windows 解密工具在隔离环境中成功生成 `sd_decrypt.exe`。
+- `@emnapi/runtime` 固定版本迁移后，Backend TypeScript 生产构建通过，Git 差异格式检查通过。
 
 ## 进行中
 
-- 执行初始化前的最终受控敏感信息复扫和文件清单复核。
+- 按“公共通用能力／内部专用能力／不迁移资产”清单逐模块迁移旧 `develop`，每批进入公开分支前执行人工敏感信息检查。
 
 ## 待办
 
-- 在干净目录复制最终文件并重新初始化 Git 仓库。
+- 迁移上下文与记忆、网站探索、API 探索和 WebCLI 等公共候选模块，并完成对应测试与构建验证。
 - 为公开发布配置新的下载地址、指标服务和发布流程。
 - 在目标平台完成 Windows x64、macOS arm64 与 macOS x64 安装包验收。
 
