@@ -68,4 +68,15 @@ describe('buildConfiguredModelEnv', () => {
     expect(env.ANTHROPIC_API_KEY).toBe('settings-key')
     expect(env.ANTHROPIC_BASE_URL).toBe('https://llm.example.com/anthropic')
   })
+
+  it('uses the Claude Code bearer token variable for custom providers', () => {
+    const env = buildConfiguredModelEnv({
+      active_provider: 'custom',
+      api_key: 'custom-token',
+      base_url: 'https://llm.example.com',
+    })
+
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('custom-token')
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
 })

@@ -1,4 +1,4 @@
-﻿import express from 'express'
+import express from 'express'
 import cors from 'cors'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -50,6 +50,8 @@ import {
   getProvider,
 } from './provider-registry.js'
 import { listProviderModels, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
+import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
 import { normalizeOwnerPermissionLevel, validateOwnerUserId } from './channels/channel-permissions.js'
@@ -79,6 +81,7 @@ import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, generateAssistantStatusLine, streamChat } from './agent.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
+import { renderPrompt } from './prompt-loader.js'
 import {
   configureAdapterRuntimeReload,
   scheduleAdapterRuntimeReload,
@@ -96,6 +99,11 @@ import {
   type ZcfLang,
 } from './zcf-sync.js'
 import { appendAssistantStatusLine, extractAssistantStatusLine, finalizeAssistantTextWithStatus } from './assistant-status.js'
+import { processMemoryEvent } from './memory/memory-lifecycle.js'
+import { buildMemoryEventContext } from './memory/memory-event-context.js'
+import { planCompletedChatMemoryEvents } from './memory/memory-event-planner.js'
+import { getMemoryStore } from './memory/memory-store.js'
+import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
 import { inferTerminalShell, onTerminalEvent, runWeWorkerPowerShell, stopTerminalSession } from './powershell-runner.js'
@@ -104,7 +112,7 @@ import { QQChannel } from './channels/qq-channel.js'
 import { WeixinChannel, fetchQRCode, pollQRStatus } from './channels/weixin-channel.js'
 import { WecomChannel } from './channels/wecom-channel.js'
 import { scheduler, Scheduler } from './scheduler.js'
-import { registerSSEClient, unregisterSSEClient } from './notifier.js'
+import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
   createUserFile,
   createUserFolder,
@@ -330,12 +338,13 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     open_browser_allowed_origins: getOpenBrowserAllowedOrigins(),
     base_url: s.base_url,
     model: s.model,
+    context_limit: s.context_limit,
     has_api_key: !!s.api_key,
     providers: {
-      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic },
-      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm },
-      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek },
-      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom },
+      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic },
+      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm },
+      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek },
+      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom, auth_type: s.custom_auth_type },
     },
     zcf_default_role: s.zcf_default_role,
     zcf_default_mode: s.zcf_default_mode,
@@ -494,8 +503,8 @@ app.post('/settings/zcf-roles', (req, res) => {
 
 // Save config for a specific provider (does NOT switch active provider)
 app.post('/settings/provider', (req, res) => {
-  const { provider, api_key, model, base_url, openai_base_url } = req.body as {
-    provider: string; api_key?: string; model?: string; base_url?: string; openai_base_url?: string
+  const { provider, api_key, model, context_limit, base_url, openai_base_url, auth_type } = req.body as {
+    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; openai_base_url?: string; auth_type?: unknown
   }
   if (!ALLOWED_PROVIDER_IDS.has(provider)) {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
@@ -519,6 +528,15 @@ app.post('/settings/provider', (req, res) => {
       return
     }
   }
+  if (provider === 'custom' && auth_type !== undefined && !isAnthropicAuthType(auth_type)) {
+    res.status(400).json({ detail: "auth_type must be 'auth_token' or 'api_key'" })
+    return
+  }
+  const parsedContextLimit = context_limit === undefined ? undefined : parseContextLimit(context_limit)
+  if (context_limit !== undefined && parsedContextLimit === null) {
+    res.status(400).json({ detail: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
+    return
+  }
   const updates: Partial<ReturnType<typeof getSettings>> = {}
   if (api_key) {
     if (provider === 'anthropic') updates.api_key_anthropic = api_key
@@ -532,13 +550,21 @@ app.post('/settings/provider', (req, res) => {
     else if (provider === 'deepseek') updates.model_deepseek = model
     else if (provider === 'custom') updates.model_custom = model
   }
+  if (parsedContextLimit !== undefined && parsedContextLimit !== null) {
+    if (provider === 'anthropic') updates.context_limit_anthropic = parsedContextLimit
+    else if (provider === 'glm') updates.context_limit_glm = parsedContextLimit
+    else if (provider === 'deepseek') updates.context_limit_deepseek = parsedContextLimit
+    else if (provider === 'custom') updates.context_limit_custom = parsedContextLimit
+  }
   if (provider === 'custom' && base_url !== undefined) updates.base_url_custom = allowedBaseUrl
   if (provider === 'custom' && openai_base_url !== undefined) updates.openai_base_url_custom = allowedOpenAiBaseUrl
+  if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.custom_auth_type = auth_type
   // If this provider is currently active, also update the active key/model/url
   const current = getSettings()
   if (current.active_provider === provider) {
     if (api_key) updates.api_key = api_key
     if (model) updates.model = model
+    if (parsedContextLimit !== undefined && parsedContextLimit !== null) updates.context_limit = parsedContextLimit
     if (provider === 'custom' && base_url !== undefined) updates.base_url = allowedBaseUrl
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
@@ -562,6 +588,11 @@ app.post('/settings/provider/activate', (req, res) => {
     provider === 'glm'       ? current.model_glm :
     provider === 'deepseek'  ? current.model_deepseek :
     provider === 'custom'    ? current.model_custom : ''
+  const contextLimit =
+    provider === 'anthropic' ? current.context_limit_anthropic :
+    provider === 'glm'       ? current.context_limit_glm :
+    provider === 'deepseek'  ? current.context_limit_deepseek :
+    provider === 'custom'    ? current.context_limit_custom : current.context_limit
   const baseUrl =
     provider === 'custom' ? current.base_url_custom : (PROVIDER_BASE_URLS[provider] ?? '')
   try {
@@ -574,6 +605,7 @@ app.post('/settings/provider/activate', (req, res) => {
     active_provider: provider,
     api_key: key,
     model,
+    context_limit: contextLimit,
     base_url: baseUrl,
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
@@ -585,6 +617,7 @@ type ProviderRequestBody = {
   model?: string
   base_url?: string
   openai_base_url?: string
+  auth_type?: unknown
   target?: ProbeTarget
 }
 
@@ -609,6 +642,13 @@ function resolveProviderAccess(body: ProviderRequestBody) {
     openaiBaseUrl: provider.id === 'custom'
       ? normalizeOptionalBaseUrl(body.openai_base_url === undefined ? settings.openai_base_url_custom : body.openai_base_url)
       : provider.webwright.baseUrl,
+    anthropicAuthType: provider.id === 'custom'
+      ? (body.auth_type === undefined
+          ? settings.custom_auth_type
+          : isAnthropicAuthType(body.auth_type)
+            ? body.auth_type
+            : (() => { throw new Error("auth_type must be 'auth_token' or 'api_key'") })())
+      : undefined,
   }
 }
 
@@ -2010,16 +2050,8 @@ app.post('/terminal/assist', async (req, res) => {
     return
   }
 
-  const system = [
-    '你是 WeWorker Shell 内置的终端 AI 助手。',
-    '用户会在终端输入自然语言。你需要判断意图，并给出终端内可展示的简短中文回复。',
-    '你的回复必须基于用户输入、当前目录、shell 和最近上下文动态生成，不要使用固定模板或硬编码式回答。',
-    '如果用户意图明确且适合用一条本地命令完成，请给出 command；如果不明确，请不要给 command，而是提出澄清。',
-    '命令必须适配当前 shell。bash 使用 POSIX 语法，powershell 使用 PowerShell 语法。',
-    '不要编造已经执行过的结果；你只能建议或解释命令。',
-    '只输出 JSON，不要输出 Markdown。',
-    'JSON 格式：{"title":"一句主要回复","message":"补充说明，可为空","bullets":["最多6条"],"command":"建议执行的单行命令，可为空"}',
-  ].join('\n')
+  const terminalPrompt = renderPrompt('terminal', {})
+  const system = terminalPrompt.endsWith('\n') ? terminalPrompt.slice(0, -1) : terminalPrompt
   const user = [
     `当前 shell: ${inferTerminalShell('', shell)}`,
     `当前目录: ${cwd || getUserDirectory()}`,
@@ -2031,7 +2063,7 @@ app.post('/terminal/assist', async (req, res) => {
     const response = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
-        'x-api-key': settings.api_key,
+        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -2197,6 +2229,11 @@ app.post('/works/:id/chat', async (req, res) => {
     send({ type: 'terminal_event', data: event })
   })
 
+  let turnSucceeded = false
+  let streamFailed = false
+  let memoryCandidate: MemoryUpdateCandidate | undefined
+  let memoryAdapters: Array<{ id: string; name: string; match: string[] }> = []
+  let initialMemoryScope = { user: 'local' }
   try {
     chatLog.info(`${tag} 鈻?turn start`)
     // Send turnId to frontend so users can correlate logs
@@ -2206,16 +2243,30 @@ app.post('/works/:id/chat', async (req, res) => {
     const enabledAdapterIds = new Set(
       [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled)).map(([id]) => id)
     )
+    memoryAdapters = [...allAdapters.values()].map((adapter) => ({
+      id: adapter.id,
+      name: adapter.name,
+      match: adapter.match,
+    }))
+    initialMemoryScope = buildMemoryEventContext({
+      baseScope: { user: 'local' },
+      userMessage: message,
+      adapters: memoryAdapters,
+      toolCalls: [],
+    }).scope as { user: string }
     for await (const ev of streamChat(modelMessages, settings, abortController, {
       enabledAdapterIds,
       workId,
       zcfRole: zcfPrefs.zcfRole,
       zcfMode: zcfPrefs.zcfMode,
+      memoryScope: initialMemoryScope,
       onAskUser: (event) => send(event),
     })) {
       if (ev.type === 'text_delta' && ev.content) {
         send(ev)
         currentText += ev.content
+      } else if (ev.type === 'memory_candidate' && ev.candidate) {
+        memoryCandidate = ev.candidate
       } else if (ev.type === 'tool_call_start' && ev.id) {
         // Deduplicate: streaming mode sends tool_call_start twice (stream_event + assistant message)
         const isUpdate = toolCallMap.has(ev.id)
@@ -2258,22 +2309,25 @@ app.post('/works/:id/chat', async (req, res) => {
         send({ ...ev, execMs: toolDuration })
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
-          assistantContent[idx] = { ...(assistantContent[idx] as object), result: ev.result, status: 'done', execMs: toolDuration } as store.ContentBlock
+          assistantContent[idx] = { ...(assistantContent[idx] as object), result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration } as store.ContentBlock
         } else {
-          assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: 'done', execMs: toolDuration })
+          assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration })
         }
       } else if (ev.type === 'tool_call_image' && ev.id) {
         send(ev)
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
-          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: 'done' } as store.ContentBlock
+          const currentStatus = (assistantContent[idx] as Extract<store.ContentBlock, { type: 'tool_use' }>).status
+          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: currentStatus === 'failed' ? 'failed' : 'done' } as store.ContentBlock
         } else {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done' })
         }
       } else {
+        if (ev.type === 'error') streamFailed = true
         send(ev)
       }
     }
+    turnSucceeded = !streamFailed && !abortController.signal.aborted
   } catch (e) {
     // Silently ignore abort errors (user cancelled)
     const isAbort = e instanceof Error && (
@@ -2346,6 +2400,63 @@ app.post('/works/:id/chat', async (req, res) => {
   if (assistantContent.length > 0) {
     assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
     store.appendMessage(workId, 'assistant', assistantContent)
+  }
+
+  const plannedMemory = planCompletedChatMemoryEvents({
+    baseEventId: savedUserMessage.id,
+    baseScope: { user: 'local' },
+    userMessage: message,
+    adapters: memoryAdapters,
+    toolCalls: assistantContent
+      .filter((block): block is Extract<store.ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
+      .map((block) => ({ name: block.name, args: block.args, status: block.status })),
+    turnSucceeded,
+    candidate: memoryCandidate,
+  })
+
+  if (plannedMemory.events.length > 0) {
+    for (const event of plannedMemory.events) {
+      send({ type: 'memory_status', status: 'processing', workId, eventId: event.eventId })
+    }
+    chatLog.info(` sending res.end() before background memory processing for workId=${workId}`)
+    res.end()
+    setImmediate(() => {
+      let memoryStore: ReturnType<typeof getMemoryStore>
+      try {
+        memoryStore = getMemoryStore()
+      } catch (error) {
+        chatLog.info(`${tag} memory store unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        for (const event of plannedMemory.events) {
+          broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
+        }
+        return
+      }
+      for (const event of plannedMemory.events) {
+        void processMemoryEvent({
+          eventId: event.eventId,
+          scope: event.scope,
+          expectedMemoryType: event.expectedMemoryType,
+          store: memoryStore,
+          candidate: memoryCandidate!,
+        }).then((memoryResult) => {
+          broadcastSSE({
+            type: 'memory_status',
+            workId,
+            eventId: event.eventId,
+            status: memoryResult.status,
+            ...(memoryResult.status === 'failed' ? { error: memoryResult.error } : {}),
+          })
+        }).catch(() => {
+          broadcastSSE({
+            type: 'memory_status',
+            workId,
+            eventId: event.eventId,
+            status: 'failed',
+          })
+        })
+      }
+    })
+    return
   }
 
   chatLog.info(` sending res.end() for workId=${workId}`)

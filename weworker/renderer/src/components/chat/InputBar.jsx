@@ -18,6 +18,7 @@ import {
 } from '../../utils/terminal-completion.js'
 import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeIcon.jsx'
 import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
+import ContextPanel from './ContextPanel.jsx'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
@@ -53,6 +54,7 @@ export default function InputBar({
   variant,
   embedded,
   attachmentTarget = 'welcome',
+  contextSnapshot = null,
 }) {
   const textareaRef = useRef(null)
   const slashMenuRef = useRef(null)
@@ -670,7 +672,10 @@ export default function InputBar({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
         {uploadBtn}
       </div>
-      {actionBtn}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        {!isWelcome && <ContextPanel snapshot={contextSnapshot} />}
+        {actionBtn}
+      </div>
     </div>
   )
 

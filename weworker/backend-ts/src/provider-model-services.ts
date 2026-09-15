@@ -1,4 +1,6 @@
 import type { ProviderEntry } from './llm-egress.js'
+import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
+import type { AnthropicAuthType } from './anthropic-auth.js'
 
 export type ModelCatalogSource = 'remote' | 'fallback'
 export type ProbeTarget = 'weworker' | 'webwright'
@@ -17,6 +19,7 @@ export interface ProviderAccessInput {
   apiKey: string
   anthropicBaseUrl?: string
   openaiBaseUrl?: string
+  anthropicAuthType?: AnthropicAuthType
 }
 
 export interface ProviderConnectionInput extends ProviderAccessInput {
@@ -67,10 +70,10 @@ function parseModelList(body: string, detail: string): string[] {
   }
 }
 
-async function fetchAnthropicModels(baseUrl: string, apiKey: string, fetchImpl: FetchLike): Promise<string[]> {
+async function fetchAnthropicModels(baseUrl: string, apiKey: string, providerId: string, authType: AnthropicAuthType | undefined, fetchImpl: FetchLike): Promise<string[]> {
   const response = await fetchImpl(`${baseUrl}/v1/models?limit=1000`, {
     headers: {
-      'x-api-key': apiKey,
+      ...buildAnthropicAuthHeaders(apiKey, providerId, authType),
       'anthropic-version': '2023-06-01',
     },
     signal: AbortSignal.timeout(15000),
@@ -100,12 +103,12 @@ export async function listProviderModels(
 
   const requests: Array<{ label: string; promise: Promise<string[]> }> = []
   if (input.provider.id === 'custom') {
-    if (input.anthropicBaseUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, fetchImpl) })
+    if (input.anthropicBaseUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
     if (input.openaiBaseUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, input.apiKey, fetchImpl) })
   } else if (input.provider.webwright.protocol === 'openai_chat_completions') {
     requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.provider.webwright.baseUrl, input.apiKey, fetchImpl) })
   } else {
-    requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.provider.weworker.baseUrl, input.apiKey, fetchImpl) })
+    requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.provider.weworker.baseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
   }
 
   if (requests.length === 0) {
@@ -152,7 +155,7 @@ export async function probeProviderProtocol(
   const isAnthropic = protocol === 'anthropic_messages'
   const endpoint = `${baseUrl}${isAnthropic ? '/v1/messages' : '/chat/completions'}`
   const headers: Record<string, string> = isAnthropic
-    ? { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
   const body = isAnthropic

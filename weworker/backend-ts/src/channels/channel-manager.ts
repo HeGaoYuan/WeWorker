@@ -4,6 +4,7 @@ import * as store from '../works-store.js'
 import { generateAssistantStatusLine, streamChat } from '../agent.js'
 import { ensureAssistantStatusLine } from '../assistant-status.js'
 import { createLogger } from '../logger.js'
+import type { MemoryScope } from '../memory/memory-types.js'
 
 const log = createLogger('channel-manager')
 
@@ -67,6 +68,7 @@ export async function runChannelChat(
   settings: Settings,
   opts?: {
     channelPermissionMode?: ChannelPermissionMode
+    memoryScope?: MemoryScope
     /** Called when ask_user tool fires — channel should send options to user and wait for reply */
     askUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>
   },
@@ -89,6 +91,7 @@ export async function runChannelChat(
   for await (const event of streamChat(messages, settings, undefined, {
     streaming: false,
     channelPermissionMode: opts?.channelPermissionMode ?? 'full',
+    memoryScope: opts?.memoryScope,
     channelAskUserHandler: opts?.askUserHandler,
   })) {
     if (event.type === 'text_delta' && event.content) {
@@ -120,7 +123,7 @@ export async function runChannelChat(
         name: started?.name ?? '',
         args: started?.args ?? {},
         result: event.result ?? '',
-        status: 'done',
+        status: event.isError ? 'failed' : 'done',
         execMs: toolDuration,
         ...(started?.thinkMs !== undefined ? { thinkMs: started.thinkMs } : {}),
       })

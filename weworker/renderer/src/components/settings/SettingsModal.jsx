@@ -7,8 +7,9 @@ import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, buildProbeResultRows, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
+import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
+import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
 import weworkerLogo from '../../../../asset/logo.png'
 import './settings-theme.css'
@@ -1243,8 +1244,10 @@ function ModelTab({ onClose }) {
     return {
       api_key: '',
       model: stored.model || p?.models[0] || '',
+      context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
       openai_base_url: stored.openai_base_url || '',
+      auth_type: stored.auth_type === 'api_key' ? 'api_key' : 'auth_token',
     }
   }
 
@@ -1258,7 +1261,7 @@ function ModelTab({ onClose }) {
       delete next[pid]
       return next
     })
-    if (k === 'api_key' || k === 'base_url' || k === 'openai_base_url') {
+    if (k === 'api_key' || k === 'base_url' || k === 'openai_base_url' || k === 'auth_type') {
       catalogRequestIds.current[pid] = (catalogRequestIds.current[pid] || 0) + 1
       setCatalogLoading((current) => current === pid ? null : current)
       setCatalogs((current) => {
@@ -1275,7 +1278,7 @@ function ModelTab({ onClose }) {
       provider: pid,
       api_key: f.api_key,
       model: f.model,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url } : {}),
+      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url, auth_type: f.auth_type } : {}),
     }
   }
 
@@ -1284,7 +1287,7 @@ function ModelTab({ onClose }) {
     return {
       provider: pid,
       api_key: f.api_key,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url } : {}),
+      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url, auth_type: f.auth_type } : {}),
     }
   }
 
@@ -1331,11 +1334,18 @@ function ModelTab({ onClose }) {
     setSaving(pid)
     setTestResult(null)
     const f = getForm(pid)
-    const updates = { model: f.model }
+    const contextLimit = parseContextLimitInput(f.context_limit)
+    if (contextLimit === null) {
+      setTestResult({ ok: false, message: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
+      setSaving(null)
+      return
+    }
+    const updates = { model: f.model, context_limit: contextLimit }
     if (f.api_key) updates.api_key = f.api_key
     if (pid === 'custom') {
       updates.base_url = f.base_url
       updates.openai_base_url = f.openai_base_url
+      updates.auth_type = f.auth_type
     }
     try {
       await saveProvider(pid, updates)
@@ -1395,7 +1405,15 @@ function ModelTab({ onClose }) {
           }
         }
       }
-      const results = await Promise.all(['weworker', 'webwright'].map(probe))
+      const targets = buildProviderProbeTargets(pid, getForm(pid).openai_base_url)
+      const results = await Promise.all(targets.map(probe))
+      if (pid === 'custom' && !targets.includes('webwright')) {
+        results.push({
+          ok: null,
+          protocol: 'openai_chat_completions',
+          message: '未配置，仅影响网站探索 agent',
+        })
+      }
       if (probeRequestIds.current[pid] !== requestId) return
       setProbeResults((current) => ({ ...current, [pid]: buildProbeResultRows(results) }))
     } finally {
@@ -1531,8 +1549,40 @@ function ModelTab({ onClose }) {
                     </div>
                   </Field>
 
+                  <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
+                    <input
+                      className="settings-input"
+                      list={`provider-context-limits-${p.id}`}
+                      value={f.context_limit}
+                      onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)}
+                      onBlur={() => {
+                        const parsed = parseContextLimitInput(f.context_limit)
+                        if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed))
+                      }}
+                      placeholder="例如 200K、1M 或 1000000"
+                      inputMode="text"
+                    />
+                    <datalist id={`provider-context-limits-${p.id}`}>
+                      {CONTEXT_LIMIT_PRESETS.map((preset) => <option key={preset} value={preset} />)}
+                    </datalist>
+                  </Field>
+
                   {p.id === 'custom' && (
                     <>
+                      <Field label="API Key 类型">
+                        <AppDropdownSelect
+                          value={f.auth_type}
+                          options={[
+                            { value: 'auth_token', label: 'Bearer Token（ANTHROPIC_AUTH_TOKEN）' },
+                            { value: 'api_key', label: 'API Key（ANTHROPIC_API_KEY）' },
+                          ]}
+                          onChange={(value) => setFormField(p.id, 'auth_type', value)}
+                          ariaLabel="API Key 类型"
+                          minMenuWidth={320}
+                          matchAnchorWidth
+                          className="settings-provider-auth-select"
+                        />
+                      </Field>
                       <Field label="Anthropic 兼容 Base URL" hint="（不要加/v1/messages 后缀）">
                         <input className="settings-input" value={f.base_url} onChange={(e) => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://gateway.example/anthropic" />
                       </Field>
@@ -1568,8 +1618,8 @@ function ModelTab({ onClose }) {
                     </button>
                   </div>
                   {(probeResults[p.id] || []).map((result) => (
-                    <div key={result.label} className={`settings-action-hint settings-remote-detail${result.ok ? ' is-success' : ' is-error'}`} style={{ textAlign: 'right' }}>
-                      {result.label}：{result.ok ? '✓ ' : '✗ '}{result.message}
+                    <div key={result.label} className={`settings-action-hint settings-remote-detail${result.ok === true ? ' is-success' : result.ok === false ? ' is-error' : ''}`} style={{ textAlign: 'right' }}>
+                      {result.label}：{result.ok === true ? '✓ ' : result.ok === false ? '✗ ' : ''}{result.message}
                     </div>
                   ))}
                 </div>

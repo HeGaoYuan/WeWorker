@@ -1,6 +1,6 @@
 # WeWorker chat-bench
 
-对话自动化测试 + 埋点采集 harness。**零侵入**：不改后端/前端，通过 HTTP+SSE 驱动真实的 `/works/:id/chat` 链路（含 ITSM 短路、webcli、MCP、Claude Agent SDK），采集每用例的 timing / token / cache / 每步明细，输出 **JSONL 逐事件明细 + Markdown 汇总报告**。
+对话自动化测试 + 埋点采集 harness。**零侵入**：不改后端/前端，通过 HTTP+SSE 驱动真实的 `/works/:id/chat` 链路（含 支持工单示例 短路、webcli、MCP、Claude Agent SDK），采集每用例的 timing / token / cache / 每步明细，输出 **JSONL 逐事件明细 + Markdown 汇总报告**。
 
 解决什么：手动在 UI 一条条点、埋点散落在 SSE 与 `works.db` 中、无法批量回归对比各场景耗时与 token 表现。
 

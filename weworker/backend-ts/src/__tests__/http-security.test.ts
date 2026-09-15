@@ -19,6 +19,8 @@ describe('local HTTP security boundary', () => {
     expect(isAllowedOrigin('null')).toBe(true)
     expect(isAllowedOrigin('http://localhost:5173')).toBe(true)
     expect(isAllowedOrigin('http://127.0.0.1:5173')).toBe(true)
+    expect(isAllowedOrigin('http://localhost:5174', 'http://localhost:5174')).toBe(true)
+    expect(isAllowedOrigin('http://localhost:5175', 'http://localhost:5174')).toBe(false)
     expect(isAllowedOrigin('https://attacker.example')).toBe(false)
   })
 

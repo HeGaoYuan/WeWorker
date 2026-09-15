@@ -69,6 +69,23 @@ interface McpServerContext {
   channelAskUserHandler?: ChannelAskUserHandler | null
 }
 
+/** Names only: used by the context inspector, never sent as an extra prompt. */
+export function getMcpToolDefinitionSummary(mode: ChannelPermissionMode = 'full'): string {
+  if (mode === 'qa_only') return ''
+  const names = [
+    'webcli_result',
+    'weworker_powershell',
+    'ask_user',
+    'create_scheduled_task',
+    'list_scheduled_tasks',
+    'list_files',
+    'send_file_to_user',
+    'send_image_to_user',
+  ]
+  if (process.platform === 'win32') names.push('check_file_encryption', 'decrypt_file')
+  return names.join('\n')
+}
+
 export function resolveToolDisplayName(sdkName: string): string {
   return sdkName.replace(/^mcp__weworker__/, '')
 }

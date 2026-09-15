@@ -996,6 +996,19 @@
   box-shadow: 0 0 0 3px rgba(51, 156, 255, 0.12);
 }
 
+.settings-provider-auth-select {
+  width: 100%;
+}
+
+.settings-provider-auth-select .app-dropdown-select__trigger {
+  width: 100%;
+  max-width: none;
+  height: 34px;
+  background: var(--bg-primary);
+  border-color: var(--border-strong);
+  padding: 0 10px;
+}
+
 .settings-btn {
   border: none;
   border-radius: 8px;

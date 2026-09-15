@@ -7,10 +7,18 @@ export function isAllowedHost(hostHeader: string | undefined, port = LOCAL_HTTP_
   return host === `127.0.0.1:${port}` || host === `localhost:${port}`
 }
 
-export function isAllowedOrigin(originHeader: string | undefined): boolean {
+export function isAllowedOrigin(
+  originHeader: string | undefined,
+  rendererOrigin = process.env.WEWORKER_RENDERER_ORIGIN,
+): boolean {
   if (!originHeader) return true
   if (originHeader === 'null' || originHeader === 'file://') return true
-  return originHeader === 'http://localhost:5173' || originHeader === 'http://127.0.0.1:5173'
+  const allowedOrigins = new Set([
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    rendererOrigin,
+  ].filter(Boolean))
+  return allowedOrigins.has(originHeader)
 }
 
 export function timingSafeEqualString(a: string, b: string): boolean {

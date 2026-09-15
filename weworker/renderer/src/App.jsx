@@ -87,6 +87,10 @@ export default function App() {
           useWorksStore.getState().handleTerminalEvent(parsed)
           return
         }
+        if (parsed.type === 'memory_status' && parsed.workId) {
+          useWorksStore.getState().setMemoryStatus(parsed.workId, parsed)
+          return
+        }
         if (parsed.type !== 'task_notification') return
 
         const { taskId, taskTitle, workId, status, summary } = parsed.data

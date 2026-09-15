@@ -348,6 +348,8 @@ export class NodeManager {
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
           WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
+          WEWORKER_RENDERER_ORIGIN: process.env.WEWORKER_DEV_SERVER_URL || '',
+          WEWORKER_CLAUDE_CODE_PATH: claudeCodePath,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,

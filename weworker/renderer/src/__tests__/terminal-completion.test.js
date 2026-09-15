@@ -21,7 +21,7 @@ const files = [
 const sites = [
   {
     id: 'expense.example.com',
-    name: 'ExpenseDemo费控系统',
+    name: 'ExpenseDemo费用管理示例',
     enabled: true,
     tools: [
       {

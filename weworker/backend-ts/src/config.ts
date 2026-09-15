@@ -62,6 +62,7 @@ import {
   normalizeZcfMode,
   type ZcfCustomRole,
 } from './zcf-role-settings.js'
+import { DEFAULT_CONTEXT_LIMIT, normalizeContextLimit } from './context-window.js'
 
 
 
@@ -167,27 +168,39 @@ export interface Settings {
 
   model: string
 
+  context_limit: number
+
   // Per-provider stored configs
 
   api_key_anthropic: string
 
   model_anthropic: string
 
+  context_limit_anthropic: number
+
   api_key_glm: string
 
   model_glm: string
+
+  context_limit_glm: number
 
   api_key_deepseek: string
 
   model_deepseek: string
 
+  context_limit_deepseek: number
+
   api_key_custom: string
 
   model_custom: string
 
+  context_limit_custom: number
+
   base_url_custom: string
 
   openai_base_url_custom: string
+
+  custom_auth_type: import('./anthropic-auth.js').AnthropicAuthType
 
   channels: ChannelsConfig
 
@@ -274,27 +287,39 @@ const DEFAULTS: Settings = {
 
   model: 'claude-sonnet-4-6',
 
+  context_limit: DEFAULT_CONTEXT_LIMIT,
+
   api_key_anthropic: '',
 
   model_anthropic: 'claude-sonnet-4-6',
+
+  context_limit_anthropic: DEFAULT_CONTEXT_LIMIT,
 
   api_key_glm: '',
 
   model_glm: 'glm-5.2',
 
+  context_limit_glm: DEFAULT_CONTEXT_LIMIT,
+
   api_key_deepseek: '',
 
   model_deepseek: 'deepseek-v4-flash',
 
+  context_limit_deepseek: DEFAULT_CONTEXT_LIMIT,
+
   api_key_custom: '',
 
   model_custom: '',
+
+  context_limit_custom: DEFAULT_CONTEXT_LIMIT,
 
   base_url_custom: '',
 
   api_query_llm_route: true,
 
   openai_base_url_custom: '',
+
+  custom_auth_type: 'auth_token',
 
   channels: {
 
@@ -436,6 +461,20 @@ function listInstalledStyleIds(): string[] {
 function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   const merged = deepMerge(cloneDefaults(), raw ?? {}) as Settings
+
+  merged.custom_auth_type = raw?.custom_auth_type === 'api_key' ? 'api_key' : 'auth_token'
+
+  merged.context_limit_anthropic = normalizeContextLimit(raw?.context_limit_anthropic)
+  merged.context_limit_glm = normalizeContextLimit(raw?.context_limit_glm)
+  merged.context_limit_deepseek = normalizeContextLimit(raw?.context_limit_deepseek)
+  merged.context_limit_custom = normalizeContextLimit(raw?.context_limit_custom)
+  merged.context_limit = merged.active_provider === 'glm'
+    ? merged.context_limit_glm
+    : merged.active_provider === 'deepseek'
+      ? merged.context_limit_deepseek
+      : merged.active_provider === 'custom'
+        ? merged.context_limit_custom
+        : merged.context_limit_anthropic
 
   merged.max_chat_attachments = normalizeMaxChatAttachments(merged.max_chat_attachments)
   merged.paste_text_attachment_threshold = normalizePasteTextAttachmentThreshold(merged.paste_text_attachment_threshold)
@@ -590,6 +629,11 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings = deepMerge(current, updates) as Settings
 
   _settings.max_chat_attachments = normalizeMaxChatAttachments(_settings.max_chat_attachments)
+  _settings.context_limit = normalizeContextLimit(_settings.context_limit)
+  _settings.context_limit_anthropic = normalizeContextLimit(_settings.context_limit_anthropic)
+  _settings.context_limit_glm = normalizeContextLimit(_settings.context_limit_glm)
+  _settings.context_limit_deepseek = normalizeContextLimit(_settings.context_limit_deepseek)
+  _settings.context_limit_custom = normalizeContextLimit(_settings.context_limit_custom)
   _settings.paste_text_attachment_threshold = normalizePasteTextAttachmentThreshold(_settings.paste_text_attachment_threshold)
   _settings.welcome_featured_site_limit = normalizeWelcomeFeaturedSiteLimit(_settings.welcome_featured_site_limit)
   _settings.user_directory_blacklist = normalizeUserDirectoryBlacklist(_settings.user_directory_blacklist)

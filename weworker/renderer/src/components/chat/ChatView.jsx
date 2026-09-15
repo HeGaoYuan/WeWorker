@@ -21,6 +21,8 @@ import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/use
 
 export default function ChatView({ workId }) {
   const messages = useWorksStore((s) => s.messages[workId] ?? [])
+  const contextSnapshot = useWorksStore((s) => s.contextSnapshots[workId] ?? null)
+  const memoryStatus = useWorksStore((s) => s.memoryStatuses[workId] ?? null)
   const appendMessage = useWorksStore((s) => s.appendMessage)
   const updateLastMessage = useWorksStore((s) => s.updateLastMessage)
   const selectWork = useWorksStore((s) => s.selectWork)
@@ -125,6 +127,7 @@ export default function ChatView({ workId }) {
     setAttachments([])
     setSlowWarning(false)
     gotFirstEventRef.current = false
+    useWorksStore.getState().clearMemoryStatus(workId)
 
     const controller = new AbortController()
     const currentPlan = buildTodoWriteState(messages, { streaming: false })?.plan ?? null
@@ -194,6 +197,18 @@ export default function ChatView({ workId }) {
         }
         // turn_start: only used for logging
         if (event.type === 'turn_start') {
+          return
+        }
+        if (event.type === 'context_snapshot') {
+          useWorksStore.getState().setContextSnapshot(workId, event.context)
+          return
+        }
+        if (event.type === 'usage') {
+          useWorksStore.getState().setContextUsage(workId, event.usage)
+          return
+        }
+        if (event.type === 'memory_status') {
+          useWorksStore.getState().setMemoryStatus(workId, event)
           return
         }
         // turn_end: append a timing summary block to the assistant message being streamed
@@ -553,6 +568,15 @@ export default function ChatView({ workId }) {
           {zcfNotice}
         </div>
       )}
+      {memoryStatus && memoryStatus.status !== 'not_applicable' && (
+        <div style={{ padding: '6px 20px', color: memoryStatus.status === 'failed' ? 'var(--error)' : 'var(--text-secondary)', fontSize: 12, background: 'var(--bg-secondary)' }}>
+          {memoryStatus.status === 'processing' && '正在整理长期记忆'}
+          {memoryStatus.status === 'saved' && '长期记忆已更新'}
+          {memoryStatus.status === 'ignored' && '本次内容无需保存为长期记忆'}
+          {memoryStatus.status === 'duplicate' && '长期记忆已处理'}
+          {memoryStatus.status === 'failed' && `长期记忆整理失败${memoryStatus.error ? `：${memoryStatus.error}` : ''}`}
+        </div>
+      )}
       {isHealthCheck && !isStreamingHere ? null : (
         <ChatBottomDock
           showInput
@@ -571,6 +595,7 @@ export default function ChatView({ workId }) {
           zcfMode={zcfMode}
           zcfRoles={zcfRoles}
           zcfModes={zcfModes}
+          contextSnapshot={contextSnapshot}
           onZcfRoleChange={handleZcfRoleChange}
           onZcfModeChange={handleZcfModeChange}
         />

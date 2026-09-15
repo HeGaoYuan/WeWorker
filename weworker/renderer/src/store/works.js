@@ -18,6 +18,8 @@ export const useWorksStore = create((set, get) => ({
   works: [],
   activeWorkId: null,
   messages: {}, // workId -> Message[]
+  contextSnapshots: {}, // workId -> latest local context composition
+  memoryStatuses: {}, // workId -> latest explicit memory processing status
   healthCheckMeta: null, // { siteId, siteName, toolNames } | null
   streamingWorkIds: new Set(), // workIds currently streaming — don't overwrite their messages
   abortControllers: {}, // workId -> AbortController — for stopping streaming from any view
@@ -118,10 +120,13 @@ export const useWorksStore = create((set, get) => ({
       set((s) => {
         const works = s.works.filter((w) => w.id !== id)
         const messages = { ...s.messages }
+        const contextSnapshots = { ...s.contextSnapshots }
         delete messages[id]
+        delete contextSnapshots[id]
         return {
           works,
           messages,
+          contextSnapshots,
           activeWorkId: s.activeWorkId === id ? (works[0]?.id ?? null) : s.activeWorkId,
         }
       })
@@ -245,6 +250,50 @@ export const useWorksStore = create((set, get) => ({
           [workId]: nextMessages,
         },
       }
+    })
+  },
+
+  setContextSnapshot: (workId, snapshot) => {
+    if (!workId || !snapshot) return
+    set((s) => ({ contextSnapshots: { ...s.contextSnapshots, [workId]: snapshot } }))
+  },
+
+  setContextUsage: (workId, usage) => {
+    const actualInputTokens = Number(usage?.total_input_tokens)
+    if (!workId || !Number.isFinite(actualInputTokens)) return
+    set((s) => {
+      const current = s.contextSnapshots[workId]
+      if (!current) return s
+      return {
+        contextSnapshots: {
+          ...s.contextSnapshots,
+          [workId]: { ...current, actual_input_tokens: Math.max(0, actualInputTokens) },
+        },
+      }
+    })
+  },
+
+  setMemoryStatus: (workId, status) => {
+    if (!workId || !status) return
+    set((s) => {
+      const current = s.memoryStatuses[workId]
+      const isStaleCompletion = status.status !== 'processing'
+        && current?.status === 'processing'
+        && current.eventId
+        && status.eventId
+        && current.eventId !== status.eventId
+      if (isStaleCompletion) return s
+      return { memoryStatuses: { ...s.memoryStatuses, [workId]: status } }
+    })
+  },
+
+  clearMemoryStatus: (workId) => {
+    if (!workId) return
+    set((s) => {
+      if (!(workId in s.memoryStatuses)) return s
+      const memoryStatuses = { ...s.memoryStatuses }
+      delete memoryStatuses[workId]
+      return { memoryStatuses }
     })
   },
 

@@ -57,18 +57,21 @@ describe('provider model catalog', () => {
   })
 
   it('merges successful custom Anthropic and OpenAI catalogs', async () => {
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({
       data: String(input).includes('/anthropic/v1/models')
         ? [{ id: 'shared' }, { id: 'anthropic-only' }]
         : [{ id: 'shared' }, { id: 'openai-only' }],
-    }), { status: 200 })) as typeof fetch
+    }), { status: 200 }))
     const result = await listProviderModels({
       provider: provider('custom'),
       apiKey: 'secret',
       anthropicBaseUrl: 'https://gateway.example/anthropic',
       openaiBaseUrl: 'https://gateway.example/openai/v1',
-    }, fetchImpl)
+    }, fetchMock as typeof fetch)
     expect(result).toEqual({ models: ['shared', 'anthropic-only', 'openai-only'], source: 'remote' })
+    const anthropicRequest = fetchMock.mock.calls.find(([url]) => String(url).includes('/anthropic/v1/models'))
+    expect(new Headers(anthropicRequest?.[1]?.headers).get('authorization')).toBe('Bearer secret')
+    expect(new Headers(anthropicRequest?.[1]?.headers).has('x-api-key')).toBe(false)
   })
 })
 
@@ -111,5 +114,38 @@ describe('provider protocol probe', () => {
       model: 'claude-current',
       detail: `HTTP 401 Unauthorized\n${remoteBody}`,
     })
+  })
+
+  it('probes a custom Anthropic endpoint with bearer authentication', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response('{}', { status: 200 }))
+    const result = await probeProviderProtocol({
+      provider: provider('custom'),
+      apiKey: 'custom-token',
+      anthropicBaseUrl: 'https://gateway.example',
+      model: 'claude-current',
+      target: 'weworker',
+    }, fetchMock as typeof fetch)
+
+    expect(result.ok).toBe(true)
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('authorization')).toBe('Bearer custom-token')
+    expect(headers.has('x-api-key')).toBe(false)
+  })
+
+  it('probes a custom Anthropic endpoint with x-api-key authentication when selected', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response('{}', { status: 200 }))
+    const result = await probeProviderProtocol({
+      provider: provider('custom'),
+      apiKey: 'custom-key',
+      anthropicBaseUrl: 'https://gateway.example',
+      anthropicAuthType: 'api_key',
+      model: 'claude-current',
+      target: 'weworker',
+    }, fetchMock as typeof fetch)
+
+    expect(result.ok).toBe(true)
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('x-api-key')).toBe('custom-key')
+    expect(headers.has('authorization')).toBe(false)
   })
 })

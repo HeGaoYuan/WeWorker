@@ -701,6 +701,7 @@ export class WecomChannel implements Channel {
         zcfRole: zcfPrefs.zcfRole,
         zcfMode: zcfPrefs.zcfMode,
         channelPermissionMode,
+        memoryScope: { user: `wecom:${userId}` },
         channelAskUserHandler: askUserHandler,
       })) {
         if (event.type === 'text_delta' && event.content) {
@@ -757,7 +758,7 @@ export class WecomChannel implements Channel {
             name: started?.name ?? '',
             args: started?.args ?? {},
             result: event.result ?? '',
-            status: 'done',
+            status: event.isError ? 'failed' : 'done',
             execMs: toolDuration,
             ...(started?.thinkMs !== undefined ? { thinkMs: started.thinkMs } : {}),
           })
