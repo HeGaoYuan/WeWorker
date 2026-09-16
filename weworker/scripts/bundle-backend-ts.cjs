@@ -8,6 +8,9 @@ const OUT_FILE = path.join(OUT_DIR, 'server.cjs')
 const PROFILE_ENTRY = process.env.WEWORKER_BACKEND_PROFILE_ENTRY
   ? path.resolve(process.env.WEWORKER_BACKEND_PROFILE_ENTRY)
   : null
+const QUERY_ROUTES_CONFIG = process.env.WEWORKER_QUERY_ROUTES_CONFIG
+  ? path.resolve(process.env.WEWORKER_QUERY_ROUTES_CONFIG)
+  : path.resolve(__dirname, '../query-routes.public.json')
 
 const KEYRING_PLATFORM_PACKAGES = {
   'win32-x64': '@napi-rs/keyring-win32-x64-msvc',
@@ -110,6 +113,11 @@ esbuild.buildSync({
 })
 
 copyKeyringNativeDeps()
+
+if (fs.existsSync(QUERY_ROUTES_CONFIG)) {
+  fs.copyFileSync(QUERY_ROUTES_CONFIG, path.join(OUT_DIR, 'query-routes.json'))
+  console.log(`[bundle-backend-ts] Copied query routes: ${QUERY_ROUTES_CONFIG}`)
+}
 
 fs.writeFileSync(
   path.join(OUT_DIR, '.profile.json'),
