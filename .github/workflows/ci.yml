@@ -95,6 +95,7 @@ jobs:
           extension/test/exploration-site-state.test.mjs
           extension/test/sidepanel-workflow-navigation.test.mjs
           extension/test/tool-route.test.mjs
+          extension/test/wecli-runtime-helper.test.mjs
 
   build-check:
     name: 编译检查
