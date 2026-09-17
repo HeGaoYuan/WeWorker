@@ -8,7 +8,6 @@ const OUT_FILE = path.join(OUT_DIR, 'server.cjs')
 const PROFILE_ENTRY = process.env.WEWORKER_BACKEND_PROFILE_ENTRY
   ? path.resolve(process.env.WEWORKER_BACKEND_PROFILE_ENTRY)
   : null
-<<<<<<< HEAD
 const PROMPTS_ROOT = path.join(BACKEND_TS_ROOT, 'prompts')
 
 const PROMPT_FILES = {
