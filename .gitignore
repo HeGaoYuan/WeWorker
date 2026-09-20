@@ -81,6 +81,7 @@ bench-out/
 session-*.md
 *_INTERNAL_*.html
 internal-*-report.html
+artifacts/api-adapter-certification/
 officialWeb/src/lib/sites.generated.json
 
 # Local browser profiles used for adapter training; may contain cookies/session data

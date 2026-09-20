@@ -7,6 +7,11 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import {
+  normalizeApiEndpoint,
+  normalizeRequestBodyEvidence,
+  normalizeResponseBodyEvidence,
+} from "./generation-harness/source-evidence.js";
 
 const CONFIG_DIR = join(homedir(), ".webcli");
 const CONFIG_PATH = join(homedir(), ".webcli", "config.json");
@@ -127,19 +132,27 @@ function validateAiConfig(config, label = "配置") {
   }
 }
 
-function buildPrompt(siteKey, apiEntries, existingCode) {
+function structuralUrl(value) {
+  return normalizeApiEndpoint({ url: String(value || "") }).endpoint;
+}
+
+export function buildPrompt(siteKey, apiEntries, existingCode) {
   const apiDescriptions = apiEntries
     .map((entry, i) => {
-      const urlObj = new URL(entry.url);
-      const params = urlObj.searchParams.toString();
+      const endpoint = normalizeApiEndpoint(entry);
       let section = `### API ${i + 1}\n`;
       section += `- Method: ${entry.method || "GET"}\n`;
-      section += `- URL: ${urlObj.origin}${urlObj.pathname}\n`;
-      if (params) section += `- Query Params: ${params}\n`;
-      if (entry.requestBody)
-        section += `- Request Body: ${entry.requestBody.slice(0, 1500)}\n`;
-      if (entry.responsePreview)
-        section += `- Response Sample: ${entry.responsePreview.slice(0, 2000)}\n`;
+      section += `- URL: ${endpoint.endpoint}\n`;
+      if (endpoint.queryKeys.length) section += `- Query Keys: ${endpoint.queryKeys.join(", ")}\n`;
+      const requestEvidence = normalizeRequestBodyEvidence({
+        ...entry,
+        requestBodyPreview: entry.requestBodyPreview ?? entry.requestBody,
+      });
+      if (requestEvidence.bodyKind !== 'none')
+        section += `- Request Evidence: ${JSON.stringify(requestEvidence)}\n`;
+      const responseEvidence = normalizeResponseBodyEvidence(entry);
+      if (responseEvidence.bodyKind !== 'none')
+        section += `- Response Evidence: ${JSON.stringify(responseEvidence)}\n`;
       if (entry.status) section += `- Status: ${entry.status}\n`;
       return section;
     })
@@ -238,21 +251,16 @@ function truncateForModel(value, limit = 500) {
 }
 
 function summarizeNetworkEntry(entry = {}) {
-  const url = String(entry.url || "").trim();
-  let queryKeys = [];
-  try {
-    const parsed = new URL(url);
-    queryKeys = [...parsed.searchParams.keys()].slice(0, 12);
-  } catch {}
-
+  const endpoint = normalizeApiEndpoint(entry);
+  const requestEvidence = normalizeRequestBodyEvidence(entry);
   return {
     method: String(entry.method || "GET").toUpperCase(),
-    url,
+    url: endpoint.endpoint,
     status: entry.status ?? null,
     responseContentType: String(entry.responseContentType || entry.contentType || ""),
-    queryKeys,
-    requestBodyPreview: truncateForModel(entry.requestBodyPreview, 600),
-    responsePreview: truncateForModel(entry.responsePreview, 1000),
+    queryKeys: endpoint.queryKeys.slice(0, 12),
+    requestEvidence,
+    responseEvidence: normalizeResponseBodyEvidence(entry),
   };
 }
 
@@ -278,7 +286,7 @@ function summarizeStateHints(stateHints = {}) {
   };
 }
 
-function buildExplorationAnalysisPayload({ siteKey, explorationResult, heuristicVerdict }) {
+export function buildExplorationAnalysisPayload({ siteKey, explorationResult, heuristicVerdict }) {
   const pageStateAfter = explorationResult?.pageStateAfter || {};
   const resultPageState = explorationResult?.resultPageState || {};
   const networkEntries = Array.isArray(explorationResult?.network?.entries)
@@ -294,9 +302,9 @@ function buildExplorationAnalysisPayload({ siteKey, explorationResult, heuristic
       strategy: truncateForModel(explorationResult?.workflow?.strategy, 400),
     },
     page: {
-      finalUrl: String(pageStateAfter?.url || ""),
+      finalUrl: structuralUrl(pageStateAfter?.url),
       finalTitle: truncateForModel(pageStateAfter?.title, 120),
-      resultUrl: String(resultPageState?.url || ""),
+      resultUrl: structuralUrl(resultPageState?.url),
       resultTitle: truncateForModel(resultPageState?.title, 120),
       resultSignals: {
         listCandidates: Number(resultPageState?.listCandidates || 0),
@@ -368,7 +376,7 @@ function normalizeExplorationAnalysis(raw = {}, fallbackVerdict = {}) {
       .slice(0, 5)
       .map((item) => ({
         method: String(item.method || "GET").toUpperCase(),
-        url: String(item.url || "").trim(),
+        url: structuralUrl(item.url),
         why: String(item.why || "").trim(),
       }))
     : [];
@@ -388,26 +396,21 @@ function normalizeExplorationAnalysis(raw = {}, fallbackVerdict = {}) {
 }
 
 function summarizeActionCaptureCandidate(candidate = {}) {
-  const url = String(candidate.url || "").trim();
-  let queryKeys = [];
-  try {
-    const parsed = new URL(url);
-    queryKeys = [...parsed.searchParams.keys()].slice(0, 12);
-  } catch {}
-
+  const endpoint = normalizeApiEndpoint(candidate);
+  const requestEvidence = normalizeRequestBodyEvidence(candidate);
   return {
     method: String(candidate.method || "GET").toUpperCase(),
-    url,
+    url: endpoint.endpoint,
     intercepted: Boolean(candidate.intercepted),
     blockedReason: String(candidate.blockedReason || ""),
     responseContentType: String(candidate.responseContentType || ""),
-    queryKeys,
-    requestBodyPreview: truncateForModel(candidate.requestBodyPreview, 700),
-    responsePreview: truncateForModel(candidate.responsePreview, 1000),
+    queryKeys: endpoint.queryKeys.slice(0, 12),
+    requestEvidence,
+    responseEvidence: normalizeResponseBodyEvidence(candidate),
   };
 }
 
-function buildActionCaptureAnalysisPayload({ captureResult }) {
+export function buildActionCaptureAnalysisPayload({ captureResult }) {
   return {
     site: String(captureResult?.site || ""),
     actionName: String(captureResult?.actionName || ""),
@@ -420,8 +423,8 @@ function buildActionCaptureAnalysisPayload({ captureResult }) {
       canGenerateAdapterTool: Boolean(captureResult?.recommendation?.canGenerateAdapterTool),
     },
     page: {
-      beforeUrl: String(captureResult?.beforeTab?.url || ""),
-      finalUrl: String(captureResult?.finalTab?.url || ""),
+      beforeUrl: structuralUrl(captureResult?.beforeTab?.url),
+      finalUrl: structuralUrl(captureResult?.finalTab?.url),
       beforeTitle: truncateForModel(captureResult?.beforeTab?.title, 120),
       finalTitle: truncateForModel(captureResult?.finalTab?.title, 120),
     },
@@ -494,7 +497,7 @@ function normalizeActionCaptureAnalysis(raw = {}, fallbackResult = {}) {
       .slice(0, 5)
       .map((item) => ({
         method: String(item.method || "GET").toUpperCase(),
-        url: String(item.url || "").trim(),
+        url: structuralUrl(item.url),
         purpose: String(item.purpose || "").trim(),
         why: String(item.why || "").trim(),
         isPrimary: Boolean(item.isPrimary),
@@ -535,15 +538,18 @@ function extractPreviewFieldNames(preview, limit = 20) {
 }
 
 function summarizeScaffoldCandidate(candidate = {}) {
+  const endpoint = normalizeApiEndpoint(candidate);
+  const requestEvidence = normalizeRequestBodyEvidence(candidate);
   return {
     actionName: String(candidate.actionName || "").trim(),
     toolName: String(candidate.toolName || "").trim(),
     method: String(candidate.method || "GET").toUpperCase(),
-    url: String(candidate.url || "").trim(),
+    url: endpoint.endpoint,
+    queryKeys: endpoint.queryKeys.slice(0, 20),
     mode: String(candidate.mode || "").trim(),
-    requestFieldNames: extractPreviewFieldNames(candidate.requestBodyPreview, 20),
-    requestBodyPreview: truncateForModel(candidate.requestBodyPreview, 800),
-    responseFieldNames: extractPreviewFieldNames(candidate.responsePreview, 24),
+    requestFieldNames: requestEvidence.bodyKeys.slice(0, 20),
+    requestEvidence,
+    responseEvidence: normalizeResponseBodyEvidence(candidate),
     responseHints: candidate.responseHints && typeof candidate.responseHints === "object"
       ? {
           listPath: String(candidate.responseHints.listPath || "").trim(),
@@ -556,7 +562,7 @@ function summarizeScaffoldCandidate(candidate = {}) {
   };
 }
 
-function buildScaffoldSemanticPayload(memory = {}) {
+export function buildScaffoldSemanticPayload(memory = {}) {
   const siteKey = String(memory.siteKey || "").trim();
   const listCandidates = Array.isArray(memory.listApiCandidates) ? memory.listApiCandidates.slice(0, 2) : [];
   const actionCandidates = Array.isArray(memory.actionApiCandidates) ? memory.actionApiCandidates.slice(0, 5) : [];
@@ -575,9 +581,10 @@ function buildScaffoldSemanticPayload(memory = {}) {
     listApiCandidates: listCandidates.map((candidate, index) => ({
       sourceToolName: index === 0 ? `${siteKey}.search_records` : `${siteKey}.fetch_summary_groups`,
       method: String(candidate.method || "GET").toUpperCase(),
-      url: String(candidate.url || "").trim(),
-      requestFieldNames: extractPreviewFieldNames(candidate.requestBodyPreview, 16),
-      requestBodyPreview: truncateForModel(candidate.requestBodyPreview, 700),
+      url: structuralUrl(candidate.url),
+      queryKeys: normalizeApiEndpoint(candidate).queryKeys.slice(0, 20),
+      requestFieldNames: normalizeRequestBodyEvidence(candidate).bodyKeys.slice(0, 16),
+      requestEvidence: normalizeRequestBodyEvidence(candidate),
     })),
     actionApiCandidates: actionCandidates.map(summarizeScaffoldCandidate),
   };
@@ -734,6 +741,14 @@ function buildOpenAiChatEndpoint(baseUrl) {
   return trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
 }
 
+export function extractAnthropicTextContent(content = []) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => (typeof block?.text === 'string' ? block.text : ''))
+    .join('')
+    .trim();
+}
+
 async function callAnthropicModel(prompt, config, maxTokens, taskLabel) {
   const client = new Anthropic({
     apiKey: config.api_key,
@@ -755,11 +770,17 @@ async function callAnthropicModel(prompt, config, maxTokens, taskLabel) {
     messages: [{ role: "user", content: prompt }],
   });
 
-  const text = String(response.content?.[0]?.text || "").trim();
+  // Anthropic-compatible providers may prepend a thinking/redacted-thinking
+  // block before the text block. Read every text block instead of assuming
+  // content[0] contains the action payload.
+  const text = extractAnthropicTextContent(response.content);
   const memoryAfter = process.memoryUsage();
+  const emptyDetail = text
+    ? ''
+    : ` stop=${response.stop_reason || 'unknown'} blocks=${(response.content || []).map((block) => block?.type || 'unknown').join(',') || 'none'}`;
   process.stderr.write(
     `[AI] Completed ${taskLabel} `
-      + `(response=${Buffer.byteLength(text, "utf8")}B rss=${Math.round(memoryAfter.rss / 1024 / 1024)}MB)\n`
+      + `(response=${Buffer.byteLength(text, "utf8")}B${emptyDetail} rss=${Math.round(memoryAfter.rss / 1024 / 1024)}MB)\n`
   );
   return text;
 }
