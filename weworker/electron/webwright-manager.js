@@ -132,6 +132,7 @@ export class WebwrightManager {
     webwrightHome = resolveWebwrightHome(),
     userFilesDir = resolveWeWorkerUserFilesDir(),
     modelConfigToken = '',
+    explorationInstanceId = '',
   } = {}) {
     if (!repoRoot) throw new Error('WebwrightManager requires repoRoot')
     this._log = log
@@ -148,6 +149,7 @@ export class WebwrightManager {
     this._webwrightHome = webwrightHome
     this._userFilesDir = userFilesDir
     this._modelConfigToken = modelConfigToken
+    this._explorationInstanceId = explorationInstanceId
     this._status = 'stopped'
     this._process = null
     this._identity = null
@@ -222,6 +224,7 @@ export class WebwrightManager {
         WEWORKER_USER_FILES_DIR: this._userFilesDir,
         WEWORKER_MODEL_CONFIG_URL: 'http://127.0.0.1:8765/internal/webwright/model-config',
         WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
+        WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,

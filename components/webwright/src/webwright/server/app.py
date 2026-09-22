@@ -607,6 +607,9 @@ def create_app(
         else RuntimeIdentity.resolve().as_health_fields()
     )
     app.config["WEBWRIGHT_BIND_HOST"] = bind_host
+    app.config["WEWORKER_EXPLORATION_INSTANCE_ID"] = os.environ.get(
+        "WEWORKER_EXPLORATION_INSTANCE_ID", ""
+    )
     app.config["WEBWRIGHT_BIND_PORT"] = bind_port
     configured_user_files_dir = (
         weworker_user_files_dir
@@ -697,6 +700,7 @@ def create_app(
             {
                 "ok": True,
                 **identity,
+                "instance_id": app.config["WEWORKER_EXPLORATION_INSTANCE_ID"],
                 "runtime": "local_browser.local_cdp",
                 "bind": app.config["WEBWRIGHT_BIND_HOST"],
                 "port": str(configured_port if configured_port is not None else request_port or ""),

@@ -3,7 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { fileURLToPath } from 'url'
-import { randomBytes } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import {
   BridgeManager,
   NodeManager,
@@ -153,10 +153,11 @@ if (!hasSingleInstanceLock) {
 }
 const httpAuthToken = randomBytes(32).toString('base64url')
 const webwrightModelToken = randomBytes(32).toString('base64url')
+const explorationInstanceId = randomUUID()
 const webwrightHome = resolveWebwrightHome()
 const userFilesDir = readConfiguredUserFilesDir()
 const bridgeManager = new BridgeManager(log, path.dirname(logFile))
-const pythonManager = new NodeManager(log, logFile, httpAuthToken, webwrightHome, webwrightModelToken)
+const pythonManager = new NodeManager(log, logFile, httpAuthToken, webwrightHome, webwrightModelToken, explorationInstanceId)
 const webwrightManager = new WebwrightManager({
   log,
   isPackaged: app.isPackaged,
@@ -165,6 +166,7 @@ const webwrightManager = new WebwrightManager({
   webwrightHome,
   userFilesDir,
   modelConfigToken: webwrightModelToken,
+  explorationInstanceId,
 })
 let isInstallingUpdate = false
 const updateManager = new UpdateManager({

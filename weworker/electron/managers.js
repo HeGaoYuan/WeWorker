@@ -250,7 +250,7 @@ export class BridgeManager {
 }
 
 export class NodeManager {
-  constructor(log, logFile, httpAuthToken, webwrightHome = resolveWebwrightHome(), modelConfigToken = '') {
+  constructor(log, logFile, httpAuthToken, webwrightHome = resolveWebwrightHome(), modelConfigToken = '', explorationInstanceId = '') {
     this._process = null
     this._status = 'stopped'
     this._log = log || console.log
@@ -258,6 +258,7 @@ export class NodeManager {
     this._httpAuthToken = httpAuthToken || ''
     this._webwrightHome = webwrightHome
     this._modelConfigToken = modelConfigToken
+    this._explorationInstanceId = explorationInstanceId
     this._stopping = false
     this._restartTimer = null
     this._restartAttempts = 0
@@ -342,6 +343,7 @@ export class NodeManager {
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
           WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
+          WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
           WEWORKER_PACKAGED: '1',
           WEWORKER_RESOURCES_PATH: process.resourcesPath,
           WEWORKER_EXEC_PATH: process.execPath,
@@ -377,6 +379,7 @@ export class NodeManager {
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
           WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
+          WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
           WEWORKER_RENDERER_ORIGIN: process.env.WEWORKER_DEV_SERVER_URL || '',
         },
         stdio: ['ignore', 'pipe', 'pipe'],

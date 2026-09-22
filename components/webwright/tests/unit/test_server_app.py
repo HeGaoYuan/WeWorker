@@ -59,6 +59,15 @@ def test_health_endpoint(tmp_path: Path) -> None:
     assert response.get_json()["capabilities"]["install_to_weworker"] is False
 
 
+@pytest.mark.parametrize("instance_id", ["", "exploration-fixture"])
+def test_health_reports_host_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, instance_id: str
+) -> None:
+    monkeypatch.setenv("WEWORKER_EXPLORATION_INSTANCE_ID", instance_id)
+    app = create_app(paths=_paths(tmp_path))
+    assert app.test_client().get("/api/health").get_json()["instance_id"] == instance_id
+
+
 def test_standalone_does_not_register_weworker_install_route(tmp_path: Path) -> None:
     app = create_app(paths=_paths(tmp_path))
     client = app.test_client()

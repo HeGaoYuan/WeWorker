@@ -68,15 +68,22 @@ export function createWebsiteExplorationRouter(options: {
     const timeout = setTimeout(close, 30_000)
     try {
       if (!instanceId) {
-        res.status(503).json({ detail: '请从 WeWorker 客户端启动网站探索服务' })
+        const detail = process.env.WEWORKER_BACKEND_INSTANCE_ID
+          ? '客户端未传入网站探索服务实例信息，请完整退出并重启 WeWorker'
+          : '当前连接的是独立启动的后端，请停止该后端后重启 WeWorker 客户端'
+        res.status(503).json({ detail })
         return
       }
       const health = await fetchUpstream(UPSTREAM + '/api/health', {
         redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]),
       })
       const identity = health.ok ? await health.json() : null
-      if (!identity?.ok || identity.instance_id !== instanceId) {
-        res.status(503).json({ detail: '网站探索服务尚未就绪或实例不匹配' })
+      if (!identity?.ok) {
+        res.status(503).json({ detail: '网站探索服务尚未就绪，正在等待服务启动' })
+        return
+      }
+      if (identity.instance_id !== instanceId) {
+        res.status(503).json({ detail: '网站探索服务实例不匹配，请检查 8766 端口是否被其他实例占用' })
         return
       }
       if (raw === '/api/health') {
@@ -102,7 +109,9 @@ export function createWebsiteExplorationRouter(options: {
         await pipeline(Readable.fromWeb(response.body as never), res, { signal: controller.signal })
       } else res.end()
     } catch {
-      if (!res.headersSent && !res.destroyed) res.status(503).json({ detail: '网站探索连接中断，请确认服务状态后重试；操作结果可能需要刷新确认' })
+      if (!res.headersSent && !res.destroyed) res.status(503).json({ detail: req.method === 'GET'
+        ? '网站探索服务暂时无法连接，正在等待服务启动或恢复'
+        : '网站探索连接中断，请确认服务状态后重试；操作结果可能需要刷新确认' })
       else if (!res.destroyed) res.end()
     } finally {
       clearTimeout(timeout)
