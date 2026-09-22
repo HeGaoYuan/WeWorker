@@ -14,6 +14,30 @@ afterEach(() => {
 })
 
 describe('chat model settings integration', () => {
+  it('saves the OpenAI full URL mode independently from the Claude Code URL mode', async () => {
+    globalThis.window = {}
+    const updates = { base_url_is_full: false, openai_base_url: 'https://example.com/custom/?version=2', openai_base_url_is_full: true }
+    globalThis.fetch = async (_url, options) => {
+      assert.deepEqual(JSON.parse(options.body), { provider: 'custom', ...updates })
+      return Response.json({ active_provider: 'custom', providers: { custom: updates } })
+    }
+    await useSettingsStore.getState().saveProvider('custom', updates)
+    assert.deepEqual(useSettingsStore.getState().providers.custom, updates)
+  })
+
+  it('saves exact endpoint text and full URL mode without appending or removing any suffix', async () => {
+    globalThis.window = {}
+    const endpoint = 'https://example.com/custom/infer/?api-version=1&route=a%2Fb'
+    globalThis.fetch = async (url, options) => {
+      assert.ok(url.endsWith('/settings/provider'))
+      assert.deepEqual(JSON.parse(options.body), { provider: 'custom', base_url: endpoint, base_url_is_full: true })
+      return Response.json({ active_provider: 'custom', providers: { custom: { base_url: endpoint, base_url_is_full: true } } })
+    }
+    await useSettingsStore.getState().saveProvider('custom', { base_url: endpoint, base_url_is_full: true })
+    assert.equal(useSettingsStore.getState().providers.custom.base_url, endpoint)
+    assert.equal(useSettingsStore.getState().providers.custom.base_url_is_full, true)
+  })
+
   it('adds the same supplier twice using distinct configuration IDs', async () => {
     globalThis.window = {}
     const providers = { deepseek: { has_key: true, model: 'legacy-model' } }

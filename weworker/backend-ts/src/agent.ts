@@ -29,6 +29,7 @@ import { composeSystemPromptWithZcf } from './zcf-sync.js'
 import { computeUsageMetrics } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls } from './provider-registry.js'
+import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
 import { createWeWorkerToolPolicy } from './agent-tool-policy.js'
 import { spawnManagedClaudeCodeProcess } from './claude-process.js'
 import { waitForAdapterRuntimeReload } from './adapter-runtime-reload.js'
@@ -899,7 +900,22 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
   }
 }
 
-export async function* streamChat(
+export async function* streamChat(...args: Parameters<typeof streamChatWithBaseUrl>): AsyncGenerator<SSEEvent> {
+  let runtime: Awaited<ReturnType<typeof prepareModelRuntime>>
+  try {
+    runtime = await prepareModelRuntime(args[1])
+  } catch {
+    yield { type: 'error', content: '模型接口地址无效或无法启动本地转发' }
+    return
+  }
+  try {
+    yield* streamChatWithBaseUrl(args[0], runtime.settings, args[2], args[3])
+  } finally {
+    await runtime.close()
+  }
+}
+
+async function* streamChatWithBaseUrl(
   messages: Message[],
   settings: Settings,
   abortController?: AbortController,
@@ -977,7 +993,7 @@ export async function* streamChat(
 
   const textBlockBuf: { id: string; text: string }[] = []
   const queryStartTime = Date.now()
-  log.info(` calling Claude API 鈥?model=${settings.model}, base_url=${settings.base_url || 'https://api.anthropic.com'}`)
+  log.info(` calling Claude API 鈥?model=${settings.model}`)
 
   // Resolve webcli directory for PATH so Bash can find the `webcli` command
   const webcliDir = resolveWebcliDir()

@@ -4,8 +4,7 @@
  */
 import type { Settings } from './config.js'
 import { createLogger } from './logger.js'
-import { assertAllowedLlmBaseUrl } from './llm-egress.js'
-import { buildRuntimeAllowedLlmBaseUrls } from './provider-registry.js'
+import { resolveAnthropicEndpoint } from './llm-egress.js'
 import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
 import { loadPrompt, renderPrompt } from './prompt-loader.js'
 
@@ -47,8 +46,7 @@ export async function generateTitleWithLLM(message: string, settings: Settings):
   if (!settings.api_key) return null
   try {
     const prompts = buildTitlePrompts(message)
-    const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
-    const endpoint = `${baseUrl}/v1/messages`
+    const endpoint = resolveAnthropicEndpoint(settings)
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {

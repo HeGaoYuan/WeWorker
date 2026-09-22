@@ -158,26 +158,26 @@ class ProcessManager:
                 ),
             )
             raise InvalidStateError("请先在 WeWorker 中配置可用于 Webwright 的模型。") from exc
-        endpoint = active.base_url.rstrip("/")
+        endpoint = active.request_endpoint
         if active.model_class == "anthropic":
             model_config_file = "model_claude.yaml"
             overrides.extend([
                 f"model.model_name={active.model}",
-                f"model.anthropic_endpoint={endpoint}/v1/messages",
+                f"model.anthropic_endpoint={endpoint}",
             ])
             env_extra = {"ANTHROPIC_API_KEY": active.api_key}
         elif active.model_class == "zhipu":
             model_config_file = "model_zhipu.yaml"
             overrides.extend([
                 f"model.model_name={active.model}",
-                f"model.zhipu_endpoint={endpoint}/chat/completions",
+                f"model.zhipu_endpoint={endpoint}",
             ])
             env_extra = {"ZHIPUAI_API_KEY": active.api_key}
         else:
             model_config_file = "model_openai_chat.yaml"
             overrides.extend([
                 f"model.model_name={active.model}",
-                f"model.openai_chat_endpoint={endpoint}/chat/completions",
+                f"model.openai_chat_endpoint={endpoint}",
             ])
             env_extra = {"OPENAI_CHAT_API_KEY": active.api_key}
         return model_config_file, overrides, env_extra
@@ -196,19 +196,19 @@ class ProcessManager:
                 ),
             )
             raise InvalidStateError("请先在 WeWorker 中配置可用于 Webwright 的模型。") from exc
-        endpoint = active.base_url.rstrip("/")
+        endpoint = active.request_endpoint
         if active.model_class == "anthropic":
-            model = {"model_class": "anthropic", "model_name": active.model, "anthropic_endpoint": f"{endpoint}/v1/messages"}
+            model = {"model_class": "anthropic", "model_name": active.model, "anthropic_endpoint": endpoint}
             env_extra = {"ANTHROPIC_API_KEY": active.api_key}
         elif active.model_class == "zhipu":
-            model = {"model_class": "zhipu", "model_name": active.model, "zhipu_endpoint": f"{endpoint}/chat/completions"}
+            model = {"model_class": "zhipu", "model_name": active.model, "zhipu_endpoint": endpoint}
             env_extra = {"ZHIPUAI_API_KEY": active.api_key}
         else:
             model = {
                 "model_class": "openai_chat",
                 "provider_id": active.provider_id,
                 "model_name": active.model,
-                "openai_chat_endpoint": f"{endpoint}/chat/completions",
+                "openai_chat_endpoint": endpoint,
             }
             env_extra = {"OPENAI_CHAT_API_KEY": active.api_key}
         return model, env_extra

@@ -182,6 +182,7 @@ export interface Settings {
   api_key: string
 
   base_url: string
+  base_url_is_full?: boolean
 
   model: string
 
@@ -214,8 +215,10 @@ export interface Settings {
   context_limit_custom: number
 
   base_url_custom: string
+  base_url_is_full_custom?: boolean
 
   openai_base_url_custom: string
+  openai_base_url_is_full_custom?: boolean
 
   exploration_base_url: string
   exploration_api_key: string
@@ -344,10 +347,12 @@ const DEFAULTS: Settings = {
   context_limit_custom: DEFAULT_CONTEXT_LIMIT,
 
   base_url_custom: '',
+  base_url_is_full_custom: false,
 
   api_query_llm_route: true,
 
   openai_base_url_custom: '',
+  openai_base_url_is_full_custom: false,
 
   exploration_base_url: '',
   exploration_api_key: '',

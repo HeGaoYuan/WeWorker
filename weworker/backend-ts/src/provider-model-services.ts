@@ -1,4 +1,5 @@
 import type { ProviderEntry } from './llm-egress.js'
+import { resolveAnthropicEndpoint, resolveOpenAiEndpoint } from './llm-egress.js'
 import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
 import type { AnthropicAuthType } from './anthropic-auth.js'
 
@@ -19,7 +20,9 @@ export interface ProviderAccessInput {
   provider: ProviderEntry
   apiKey: string
   anthropicBaseUrl?: string
+  anthropicFullUrl?: boolean
   openaiBaseUrl?: string
+  openaiFullUrl?: boolean
   anthropicAuthType?: AnthropicAuthType
 }
 
@@ -105,8 +108,8 @@ export async function listProviderModels(
 
   const requests: Array<{ label: string; promise: Promise<string[]> }> = []
   if (input.provider.id === 'custom') {
-    if (input.anthropicBaseUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
-    if (input.openaiBaseUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, input.apiKey, fetchImpl) })
+    if (input.anthropicBaseUrl && !input.anthropicFullUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
+    if (input.openaiBaseUrl && !input.openaiFullUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, input.apiKey, fetchImpl) })
   } else if (input.provider.webwright.protocol === 'openai_chat_completions') {
     requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.provider.webwright.baseUrl, input.apiKey, fetchImpl) })
   } else {
@@ -114,7 +117,9 @@ export async function listProviderModels(
   }
 
   if (requests.length === 0) {
-    return { models: [...input.provider.models], source: 'fallback', warning: '模型列表接口未配置，显示内置模型列表' }
+    return { models: [...input.provider.models], source: 'fallback', warning: input.anthropicFullUrl || input.openaiFullUrl
+      ? '完整 URL 模式不推断模型列表地址，请手动填写模型名称，或为任一协议配置基础 URL'
+      : '模型列表接口未配置，显示内置模型列表' }
   }
 
   const results = await Promise.allSettled(requests.map(request => request.promise))
@@ -156,7 +161,9 @@ export async function probeProviderProtocol(
   }
 
   const isAnthropic = protocol === 'anthropic_messages'
-  const endpoint = `${baseUrl}${isAnthropic ? '/v1/messages' : '/chat/completions'}`
+  const endpoint = isAnthropic
+    ? resolveAnthropicEndpoint({ base_url: baseUrl, base_url_is_full: input.provider.id === 'custom' && input.anthropicFullUrl === true })
+    : resolveOpenAiEndpoint(baseUrl, input.provider.id === 'custom' && input.openaiFullUrl === true)
   const headers: Record<string, string> = isAnthropic
     ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }

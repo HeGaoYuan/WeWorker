@@ -3,7 +3,7 @@ import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Sidebar from './components/layout/Sidebar.jsx'
 import MainArea from './components/layout/MainArea.jsx'
-import SettingsModal from './components/settings/SettingsModal.jsx'
+import SettingsPage from './components/settings/SettingsModal.jsx'
 import Tooltip from './components/Tooltip.jsx'
 import CapabilitiesToggleButton from './components/capabilities/CapabilitiesToggleButton.jsx'
 import GlobalFileDropLayer from './components/files/GlobalFileDropLayer.jsx'
@@ -231,7 +231,7 @@ export default function App() {
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', userSelect: 'none', gap: 8 }}>
-          {sidebarCollapsed && (
+          {sidebarCollapsed && !showSettings && (
             <>
               <Tooltip text="展开侧边栏">
                 <button
@@ -286,7 +286,7 @@ export default function App() {
           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 2 }}>v{appVersion || ''}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, WebkitAppRegion: 'no-drag' }}>
-        {!focusedWorkspaceOpen && (
+        {!focusedWorkspaceOpen && !showSettings && (
         <Tooltip text={userFilesOpen ? '收起用户目录' : '打开用户目录'}>
           <button
             type="button"
@@ -338,11 +338,11 @@ export default function App() {
             </span>
           </button>
         </Tooltip>
-        {!focusedWorkspaceOpen && <CapabilitiesToggleButton variant="titlebar" />}
+        {!focusedWorkspaceOpen && !showSettings && <CapabilitiesToggleButton variant="titlebar" />}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div data-workspace-content style={{ display: showSettings ? 'none' : 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <Sidebar onOpenSettings={() => setShowSettings(true)} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(true)} width={sidebarWidth} />
         {!sidebarCollapsed && (
           <div
@@ -363,7 +363,7 @@ export default function App() {
         )}
         <MainArea onOpenSettings={() => setShowSettings(true)} />
       </div>
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
       <GlobalFileDropLayer />
       <WebsiteExplorationGuard />
       <NativeTitleTooltipLayer />

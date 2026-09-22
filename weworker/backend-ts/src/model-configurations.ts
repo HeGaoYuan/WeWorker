@@ -3,7 +3,7 @@ import type { Settings } from './config.js'
 import { getProvider } from './provider-registry.js'
 import { DEFAULT_CONTEXT_LIMIT, parseContextLimit } from './context-window.js'
 import { isAnthropicAuthType, type AnthropicAuthType } from './anthropic-auth.js'
-import { normalizeLlmBaseUrl } from './llm-egress.js'
+import { normalizeLlmUrlInput } from './llm-egress.js'
 
 export interface ModelConfiguration {
   provider_id: string
@@ -11,7 +11,9 @@ export interface ModelConfiguration {
   api_key: string
   context_limit: number
   base_url: string
+  base_url_is_full?: boolean
   openai_base_url: string
+  openai_base_url_is_full?: boolean
   auth_type: AnthropicAuthType
 }
 
@@ -33,7 +35,9 @@ export function createModelConfiguration(settings: Settings, providerId: string)
     api_key: active?.api_key || legacyKey || '',
     context_limit: DEFAULT_CONTEXT_LIMIT,
     base_url: active?.base_url || legacyBaseUrl,
+    base_url_is_full: providerId === 'custom' && (active ? active.base_url_is_full === true : settings.base_url_is_full_custom === true),
     openai_base_url: active?.openai_base_url || legacyOpenAiBaseUrl,
+    openai_base_url_is_full: providerId === 'custom' && (active ? active.openai_base_url_is_full === true : settings.openai_base_url_is_full_custom === true),
     auth_type: active?.auth_type || (providerId === 'custom' ? settings.custom_auth_type : 'api_key'),
   }
   return { id, updates: { model_configurations: { ...settings.model_configurations, [id]: configuration } } }
@@ -56,6 +60,7 @@ export function activateModelConfiguration(settings: Settings, id: string): Part
     api_key: configuration.api_key,
     model: configuration.model,
     base_url: configuration.base_url,
+    base_url_is_full: configuration.base_url_is_full === true,
     context_limit: configuration.context_limit,
     active_auth_type: configuration.auth_type,
   }
@@ -65,6 +70,14 @@ export function updateModelConfiguration(settings: Settings, id: string, input: 
   const current = getModelConfiguration(settings, id)
   if (!current) throw new Error('模型配置不存在')
   const next = { ...current }
+  if (current.provider_id === 'custom' && input.base_url_is_full !== undefined) {
+    if (typeof input.base_url_is_full !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+    next.base_url_is_full = input.base_url_is_full
+  }
+  if (current.provider_id === 'custom' && input.openai_base_url_is_full !== undefined) {
+    if (typeof input.openai_base_url_is_full !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+    next.openai_base_url_is_full = input.openai_base_url_is_full
+  }
   for (const field of ['api_key', 'model', 'base_url', 'openai_base_url'] as const) {
     if (input[field] === undefined) continue
     if (typeof input[field] !== 'string') throw new Error(`${field} must be a string`)
@@ -75,13 +88,21 @@ export function updateModelConfiguration(settings: Settings, id: string, input: 
       if (!value) throw new Error('请输入模型名称')
       next.model = value
     } else if (current.provider_id === 'custom') {
-      next[field] = field === 'openai_base_url' && !value ? '' : normalizeLlmBaseUrl(value)
+      next[field] = field === 'base_url'
+        ? normalizeLlmUrlInput(value, next.base_url_is_full ?? false)
+        : !value ? '' : normalizeLlmUrlInput(value, next.openai_base_url_is_full ?? false)
     }
   }
   if (input.context_limit !== undefined) {
     const limit = parseContextLimit(input.context_limit)
     if (limit === null) throw new Error('上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位')
     next.context_limit = limit
+  }
+  if (current.provider_id === 'custom' && input.base_url_is_full !== undefined && input.base_url === undefined && next.base_url) {
+    normalizeLlmUrlInput(next.base_url, next.base_url_is_full ?? false)
+  }
+  if (current.provider_id === 'custom' && input.openai_base_url_is_full !== undefined && input.openai_base_url === undefined && next.openai_base_url) {
+    normalizeLlmUrlInput(next.openai_base_url, next.openai_base_url_is_full ?? false)
   }
   if (input.auth_type !== undefined && current.provider_id === 'custom') {
     if (!isAnthropicAuthType(input.auth_type)) throw new Error('API Key 类型无效')

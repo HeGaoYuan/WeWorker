@@ -46,11 +46,10 @@ import {
   type UserDirectoryBlacklistEntry,
 } from './user-directory-blacklist.js'
 import { isAllowedHost, isAllowedOrigin, isAuthorizedHttpRequest, LOCAL_HTTP_PORT, redactSensitive } from './http-security.js'
-import { assertAllowedLlmBaseUrl, normalizeLlmBaseUrl } from './llm-egress.js'
+import { normalizeLlmUrlInput, resolveAnthropicEndpoint } from './llm-egress.js'
 import {
   ALLOWED_PROVIDER_IDS,
   PROVIDER_BASE_URLS,
-  buildRuntimeAllowedLlmBaseUrls,
   getProvider,
 } from './provider-registry.js'
 import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
@@ -87,6 +86,7 @@ import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveS
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, streamChat } from './agent.js'
+import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
 import { renderPrompt } from './prompt-loader.js'
 import {
@@ -381,7 +381,7 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
       anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic, added: s.added_providers.includes('anthropic'), visible: visible('anthropic') },
       glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm, added: s.added_providers.includes('glm'), visible: visible('glm') },
       deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek, added: s.added_providers.includes('deepseek'), visible: visible('deepseek') },
-      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom, auth_type: s.custom_auth_type, added: s.added_providers.includes('custom'), visible: visible('custom') },
+      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, base_url_is_full: s.base_url_is_full_custom === true, openai_base_url: s.openai_base_url_custom, openai_base_url_is_full: s.openai_base_url_is_full_custom === true, auth_type: s.custom_auth_type, added: s.added_providers.includes('custom'), visible: visible('custom') },
       ...publicModelConfigurations(s),
     },
     zcf_default_role: s.zcf_default_role,
@@ -550,8 +550,8 @@ app.post('/settings/provider/add', (req, res) => {
 })
 
 app.post('/settings/provider', (req, res) => {
-  const { provider, api_key, model, context_limit, base_url, openai_base_url, auth_type, added } = req.body as {
-    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; openai_base_url?: string; auth_type?: unknown; added?: boolean
+  const { provider, api_key, model, context_limit, base_url, base_url_is_full, openai_base_url, openai_base_url_is_full, auth_type, added } = req.body as {
+    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; base_url_is_full?: boolean; openai_base_url?: string; openai_base_url_is_full?: boolean; auth_type?: unknown; added?: boolean
   }
   if (getModelConfiguration(getSettings(), provider)) {
     try {
@@ -567,17 +567,27 @@ app.post('/settings/provider', (req, res) => {
   }
   let allowedBaseUrl: string | undefined
   let allowedOpenAiBaseUrl: string | undefined
-  if (provider === 'custom' && base_url !== undefined) {
+  if (provider === 'custom' && base_url_is_full !== undefined && typeof base_url_is_full !== 'boolean') {
+    res.status(400).json({ detail: '使用完整 URL 必须为布尔值' })
+    return
+  }
+  if (provider === 'custom' && (base_url !== undefined || base_url_is_full !== undefined)) {
     try {
-      allowedBaseUrl = normalizeLlmBaseUrl(base_url)
+      const value = base_url ?? getSettings().base_url_custom
+      if (value || base_url !== undefined) allowedBaseUrl = normalizeLlmUrlInput(value, base_url_is_full ?? getSettings().base_url_is_full_custom ?? false)
     } catch (e) {
       res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
       return
     }
   }
-  if (provider === 'custom' && openai_base_url !== undefined) {
+  if (provider === 'custom' && openai_base_url_is_full !== undefined && typeof openai_base_url_is_full !== 'boolean') {
+    res.status(400).json({ detail: '使用完整 URL 必须为布尔值' })
+    return
+  }
+  if (provider === 'custom' && (openai_base_url !== undefined || openai_base_url_is_full !== undefined)) {
     try {
-      allowedOpenAiBaseUrl = openai_base_url.trim() ? normalizeLlmBaseUrl(openai_base_url) : ''
+      const value = openai_base_url ?? getSettings().openai_base_url_custom
+      allowedOpenAiBaseUrl = value.trim() ? normalizeLlmUrlInput(value, openai_base_url_is_full ?? getSettings().openai_base_url_is_full_custom ?? false) : ''
     } catch (e) {
       res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
       return
@@ -612,7 +622,9 @@ app.post('/settings/provider', (req, res) => {
     else if (provider === 'custom') updates.context_limit_custom = parsedContextLimit
   }
   if (provider === 'custom' && base_url !== undefined) updates.base_url_custom = allowedBaseUrl
+  if (provider === 'custom' && base_url_is_full !== undefined) updates.base_url_is_full_custom = base_url_is_full
   if (provider === 'custom' && openai_base_url !== undefined) updates.openai_base_url_custom = allowedOpenAiBaseUrl
+  if (provider === 'custom' && openai_base_url_is_full !== undefined) updates.openai_base_url_is_full_custom = openai_base_url_is_full
   if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.custom_auth_type = auth_type
   // If this provider is currently active, also update the active key/model/url
   const current = getSettings()
@@ -627,6 +639,7 @@ app.post('/settings/provider', (req, res) => {
     if (model) updates.model = model
     if (parsedContextLimit !== undefined && parsedContextLimit !== null) updates.context_limit = parsedContextLimit
     if (provider === 'custom' && base_url !== undefined) updates.base_url = allowedBaseUrl
+    if (provider === 'custom' && base_url_is_full !== undefined) updates.base_url_is_full = base_url_is_full
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
 })
@@ -665,7 +678,7 @@ app.post('/settings/provider/activate', (req, res) => {
   const baseUrl =
     provider === 'custom' ? current.base_url_custom : (PROVIDER_BASE_URLS[provider] ?? '')
   try {
-    if (provider === 'custom') assertAllowedLlmBaseUrl(baseUrl, buildRuntimeAllowedLlmBaseUrls(baseUrl, current.openai_base_url_custom))
+    if (provider === 'custom') normalizeLlmUrlInput(baseUrl, current.base_url_is_full_custom ?? false)
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
@@ -678,6 +691,7 @@ app.post('/settings/provider/activate', (req, res) => {
     model,
     context_limit: contextLimit,
     base_url: baseUrl,
+    base_url_is_full: provider === 'custom' && current.base_url_is_full_custom === true,
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
 })
@@ -687,7 +701,9 @@ type ProviderRequestBody = {
   api_key?: string
   model?: string
   base_url?: string
+  base_url_is_full?: boolean
   openai_base_url?: string
+  openai_base_url_is_full?: boolean
   auth_type?: unknown
   target?: ProbeTarget
   auto_auth?: boolean
@@ -702,19 +718,25 @@ function resolveProviderAccess(body: ProviderRequestBody) {
     configuration?.api_key ?? (provider.id === 'anthropic' ? settings.api_key_anthropic :
       provider.id === 'glm' ? settings.api_key_glm :
       provider.id === 'deepseek' ? settings.api_key_deepseek : settings.api_key_custom)
-  const normalizeOptionalBaseUrl = (value: string | undefined): string | undefined => {
-    if (!value?.trim()) return undefined
-    return normalizeLlmBaseUrl(value)
-  }
+  const anthropicFullUrl = provider.id === 'custom'
+    && (body.base_url_is_full ?? (configuration ? configuration.base_url_is_full ?? false : settings.base_url_is_full_custom ?? false))
+  if (typeof anthropicFullUrl !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+  const anthropicUrl = body.base_url === undefined ? configuration?.base_url ?? settings.base_url_custom : body.base_url
+  const openaiFullUrl = provider.id === 'custom'
+    && (body.openai_base_url_is_full ?? (configuration ? configuration.openai_base_url_is_full ?? false : settings.openai_base_url_is_full_custom ?? false))
+  if (typeof openaiFullUrl !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+  const openaiUrl = body.openai_base_url === undefined ? configuration?.openai_base_url ?? settings.openai_base_url_custom : body.openai_base_url
   return {
     provider,
     apiKey: body.api_key?.trim() || savedApiKey,
     anthropicBaseUrl: provider.id === 'custom'
-      ? normalizeOptionalBaseUrl(body.base_url === undefined ? configuration?.base_url ?? settings.base_url_custom : body.base_url)
+      ? anthropicUrl?.trim() ? normalizeLlmUrlInput(anthropicUrl, anthropicFullUrl) : undefined
       : provider.weworker.baseUrl,
+    anthropicFullUrl,
     openaiBaseUrl: provider.id === 'custom'
-      ? normalizeOptionalBaseUrl(body.openai_base_url === undefined ? configuration?.openai_base_url ?? settings.openai_base_url_custom : body.openai_base_url)
+      ? openaiUrl?.trim() ? normalizeLlmUrlInput(openaiUrl, openaiFullUrl) : undefined
       : provider.webwright.baseUrl,
+    openaiFullUrl,
     anthropicAuthType: provider.id === 'custom'
       ? (body.auth_type === undefined
           ? configuration?.auth_type ?? settings.custom_auth_type
@@ -1181,7 +1203,9 @@ app.post('/debug/chat', async (_req, res) => {
   const mcpServer = buildMcpServer()
   log.debug(' static adapter tools:', [...parseAllAdapters().values()].flatMap(a => a.tools).map(t => t.name))
   const msgs: string[] = []
+  let runtime: Awaited<ReturnType<typeof prepareModelRuntime>> | undefined
   try {
+    runtime = await prepareModelRuntime(settings)
     for await (const msg of query({
       prompt: '浣犲ソ',
       options: {
@@ -1190,7 +1214,7 @@ app.post('/debug/chat', async (_req, res) => {
         canUseTool: createUnifiedToolGuard(),
         settings: buildAgentFilesystemSettings(getUserDirectory()),
         mcpServers: { weworker: mcpServer },
-        env: buildConfiguredModelEnv(settings),
+        env: buildConfiguredModelEnv(runtime.settings),
       },
     })) {
       msgs.push(msg.type)
@@ -1203,6 +1227,8 @@ app.post('/debug/chat', async (_req, res) => {
   } catch (e) {
     res.json({ ok: false, error: e instanceof Error ? e.message : String(e), msgs })
     return
+  } finally {
+    await runtime?.close()
   }
   res.json({ ok: false, msgs, note: 'no assistant message' })
 })
@@ -2400,9 +2426,9 @@ app.post('/terminal/assist', async (req, res) => {
     return
   }
 
-  let baseUrl: string
+  let endpoint: string
   try {
-    baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url, settings.base_url_custom, settings.openai_base_url_custom))
+    endpoint = resolveAnthropicEndpoint(settings)
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
@@ -2418,7 +2444,7 @@ app.post('/terminal/assist', async (req, res) => {
   ].filter(Boolean).join('\n\n')
 
   try {
-    const response = await fetch(`${baseUrl}/v1/messages`, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.active_auth_type ?? settings.custom_auth_type),

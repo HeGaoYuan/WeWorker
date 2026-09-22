@@ -417,6 +417,7 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
           <Tooltip text="设置">
             <button
               onClick={onOpenSettings}
+              aria-label="设置"
               style={{
               background: 'none',
               border: 'none',

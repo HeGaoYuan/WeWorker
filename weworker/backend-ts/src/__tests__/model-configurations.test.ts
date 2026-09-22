@@ -114,6 +114,13 @@ describe('multiple model configurations', () => {
       state = config.updateSettings(second.updates)
       state = config.updateSettings(updateModelConfiguration(state, second.id, { model: 'saved-two', api_key: 'persisted-two', context_limit: 500000 }))
       config.updateSettings(activateModelConfiguration(state, first.id))
+      const custom = createModelConfiguration(config.getSettings(), 'custom')
+      state = config.updateSettings(custom.updates)
+      config.updateSettings(updateModelConfiguration(state, custom.id, {
+        base_url: 'https://example.com/arbitrary/endpoint?version=1', base_url_is_full: true,
+        openai_base_url: 'https://example.com/openai/custom?version=2', openai_base_url_is_full: true,
+        api_key: 'custom-test-key', model: 'custom-test-model',
+      }))
       const raw = fs.readFileSync(path.join(directory, '.weworker', 'settings.json'), 'utf8')
       expect(raw).not.toContain('persisted-one')
       expect(raw).not.toContain('persisted-two')
@@ -124,6 +131,10 @@ describe('multiple model configurations', () => {
       expect(restored.model_configurations?.[first.id]).toMatchObject({ model: 'saved-one', api_key: 'persisted-one' })
       expect(restored.model_configurations?.[second.id]).toMatchObject({ model: 'saved-two', api_key: 'persisted-two' })
       expect(restored.model_deepseek).toBe(initial.model_deepseek)
+      expect(restored.model_configurations?.[custom.id]).toMatchObject({
+        base_url: 'https://example.com/arbitrary/endpoint?version=1', base_url_is_full: true,
+        openai_base_url: 'https://example.com/openai/custom?version=2', openai_base_url_is_full: true,
+      })
     } finally {
       homedir.mockRestore()
       setMasterKeyForTests(null)

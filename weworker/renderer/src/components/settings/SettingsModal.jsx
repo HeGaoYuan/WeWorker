@@ -19,6 +19,7 @@ import weworkerLogo from '../../../../asset/logo.png'
 import './settings-theme.css'
 import { backendFetch } from '../../api/http.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
+import { getProviderUrlHint } from '../../utils/provider-url.js'
 
 const API = 'http://127.0.0.1:8765'
 const OFFICIAL_URL = deployment.officialUrl
@@ -109,7 +110,7 @@ const LOGOS = {
   ),
 }
 
-export default function SettingsModal({ onClose }) {
+export default function SettingsPage({ onClose }) {
   const [tab, setTab] = useState('model')
   const [appVersion, setAppVersion] = useState('')
 
@@ -120,14 +121,14 @@ export default function SettingsModal({ onClose }) {
   const commitHash = typeof __BUILD_COMMIT_HASH__ !== 'undefined' ? __BUILD_COMMIT_HASH__ : 'dev'
 
   return (
-    <div className="settings-overlay">
-      <div className="settings-shell" onClick={(e) => e.stopPropagation()}>
+    <section className="settings-page" aria-label="设置">
+      <div className="settings-shell">
         <div className="settings-header">
           <div>
             <h2 className="settings-title">设置</h2>
             <p className="settings-subtitle">配置模型、通道与应用偏好</p>
           </div>
-          <button type="button" className="settings-close" onClick={onClose} aria-label="关闭">✕</button>
+          <button type="button" className="settings-btn settings-btn-secondary" onClick={onClose} autoFocus aria-label="返回工作界面">返回</button>
         </div>
 
         <div className="settings-tabs">
@@ -167,7 +168,7 @@ export default function SettingsModal({ onClose }) {
           {commitHash && <span style={{ opacity: 0.7 }}>({commitHash})</span>}
         </div>
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -1270,13 +1271,17 @@ function ModelTab() {
       model: stored.model || p?.models[0] || '',
       context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
+      base_url_is_full: stored.base_url_is_full === true,
       auth_type: stored.auth_type === 'api_key' ? 'api_key' : 'auth_token',
       auto_auth: true,
     }
   }
 
   const setFormField = (pid, k, v) => {
-    setForms((f) => ({ ...f, [pid]: { ...getForm(pid), [k]: v } }))
+    setForms((f) => ({ ...f, [pid]: {
+      ...getForm(pid),
+      [k]: v,
+    } }))
     setTestResult(null)
     probeRequestIds.current[pid] = (probeRequestIds.current[pid] || 0) + 1
     setTesting((current) => current === pid ? null : current)
@@ -1285,7 +1290,7 @@ function ModelTab() {
       delete next[pid]
       return next
     })
-    if (k === 'api_key' || k === 'base_url' || k === 'auth_type' || k === 'auto_auth') {
+    if (k === 'api_key' || k === 'base_url' || k === 'base_url_is_full' || k === 'auth_type' || k === 'auto_auth') {
       catalogRequestIds.current[pid] = (catalogRequestIds.current[pid] || 0) + 1
       setCatalogLoading((current) => current === pid ? null : current)
       setCatalogs((current) => {
@@ -1302,7 +1307,7 @@ function ModelTab() {
       provider: pid,
       api_key: f.api_key,
       model: f.model,
-      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, auth_type: f.auth_type, auto_auth: f.auto_auth } : {}),
+      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, base_url_is_full: f.base_url_is_full, auth_type: f.auth_type, auto_auth: f.auto_auth } : {}),
     }
   }
 
@@ -1311,7 +1316,7 @@ function ModelTab() {
     return {
       provider: pid,
       api_key: f.api_key,
-      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, auth_type: f.auth_type } : {}),
+      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, base_url_is_full: f.base_url_is_full, auth_type: f.auth_type } : {}),
     }
   }
 
@@ -1377,6 +1382,7 @@ function ModelTab() {
     if (f.api_key) updates.api_key = f.api_key
     if (providerType(pid) === 'custom') {
       updates.base_url = f.base_url
+      updates.base_url_is_full = f.base_url_is_full
       updates.auth_type = f.auth_type
     }
     try {
@@ -1503,7 +1509,7 @@ function ModelTab() {
                     </div>
                   </div>
                   <div className="settings-btn-group">
-                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating} className="settings-btn settings-btn-provider" style={{ background: providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
+                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
                     <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">{testing === p.id ? '检测中…' : '测试连通性'}</button>
                   </div>
                 </div>
@@ -1533,7 +1539,7 @@ function ModelTab() {
                         onClick={() => handleActivate(p.id)}
                         disabled={!!activating}
                         className="settings-btn settings-btn-provider"
-                        style={{ background: providerColor }}
+                        style={{ '--provider-color': providerColor }}
                       >
                         {activating === p.id ? '切换中...' : '切换使用'}
                       </button>
@@ -1551,8 +1557,12 @@ function ModelTab() {
 
               {isExpanded && (
                 <fieldset className="settings-card-body settings-model-form" disabled={saving === p.id}>
-                   {templateId === 'custom' && <Field label="服务地址" hint="填写模型服务 Base URL，连接测试会检测协议">
-                    <input className="settings-input" value={f.base_url} onChange={e => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://example.com/anthropic" />
+                  {templateId === 'custom' && <Field label="服务地址" hint={getProviderUrlHint(f.base_url_is_full)}>
+                    <label className="settings-url-mode">
+                      <input type="checkbox" checked={f.base_url_is_full} onChange={(e) => setFormField(p.id, 'base_url_is_full', e.target.checked)} />
+                      使用完整接口 URL
+                    </label>
+                    <input aria-label="模型服务地址" className="settings-input" value={f.base_url} onChange={e => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder={f.base_url_is_full ? 'https://example.com/custom/infer' : 'https://example.com/v1'} />
                   </Field>}
                   <Field label="API Key" hint={stored.has_key ? '已设置（留空保持不变）' : '未设置'}>
                     <input
@@ -1567,7 +1577,7 @@ function ModelTab() {
 
                   <Field label="模型" hint={catalogHint} hintError={catalogRefreshFailed || Boolean(catalogErrorDetail)}>
                     <div style={{ width: '100%' }}>
-                      <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+                      <div className="settings-model-input-row">
                         {templateId === 'custom' ? (
                           <>
                             <input className="settings-input" list={`provider-models-${p.id}`} value={f.model} onChange={(e) => setFormField(p.id, 'model', e.target.value)} placeholder="输入或选择模型名称" />
@@ -1650,7 +1660,7 @@ function ModelTab() {
                         disabled={!!activating || !stored.has_key}
                         title={!stored.has_key ? '请先保存 API Key' : ''}
                         className="settings-btn settings-btn-provider"
-                        style={{ background: stored.has_key ? providerColor : undefined, opacity: stored.has_key ? 1 : 0.5 }}
+                        style={{ '--provider-color': providerColor }}
                       >
                         {activating === p.id ? '切换中...' : '切换使用'}
                       </button>

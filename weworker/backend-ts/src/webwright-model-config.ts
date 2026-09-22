@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { Settings } from './config.js'
-import { assertAllowedLlmBaseUrl, normalizeLlmBaseUrl } from './llm-egress.js'
+import { assertAllowedLlmBaseUrl, normalizeLlmBaseUrl, normalizeLlmUrlInput } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, getProvider, PROVIDERS } from './provider-registry.js'
 import { getModelConfiguration } from './model-configurations.js'
 
@@ -17,14 +17,17 @@ export function resolveWebwrightModelConfig(settings: Settings) {
   const configuration = getModelConfiguration(settings, settings.active_model_configuration)
   const customBaseUrl = configuration?.base_url ?? settings.base_url_custom
   const customOpenAiBaseUrl = configuration?.openai_base_url ?? settings.openai_base_url_custom
+  const customBaseUrlIsFull = configuration ? configuration.base_url_is_full === true : settings.base_url_is_full_custom === true
+  const customOpenAiBaseUrlIsFull = configuration ? configuration.openai_base_url_is_full === true : settings.openai_base_url_is_full_custom === true
   const independent = Boolean(settings.exploration_base_url)
+  const independentFullUrl = independent && settings.exploration_base_url_is_full === true
   const apiKey = independent && settings.exploration_use_main_key === false ? settings.exploration_api_key : settings.api_key
   const model = independent && settings.exploration_model ? settings.exploration_model : settings.model
   if (!provider || !apiKey || !model) throw new Error('请先配置 API Key 和模型')
-  const mapped = settings.active_provider === 'custom' && customBaseUrl
+  const mapped = settings.active_provider === 'custom' && customBaseUrl && !customBaseUrlIsFull
     ? PROVIDERS.find(item => item.id !== 'custom' && normalizeLlmBaseUrl(item.weworker.baseUrl) === normalizeLlmBaseUrl(customBaseUrl))
     : undefined
-  const configuredProvider = independent ? PROVIDERS.find(item => item.id !== 'custom'
+  const configuredProvider = independent && !independentFullUrl ? PROVIDERS.find(item => item.id !== 'custom'
     && normalizeLlmBaseUrl(item.webwright.baseUrl) === normalizeLlmBaseUrl(settings.exploration_base_url)) : undefined
   const config = independent ? configuredProvider?.webwright || {
     protocol: 'openai_chat_completions' as const,
@@ -32,32 +35,42 @@ export function resolveWebwrightModelConfig(settings: Settings) {
     structuredOutput: 'openai_json_object' as const,
   } : settings.active_provider === 'custom' && !customOpenAiBaseUrl && mapped ? mapped.webwright : provider.webwright
   const baseUrl = settings.exploration_base_url || (settings.active_provider === 'custom'
-    ? customOpenAiBaseUrl || mapped?.webwright.baseUrl || customBaseUrl
+    ? customOpenAiBaseUrl || mapped?.webwright.baseUrl || (customBaseUrlIsFull ? '' : customBaseUrl)
     : provider.webwright.baseUrl)
+  const fullUrl = independent ? independentFullUrl
+    : settings.active_provider === 'custom' && Boolean(customOpenAiBaseUrl) && customOpenAiBaseUrlIsFull
   if (!baseUrl) throw new Error('请填写网站探索服务地址（OpenAI Chat Completions 兼容接口）')
   return {
     provider_id: independent ? 'custom' : settings.active_provider,
     protocol: config.protocol,
     model_class: config.modelClass,
-    base_url: assertAllowedLlmBaseUrl(
+    base_url: fullUrl ? normalizeLlmUrlInput(baseUrl, true) : assertAllowedLlmBaseUrl(
       baseUrl,
-      buildRuntimeAllowedLlmBaseUrls(customBaseUrl, customOpenAiBaseUrl, settings.exploration_base_url),
+      buildRuntimeAllowedLlmBaseUrls(
+        customBaseUrlIsFull ? undefined : customBaseUrl,
+        customOpenAiBaseUrlIsFull ? undefined : customOpenAiBaseUrl,
+        independentFullUrl ? undefined : settings.exploration_base_url,
+      ),
     ),
+    ...(fullUrl ? { base_url_is_full: true } : {}),
     model,
     api_key: apiKey,
     structured_output: config.structuredOutput,
   }
 }
 
-export function suggestExplorationBaseUrl(settings: Settings): { url: string; generated: boolean } {
+export function suggestExplorationBaseUrl(settings: Settings): { url: string; generated: boolean; fullUrl?: boolean } {
   const configuration = getModelConfiguration(settings, settings.active_model_configuration)
   const customBaseUrl = configuration?.base_url ?? settings.base_url_custom
   const customOpenAiBaseUrl = configuration?.openai_base_url ?? settings.openai_base_url_custom
+  const customBaseUrlIsFull = configuration ? configuration.base_url_is_full === true : settings.base_url_is_full_custom === true
+  const customOpenAiBaseUrlIsFull = configuration ? configuration.openai_base_url_is_full === true : settings.openai_base_url_is_full_custom === true
   const saved = settings.exploration_base_url || (settings.active_provider === 'custom' ? customOpenAiBaseUrl : '')
-  if (saved) return { url: normalizeLlmBaseUrl(saved), generated: false }
+  const savedFullUrl = settings.exploration_base_url ? settings.exploration_base_url_is_full === true : customOpenAiBaseUrlIsFull
+  if (saved) return { url: normalizeLlmUrlInput(saved, savedFullUrl), generated: false, ...(savedFullUrl ? { fullUrl: true } : {}) }
   const provider = getProvider(settings.active_provider)
   if (provider && provider.id !== 'custom') return { url: provider.webwright.baseUrl, generated: false }
-  if (!customBaseUrl) return { url: '', generated: false }
+  if (!customBaseUrl || customBaseUrlIsFull) return { url: '', generated: false }
   const mainUrl = normalizeLlmBaseUrl(customBaseUrl)
   const mapped = PROVIDERS.find(item => item.id !== 'custom' && normalizeLlmBaseUrl(item.weworker.baseUrl) === mainUrl)
   if (mapped) return { url: mapped.webwright.baseUrl, generated: false }

@@ -54,6 +54,19 @@ def _managed_model(**overrides) -> ManagedModelConfig:
     return ManagedModelConfig(**values)
 
 
+def test_full_openai_url_is_preserved_for_both_model_flows(monkeypatch, tmp_path: Path) -> None:
+    endpoint = "https://example.test/tenant/custom/?version=1&route=a%2Fb"
+    manager, _store, _commands = _manager(
+        tmp_path, monkeypatch,
+        model_config_loader=lambda: _managed_model(provider_id="custom", model_class="openai_chat", base_url=endpoint, base_url_is_full=True),
+    )
+    config_file, overrides, _env = manager._resolve_model()
+    assert config_file == "model_openai_chat.yaml"
+    assert f"model.openai_chat_endpoint={endpoint}" in overrides
+    model, _env = manager._resolve_developer_model()
+    assert model["openai_chat_endpoint"] == endpoint
+
+
 def _manager(
     tmp_path: Path, monkeypatch, *, toolkit_store=None, model_config_loader=None
 ) -> tuple[ProcessManager, TaskStore, list[list[str]]]:

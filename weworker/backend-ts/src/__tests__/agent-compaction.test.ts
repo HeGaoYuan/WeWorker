@@ -62,6 +62,25 @@ afterEach(() => {
 })
 
 describe('agent conversation compaction', () => {
+  it.each([false, true])('uses and cleans up full URL forwarding for SDK calls, failure=%s', async (fail) => {
+    let relayUrl = ''
+    mocks.query.mockImplementation((request) => ({
+      async *[Symbol.asyncIterator]() {
+        relayUrl = request.options.env.ANTHROPIC_BASE_URL
+        expect(relayUrl).toMatch(/^http:\/\/127\.0\.0\.1:/)
+        expect((await fetch(`${relayUrl}/v1/models`)).status).toBe(404)
+        if (fail) throw new Error('synthetic SDK failure')
+        yield { type: 'result', subtype: 'success', is_error: false, result: '已确认订单号A123，等待检查。', usage: { input_tokens: 10, output_tokens: 10 } }
+      },
+      close() {},
+    }))
+    await collect(history(), { forceCompaction: true, compactionOnly: true }, {
+      ...settings, base_url: 'https://example.com/arbitrary-endpoint?version=1', base_url_is_full: true,
+    })
+    expect(relayUrl).not.toBe('')
+    await expect(fetch(`${relayUrl}/v1/models`)).rejects.toThrow()
+  })
+
   it.each([false, true])('forwards SDK assistant API errors with streaming=%s', async (streaming) => {
     mocks.query.mockImplementation(() => ({
       async *[Symbol.asyncIterator]() {
