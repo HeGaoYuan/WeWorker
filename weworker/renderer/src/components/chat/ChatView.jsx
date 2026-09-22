@@ -575,7 +575,7 @@ export default function ChatView({ workId }) {
         </div>
       ) : null}
 
-      {messages.length === 0 ? <WelcomeScreen onFillInput={handleFillInput} /> : <MessageList messages={messages} streaming={isStreamingHere} workId={workId} onChoice={handleChoice} onSelectModeChange={setMessageSelectMode} onShellCommand={handleShellCommand} />}
+      {messages.length === 0 && !contextCompactionStatus ? <WelcomeScreen onFillInput={handleFillInput} /> : <MessageList messages={messages} streaming={isStreamingHere} compactionStatus={contextCompactionStatus} workId={workId} onChoice={handleChoice} onSelectModeChange={setMessageSelectMode} onShellCommand={handleShellCommand} />}
 
       {/* Health check panel — between messages and input */}
       {isHealthCheck && messages.length > 0 && (
@@ -603,23 +603,6 @@ export default function ChatView({ workId }) {
           {zcfNotice}
         </div>
       )}
-      {contextCompactionStatus && (
-        <div
-          data-conversation-compaction-status={contextCompactionStatus}
-          style={{
-            padding: '8px 20px',
-            color: contextCompactionStatus === 'failed' ? 'var(--error)' : contextCompactionStatus === 'completed' ? '#22c55e' : contextCompactionStatus === 'skipped' ? 'var(--text-secondary)' : 'var(--accent)',
-            fontSize: 12,
-            background: contextCompactionStatus === 'failed' ? 'rgba(248,113,113,0.1)' : contextCompactionStatus === 'completed' ? 'rgba(34,197,94,0.1)' : contextCompactionStatus === 'skipped' ? 'rgba(148,163,184,0.12)' : 'rgba(99,102,241,0.1)',
-            borderTop: '1px solid var(--border)',
-          }}
-        >
-          {contextCompactionStatus === 'compacting' && '⏳ 正在压缩对话上下文…'}
-          {contextCompactionStatus === 'completed' && '✅ 对话上下文压缩完成'}
-          {contextCompactionStatus === 'skipped' && 'ℹ️ 当前没有足够的历史对话可压缩，继续使用原对话'}
-          {contextCompactionStatus === 'failed' && '⚠️ 对话上下文压缩失败，已继续使用原对话'}
-        </div>
-      )}
       {memoryStatus && memoryStatus.status !== 'not_applicable' && (
         <div style={{ padding: '6px 20px', color: memoryStatus.status === 'failed' ? 'var(--error)' : 'var(--text-secondary)', fontSize: 12, background: 'var(--bg-secondary)' }}>
           {memoryStatus.status === 'processing' && '正在整理长期记忆'}
@@ -638,6 +621,7 @@ export default function ChatView({ workId }) {
           disabled={isStreamingHere || contextCompactionStatus === 'compacting' || messageSelectMode}
           streaming={isStreamingHere}
           text={inputText}
+          historyMessages={messages}
           onTextChange={setInputText}
           attachments={attachments}
           onAttachmentsChange={setAttachments}

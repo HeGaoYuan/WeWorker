@@ -3,13 +3,12 @@
  * 复用现有 streamChat + runChannelChat 模式，非交互式执行。
  */
 import { getSettings } from './config.js'
-import { generateAssistantStatusLine, streamChat } from './agent.js'
+import { streamChat } from './agent.js'
 import { resolveZcfPrefs } from './zcf-sync.js'
 import * as store from './works-store.js'
 import type { ScheduledTask, ContentBlock } from './works-store.js'
 import { parseAllAdapters } from './adapter-parser.js'
 import { getSiteEnabled } from './config.js'
-import { ensureAssistantStatusLine } from './assistant-status.js'
 import { createLogger } from './logger.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext, type MemoryAdapterIdentity } from './memory/memory-event-context.js'
@@ -239,32 +238,6 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
 
     // Account for trailing LLM text generation
     llmMsTotal += Date.now() - lastStepEndTime
-
-    const assistantText = assistantContent
-      .filter(b => b.type === 'text')
-      .map(b => (b as { text: string }).text)
-      .join('')
-
-    if (assistantText) {
-      const finalizedText = await ensureAssistantStatusLine({
-        text: assistantText,
-        generateStatusLine: () => generateAssistantStatusLine(assistantText, settings),
-        fallbackStatusLine: '当前状态：已完成当前回复，等待下一步指令',
-      })
-      const statusSuffix = finalizedText.slice(assistantText.length)
-      let patched = false
-      for (let i = assistantContent.length - 1; i >= 0; i -= 1) {
-        const block = assistantContent[i]
-        if (block.type === 'text') {
-          assistantContent[i] = { ...block, text: block.text + statusSuffix }
-          patched = true
-          break
-        }
-      }
-      if (!patched) {
-        assistantContent.push({ type: 'text', text: finalizedText })
-      }
-    }
 
     // 8. Persist assistant message
     if (assistantContent.length > 0) {

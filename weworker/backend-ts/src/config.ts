@@ -63,6 +63,7 @@ import {
   type ZcfCustomRole,
 } from './zcf-role-settings.js'
 import { DEFAULT_CONTEXT_LIMIT, normalizeContextLimit } from './context-window.js'
+import { normalizeAddedProviders } from './provider-visibility.js'
 
 
 
@@ -140,6 +141,20 @@ export interface WecomChannelConfig {
 
 }
 
+export interface FeishuChannelConfig {
+
+  enabled: boolean
+
+  app_id: string
+
+  app_secret: string
+
+  owner_user_id: string
+
+  owner_permission_level: OwnerPermissionLevel
+
+}
+
 
 
 export interface ChannelsConfig {
@@ -149,6 +164,8 @@ export interface ChannelsConfig {
   weixin: WeixinChannelConfig
 
   wecom: WecomChannelConfig
+
+  feishu: FeishuChannelConfig
 
 }
 
@@ -206,6 +223,14 @@ export interface Settings {
   exploration_use_main_key: boolean
 
   custom_auth_type: import('./anthropic-auth.js').AnthropicAuthType
+
+  // Provider ids (non-builtin) explicitly added by the user through settings.
+  // Providers absent from this list stay hidden unless legacy config exists.
+  added_providers: string[]
+
+  model_configurations?: Record<string, import('./model-configurations.js').ModelConfiguration>
+  active_model_configuration?: string
+  active_auth_type?: import('./anthropic-auth.js').AnthropicAuthType
 
   channels: ChannelsConfig
 
@@ -331,6 +356,8 @@ const DEFAULTS: Settings = {
 
   custom_auth_type: 'auth_token',
 
+  added_providers: [] as string[],
+
   channels: {
 
     qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'full' },
@@ -338,6 +365,8 @@ const DEFAULTS: Settings = {
     weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
 
     wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'full' },
+
+    feishu: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'full' },
 
   },
 
@@ -391,6 +420,8 @@ function cloneDefaults(): Settings {
 
       wecom: { ...DEFAULTS.channels.wecom },
 
+      feishu: { ...DEFAULTS.channels.feishu },
+
     },
 
     site_toggles: { ...DEFAULTS.site_toggles },
@@ -399,6 +430,7 @@ function cloneDefaults(): Settings {
 
     label_names: { ...DEFAULTS.label_names },
     open_browser_allowed_origins: [...DEFAULTS.open_browser_allowed_origins],
+    added_providers: [...DEFAULTS.added_providers],
 
   }
 
@@ -450,6 +482,10 @@ function normalizeChannelsConfig(channels: ChannelsConfig): ChannelsConfig {
       ...channels.wecom,
       owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level),
     },
+    feishu: {
+      ...channels.feishu,
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.feishu.owner_permission_level),
+    },
   }
 }
 
@@ -474,6 +510,8 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   merged.custom_auth_type = raw?.custom_auth_type === 'api_key' ? 'api_key' : 'auth_token'
 
+  merged.added_providers = normalizeAddedProviders(raw?.added_providers)
+
   merged.context_limit_anthropic = normalizeContextLimit(raw?.context_limit_anthropic)
   merged.context_limit_glm = normalizeContextLimit(raw?.context_limit_glm)
   merged.context_limit_deepseek = normalizeContextLimit(raw?.context_limit_deepseek)
@@ -485,6 +523,11 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
       : merged.active_provider === 'custom'
         ? merged.context_limit_custom
         : merged.context_limit_anthropic
+
+  const activeConfiguration = merged.model_configurations?.[merged.active_model_configuration || '']
+  if (activeConfiguration) {
+    merged.context_limit = normalizeContextLimit(activeConfiguration.context_limit)
+  }
 
   merged.max_chat_attachments = normalizeMaxChatAttachments(merged.max_chat_attachments)
   merged.paste_text_attachment_threshold = normalizePasteTextAttachmentThreshold(merged.paste_text_attachment_threshold)
@@ -660,6 +703,8 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   )
   _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || CORE_STYLE_ID
   _settings.zcf_default_mode = normalizeZcfMode(_settings.zcf_default_mode)
+
+  _settings.added_providers = normalizeAddedProviders(_settings.added_providers)
 
   persistSettingsToDisk(_settings)
 

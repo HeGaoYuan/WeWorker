@@ -55,6 +55,8 @@ import {
 } from './provider-registry.js'
 import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
 import { registerExplorationModelRoutes } from './exploration-model-settings.js'
+import { isProviderVisible, type ProviderLegacyConfig } from './provider-visibility.js'
+import { createModelConfiguration, getModelConfiguration, activateModelConfiguration, updateModelConfiguration, publicModelConfigurations } from './model-configurations.js'
 import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
 import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
@@ -84,7 +86,7 @@ import { execFile } from 'node:child_process'
 import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow } from './site-memory.js'
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
-import { buildConfiguredModelEnv, generateAssistantStatusLine, streamChat } from './agent.js'
+import { buildConfiguredModelEnv, streamChat } from './agent.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
 import { renderPrompt } from './prompt-loader.js'
 import {
@@ -103,7 +105,6 @@ import {
   syncZcfTemplates,
   type ZcfLang,
 } from './zcf-sync.js'
-import { appendAssistantStatusLine, extractAssistantStatusLine, finalizeAssistantTextWithStatus } from './assistant-status.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext } from './memory/memory-event-context.js'
 import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
@@ -118,6 +119,7 @@ import { channelManager } from './channels/channel-manager.js'
 import { QQChannel } from './channels/qq-channel.js'
 import { WeixinChannel, fetchQRCode, pollQRStatus } from './channels/weixin-channel.js'
 import { WecomChannel } from './channels/wecom-channel.js'
+import { FeishuChannel } from './channels/feishu-channel.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -336,9 +338,29 @@ function buildDefaultOpenBrowserAllowedOrigins(): string[] {
   return [...origins].sort()
 }
 
+function buildProviderVisibility(s: ReturnType<typeof getSettings>) {
+  const legacy: Record<string, ProviderLegacyConfig> = {
+    anthropic: { hasKey: !!s.api_key_anthropic, model: s.model_anthropic, defaultModels: [getProvider('anthropic')?.defaultModel ?? ''] },
+    glm: { hasKey: !!s.api_key_glm, model: s.model_glm, defaultModels: [getProvider('glm')?.defaultModel ?? ''] },
+    deepseek: { hasKey: !!s.api_key_deepseek, model: s.model_deepseek, defaultModels: [getProvider('deepseek')?.defaultModel ?? ''] },
+    custom: {
+      hasKey: !!s.api_key_custom,
+      model: s.model_custom,
+      baseUrl: s.base_url_custom,
+      openaiBaseUrl: s.openai_base_url_custom,
+    },
+  }
+  return (id: string) => isProviderVisible(id, {
+    addedProviders: s.added_providers,
+    activeProvider: s.active_model_configuration ? '' : s.active_provider,
+    legacy,
+  })
+}
+
 function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
+  const visible = buildProviderVisibility(s)
   return {
-    active_provider: s.active_provider,
+    active_provider: s.active_model_configuration || s.active_provider,
     user_directory: s.user_directory,
     download_subdirectory: getDownloadSubdirectory(),
     download_directory: getDownloadDirectory(),
@@ -356,10 +378,11 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     context_limit: s.context_limit,
     has_api_key: !!s.api_key,
     providers: {
-      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic },
-      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm },
-      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek },
-      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom, auth_type: s.custom_auth_type },
+      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic, added: s.added_providers.includes('anthropic'), visible: visible('anthropic') },
+      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm, added: s.added_providers.includes('glm'), visible: visible('glm') },
+      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek, added: s.added_providers.includes('deepseek'), visible: visible('deepseek') },
+      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom, auth_type: s.custom_auth_type, added: s.added_providers.includes('custom'), visible: visible('custom') },
+      ...publicModelConfigurations(s),
     },
     zcf_default_role: s.zcf_default_role,
     zcf_default_mode: s.zcf_default_mode,
@@ -517,9 +540,26 @@ app.post('/settings/zcf-roles', (req, res) => {
 })
 
 // Save config for a specific provider (does NOT switch active provider)
+app.post('/settings/provider/add', (req, res) => {
+  try {
+    const { id, updates } = createModelConfiguration(getSettings(), req.body.provider)
+    res.json({ ...buildSettingsResponse(updateSettings(updates)), created_provider: id })
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
 app.post('/settings/provider', (req, res) => {
-  const { provider, api_key, model, context_limit, base_url, openai_base_url, auth_type } = req.body as {
-    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; openai_base_url?: string; auth_type?: unknown
+  const { provider, api_key, model, context_limit, base_url, openai_base_url, auth_type, added } = req.body as {
+    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; openai_base_url?: string; auth_type?: unknown; added?: boolean
+  }
+  if (getModelConfiguration(getSettings(), provider)) {
+    try {
+      res.json(buildSettingsResponse(updateSettings(updateModelConfiguration(getSettings(), provider, req.body))))
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+    }
+    return
   }
   if (!ALLOWED_PROVIDER_IDS.has(provider)) {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
@@ -576,7 +616,13 @@ app.post('/settings/provider', (req, res) => {
   if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.custom_auth_type = auth_type
   // If this provider is currently active, also update the active key/model/url
   const current = getSettings()
-  if (current.active_provider === provider) {
+  if (added === true) {
+    updates.added_providers = current.added_providers.includes(provider)
+      ? current.added_providers
+      : [...current.added_providers, provider]
+  }
+  if (current.active_provider === provider && !current.active_model_configuration) {
+    if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.active_auth_type = auth_type
     if (api_key) updates.api_key = api_key
     if (model) updates.model = model
     if (parsedContextLimit !== undefined && parsedContextLimit !== null) updates.context_limit = parsedContextLimit
@@ -588,6 +634,14 @@ app.post('/settings/provider', (req, res) => {
 // Switch which provider is active
 app.post('/settings/provider/activate', (req, res) => {
   const { provider } = req.body as { provider: string }
+  if (getModelConfiguration(getSettings(), provider)) {
+    try {
+      res.json(buildSettingsResponse(updateSettings(activateModelConfiguration(getSettings(), provider))))
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+    }
+    return
+  }
   if (!ALLOWED_PROVIDER_IDS.has(provider)) {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
     return
@@ -618,6 +672,8 @@ app.post('/settings/provider/activate', (req, res) => {
   }
   const updates: Partial<ReturnType<typeof getSettings>> = {
     active_provider: provider,
+    active_model_configuration: '',
+    active_auth_type: provider === 'custom' ? current.custom_auth_type : 'api_key',
     api_key: key,
     model,
     context_limit: contextLimit,
@@ -638,13 +694,14 @@ type ProviderRequestBody = {
 }
 
 function resolveProviderAccess(body: ProviderRequestBody) {
-  const provider = getProvider(body.provider || '')
+  const configuration = getModelConfiguration(getSettings(), body.provider)
+  const provider = getProvider(configuration?.provider_id || body.provider || '')
   if (!provider) throw new Error(`Provider '${body.provider || ''}' is not allowed in this build`)
   const settings = getSettings()
   const savedApiKey =
-    provider.id === 'anthropic' ? settings.api_key_anthropic :
-    provider.id === 'glm' ? settings.api_key_glm :
-    provider.id === 'deepseek' ? settings.api_key_deepseek : settings.api_key_custom
+    configuration?.api_key ?? (provider.id === 'anthropic' ? settings.api_key_anthropic :
+      provider.id === 'glm' ? settings.api_key_glm :
+      provider.id === 'deepseek' ? settings.api_key_deepseek : settings.api_key_custom)
   const normalizeOptionalBaseUrl = (value: string | undefined): string | undefined => {
     if (!value?.trim()) return undefined
     return normalizeLlmBaseUrl(value)
@@ -653,14 +710,14 @@ function resolveProviderAccess(body: ProviderRequestBody) {
     provider,
     apiKey: body.api_key?.trim() || savedApiKey,
     anthropicBaseUrl: provider.id === 'custom'
-      ? normalizeOptionalBaseUrl(body.base_url === undefined ? settings.base_url_custom : body.base_url)
+      ? normalizeOptionalBaseUrl(body.base_url === undefined ? configuration?.base_url ?? settings.base_url_custom : body.base_url)
       : provider.weworker.baseUrl,
     openaiBaseUrl: provider.id === 'custom'
-      ? normalizeOptionalBaseUrl(body.openai_base_url === undefined ? settings.openai_base_url_custom : body.openai_base_url)
+      ? normalizeOptionalBaseUrl(body.openai_base_url === undefined ? configuration?.openai_base_url ?? settings.openai_base_url_custom : body.openai_base_url)
       : provider.webwright.baseUrl,
     anthropicAuthType: provider.id === 'custom'
       ? (body.auth_type === undefined
-          ? settings.custom_auth_type
+          ? configuration?.auth_type ?? settings.custom_auth_type
           : isAnthropicAuthType(body.auth_type)
             ? body.auth_type
             : (() => { throw new Error("auth_type must be 'auth_token' or 'api_key'") })())
@@ -672,9 +729,10 @@ function resolveProviderRequest(body: ProviderRequestBody) {
   const access = resolveProviderAccess(body)
   const settings = getSettings()
   const savedModel =
+    getModelConfiguration(settings, body.provider)?.model ?? (
     access.provider.id === 'anthropic' ? settings.model_anthropic :
     access.provider.id === 'glm' ? settings.model_glm :
-    access.provider.id === 'deepseek' ? settings.model_deepseek : settings.model_custom
+    access.provider.id === 'deepseek' ? settings.model_deepseek : settings.model_custom)
   return {
     ...access,
     model: body.model === undefined ? savedModel : body.model.trim(),
@@ -732,22 +790,31 @@ app.get('/settings/channels', (_req, res) => {
       owner_user_id: s.channels.wecom.owner_user_id || '',
       owner_permission_level: normalizeOwnerPermissionLevel(s.channels.wecom.owner_permission_level),
     },
+    feishu: {
+      enabled: s.channels.feishu.enabled,
+      app_id: s.channels.feishu.app_id,
+      has_app_secret: !!s.channels.feishu.app_secret,
+      owner_user_id: s.channels.feishu.owner_user_id || '',
+      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.feishu.owner_permission_level),
+    },
   })
 })
 
 app.post('/settings/channels', async (req, res) => {
-  const { qq, weixin, wecom } = req.body as {
+  const { qq, weixin, wecom, feishu } = req.body as {
     qq?: { enabled?: boolean; app_id?: string; app_secret?: string; owner_user_id?: string; owner_permission_level?: string }
     weixin?: { enabled?: boolean; base_url?: string; owner_user_id?: string; owner_permission_level?: string }
     wecom?: { enabled?: boolean; bot_id?: string; secret?: string; owner_user_id?: string; owner_permission_level?: string }
+    feishu?: { enabled?: boolean; app_id?: string; app_secret?: string; owner_user_id?: string; owner_permission_level?: string }
   }
   const s = getSettings()
   const nextOwnerIds = {
     qq: qq?.owner_user_id ?? s.channels.qq.owner_user_id,
     weixin: weixin?.owner_user_id ?? s.channels.weixin.owner_user_id,
     wecom: wecom?.owner_user_id ?? s.channels.wecom.owner_user_id,
+    feishu: feishu?.owner_user_id ?? s.channels.feishu.owner_user_id,
   }
-  for (const channel of ['qq', 'weixin', 'wecom'] as const) {
+  for (const channel of ['qq', 'weixin', 'wecom', 'feishu'] as const) {
     const error = validateOwnerUserId(channel, nextOwnerIds[channel])
     if (error) return res.status(400).json({ detail: error })
   }
@@ -781,6 +848,13 @@ app.post('/settings/channels', async (req, res) => {
         secret: wecom?.secret ?? s.channels.wecom.secret,
         owner_user_id: nextOwnerIds.wecom,
         owner_permission_level: normalizeOwnerPermissionLevel(wecom?.owner_permission_level ?? s.channels.wecom.owner_permission_level),
+      },
+      feishu: {
+        enabled: feishu?.enabled ?? s.channels.feishu.enabled,
+        app_id: feishu?.app_id ?? s.channels.feishu.app_id,
+        app_secret: feishu?.app_secret ?? s.channels.feishu.app_secret,
+        owner_user_id: nextOwnerIds.feishu,
+        owner_permission_level: normalizeOwnerPermissionLevel(feishu?.owner_permission_level ?? s.channels.feishu.owner_permission_level),
       },
     },
   })
@@ -825,6 +899,21 @@ app.post('/settings/channels', async (req, res) => {
     await channelManager.unregister('wecom')
   }
 
+  // Feishu (飞书)
+  if (updated.channels.feishu.enabled && updated.channels.feishu.app_id && updated.channels.feishu.app_secret) {
+    if (!channelManager.has('feishu')) {
+      const feishuChannel = new FeishuChannel({
+        enabled: true,
+        app_id: updated.channels.feishu.app_id,
+        app_secret: updated.channels.feishu.app_secret,
+      })
+      channelManager.register('feishu', feishuChannel)
+      feishuChannel.start().catch(e => channelLog.error('start error:', e))
+    }
+  } else {
+    await channelManager.unregister('feishu')
+  }
+
   res.json({
     qq: {
       enabled: updated.channels.qq.enabled,
@@ -846,6 +935,13 @@ app.post('/settings/channels', async (req, res) => {
       has_secret: !!updated.channels.wecom.secret,
       owner_user_id: updated.channels.wecom.owner_user_id || '',
       owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.wecom.owner_permission_level),
+    },
+    feishu: {
+      enabled: updated.channels.feishu.enabled,
+      app_id: updated.channels.feishu.app_id,
+      has_app_secret: !!updated.channels.feishu.app_secret,
+      owner_user_id: updated.channels.feishu.owner_user_id || '',
+      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.feishu.owner_permission_level),
     },
   })
 })
@@ -2306,7 +2402,7 @@ app.post('/terminal/assist', async (req, res) => {
 
   let baseUrl: string
   try {
-    baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url_custom, settings.openai_base_url_custom))
+    baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url, settings.base_url_custom, settings.openai_base_url_custom))
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
@@ -2325,7 +2421,7 @@ app.post('/terminal/assist', async (req, res) => {
     const response = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
+        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.active_auth_type ?? settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -2723,44 +2819,6 @@ app.post('/works/:id/chat', async (req, res) => {
   // Finalize text
   if (currentText) assistantContent.push({ type: 'text', text: currentText })
 
-  let assistantText = assistantContent
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
-
-  const finalizedAssistantText = await finalizeAssistantTextWithStatus({
-    text: assistantText,
-    hasAssistantContent: assistantContent.length > 0,
-    generateStatusLine: () => generateAssistantStatusLine(assistantText, settings),
-    fallbackStatusLine: '当前状态：已完成当前回复，等待下一步指令',
-  })
-
-  if (finalizedAssistantText && finalizedAssistantText !== assistantText) {
-    const existingStatus = extractAssistantStatusLine(assistantText)
-    if (!existingStatus) {
-      const statusSuffix = finalizedAssistantText.slice(assistantText.length)
-      for (let i = assistantContent.length - 1; i >= 0; i -= 1) {
-        const block = assistantContent[i]
-        if (block.type === 'text') {
-          assistantContent[i] = { ...block, text: block.text + statusSuffix }
-          break
-        }
-      }
-      if (!assistantContent.some((block) => block.type === 'text')) {
-        assistantContent.push({ type: 'text', text: finalizedAssistantText })
-      }
-      if (statusSuffix) {
-        send({ type: 'text_delta', content: statusSuffix })
-      } else if (!assistantText) {
-        const fallbackText = appendAssistantStatusLine('', finalizedAssistantText)
-        if (fallbackText) {
-          assistantContent.push({ type: 'text', text: fallbackText })
-          send({ type: 'text_delta', content: fallbackText })
-        }
-      }
-    }
-  }
-
   // Persist assistant message
   if (assistantContent.length > 0) {
     assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
@@ -2946,6 +3004,16 @@ async function startConfiguredChannels(): Promise<void> {
     )
     channelManager.register('wecom', wecomChannel)
     wecomChannel.start().catch(e => channelLog.error('start error:', e))
+  }
+
+  if (s0.channels.feishu.enabled && s0.channels.feishu.app_id && s0.channels.feishu.app_secret) {
+    const feishuChannel = new FeishuChannel({
+      enabled: true,
+      app_id: s0.channels.feishu.app_id,
+      app_secret: s0.channels.feishu.app_secret,
+    })
+    channelManager.register('feishu', feishuChannel)
+    feishuChannel.start().catch(e => channelLog.error('start error:', e))
   }
 }
 

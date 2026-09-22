@@ -226,15 +226,6 @@ describe('System Prompt - complete output contract before externalization', () =
       调用 \`ask_user\` 时，尽量从前一步工具返回的真实数据中提取选项。
       当任何工具返回结果中包含 \`requires_user_choice: true\` 字段时，你必须立即调用 \`ask_user\` 工具，并将返回结果中的 \`question\` 和 \`options\` 原样传入。
 
-      ## 当前状态回复规则
-
-      你的每一条 assistant 回复末尾都必须包含一行当前状态，格式固定为：\`当前状态：<简短状态>\`。
-      要求：
-      - 每次回复都要写，不能省略。
-      - 状态必须反映此时真实进展，例如：正在执行第 2 步、等待用户选择、已完成当前任务。
-      - 即使前面已经写了步骤说明、Todo 列表或工具执行结果总结，最后也要补上这一行。
-      - 如果你正在等待用户行动，也必须明确写出等待中的状态。
-
       ## Todo List 更新规则
 
       当当前任务需要计划、分步执行、继续未完成计划，或当前对话已存在未完成 Todo List 时，你必须使用内置 \`TodoWrite\` 工具维护进度。
@@ -399,15 +390,6 @@ describe('System Prompt - complete output contract before externalization', () =
       绝对禁止调用内置工具 \`AskUserQuestion\`；该工具不会显示 WeWorker 选择按钮，用户无法正确作答。任何需要用户选择或确认的场景，一律使用 \`ask_user\`。
       调用 \`ask_user\` 时，尽量从前一步工具返回的真实数据中提取选项。
       当任何工具返回结果中包含 \`requires_user_choice: true\` 字段时，你必须立即调用 \`ask_user\` 工具，并将返回结果中的 \`question\` 和 \`options\` 原样传入。
-
-      ## 当前状态回复规则
-
-      你的每一条 assistant 回复末尾都必须包含一行当前状态，格式固定为：\`当前状态：<简短状态>\`。
-      要求：
-      - 每次回复都要写，不能省略。
-      - 状态必须反映此时真实进展，例如：正在执行第 2 步、等待用户选择、已完成当前任务。
-      - 即使前面已经写了步骤说明、Todo 列表或工具执行结果总结，最后也要补上这一行。
-      - 如果你正在等待用户行动，也必须明确写出等待中的状态。
 
       ## Todo List 更新规则
 

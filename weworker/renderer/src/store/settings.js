@@ -77,6 +77,9 @@ const BUILD_DEFAULT_PROVIDER = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
   ? __BUILD_DEFAULT_PROVIDER__
   : 'anthropic'
 
+export const BUILTIN_PROVIDER_IDS = BUILD_PROVIDERS.filter(p => p.id === 'builtin' || p.id === 'builtin_dev').map(p => p.id)
+export const isBuiltinProvider = (id) => BUILTIN_PROVIDER_IDS.includes(id)
+
 export const PROVIDERS = BUILD_PROVIDERS.map(p => ({
   ...p,
   ...(PROVIDER_STYLES[p.id] || DEFAULT_STYLE),
@@ -108,14 +111,14 @@ export const useSettingsStore = create((set, get) => ({
   zcfPackageVersion: '',
   zcfSync: null,
   providers: {
-    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000 },
-    glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000 },
-    deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000 },
-    custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token' },
+    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000, added: true, visible: true },
+    glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000, added: false, visible: false },
+    deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, added: false, visible: false },
+    custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token', added: false, visible: false },
   },
   loaded: false,
   explorationModelRevision: 0,
-  channels: { qq: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' }, weixin: { enabled: false, has_token: false, base_url: '', owner_user_id: '' }, wecom: { enabled: false, bot_id: '', has_secret: false, owner_user_id: '' } },
+  channels: { qq: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' }, weixin: { enabled: false, has_token: false, base_url: '', owner_user_id: '' }, wecom: { enabled: false, bot_id: '', has_secret: false, owner_user_id: '' }, feishu: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' } },
 
   load: async () => {
     try {
@@ -130,6 +133,18 @@ export const useSettingsStore = create((set, get) => ({
   },
 
   // Save config for one provider (does not switch active)
+  addProvider: async (provider) => {
+    const res = await backendFetch(`${API}/settings/provider/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '添加模型失败')
+    set(settingsPatch(data, get()))
+    return data.created_provider
+  },
+
   saveProvider: async (provider, updates) => {
     const res = await backendFetch(`${API}/settings/provider`, {
       method: 'POST',

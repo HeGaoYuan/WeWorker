@@ -6,11 +6,17 @@ import { probeProviderProtocol, type ProtocolProbeResult } from './provider-mode
 import { resolveWebwrightModelConfig, suggestExplorationBaseUrl } from './webwright-model-config.js'
 
 function fingerprint(settings: Settings): string {
-  return createHash('sha256').update(JSON.stringify([
-    settings.active_provider, settings.api_key, settings.model, settings.base_url_custom,
-    settings.openai_base_url_custom, settings.exploration_base_url, settings.exploration_api_key,
-    settings.exploration_model, settings.exploration_use_main_key,
-  ])).digest('hex')
+  try {
+    const config = resolveWebwrightModelConfig(settings)
+    return createHash('sha256').update(JSON.stringify([
+      settings.active_model_configuration || '', config,
+      settings.exploration_base_url, settings.exploration_api_key,
+      settings.exploration_model, settings.exploration_use_main_key,
+    ])).digest('hex')
+  } catch {
+    // Invalid or incomplete configurations can be displayed but never verified.
+    return 'invalid'
+  }
 }
 
 export function explorationSettingsPatch(body: Record<string, unknown>): Partial<Settings> {

@@ -1,8 +1,7 @@
 import type { Settings } from '../config.js'
 import type { ChannelPermissionMode } from './channel-permissions.js'
 import * as store from '../works-store.js'
-import { generateAssistantStatusLine, streamChat } from '../agent.js'
-import { ensureAssistantStatusLine } from '../assistant-status.js'
+import { streamChat } from '../agent.js'
 import { createLogger } from '../logger.js'
 import type { MemoryScope } from '../memory/memory-types.js'
 
@@ -160,13 +159,5 @@ export async function runChannelChat(
   const timing: store.ContentBlock = { type: 'timing', totalMs, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex }
   log.info(`runChannelChat turn — total=${(totalMs / 1000).toFixed(2)}s llm=${(llmMsTotal / 1000).toFixed(2)}s exec=${(execMsTotal / 1000).toFixed(2)}s steps=${stepIndex}`)
 
-  const finalizedText = text
-    ? await ensureAssistantStatusLine({
-        text,
-        generateStatusLine: () => generateAssistantStatusLine(text, settings),
-        fallbackStatusLine: '当前状态：已完成当前回复，等待下一步指令',
-      })
-    : text
-
-  return { text: finalizedText, images, toolCalls, timing }
+  return { text, images, toolCalls, timing }
 }

@@ -431,6 +431,54 @@
   gap: 8px;
 }
 
+.settings-model-list {
+  gap: 5px;
+}
+
+.settings-model-list > .settings-card {
+  contain-intrinsic-size: auto 48px;
+}
+
+.settings-model-list .settings-card-header {
+  padding: 6px 12px;
+  gap: 8px;
+}
+
+.settings-model-list .settings-card-header > div:first-of-type {
+  min-width: 0;
+}
+
+.settings-model-list .settings-card-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-model-list .settings-card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-card-inline-status {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.settings-card-inline-status.is-configured {
+  color: var(--success);
+}
+
+.settings-card-inline-subtitle {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.settings-model-list .settings-card-header .settings-btn {
+  padding: 4px 10px;
+  min-height: 28px;
+}
+
 .settings-about-card {
   display: flex;
   flex-direction: column;

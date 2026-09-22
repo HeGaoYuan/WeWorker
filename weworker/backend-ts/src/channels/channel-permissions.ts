@@ -1,6 +1,6 @@
 import { getSettings } from '../config.js'
 
-export type ChannelName = 'qq' | 'weixin' | 'wecom'
+export type ChannelName = 'qq' | 'weixin' | 'wecom' | 'feishu'
 export type OwnerPermissionLevel = 'qa_only' | 'no_bash' | 'full'
 export type ChannelPermissionMode = OwnerPermissionLevel
 
@@ -8,6 +8,7 @@ export const CHANNEL_LABELS: Record<ChannelName, string> = {
   qq: 'QQ',
   weixin: '微信',
   wecom: '企业微信',
+  feishu: '飞书',
 }
 
 const OWNER_USER_ID_MIN_LENGTH = 6
@@ -46,6 +47,7 @@ export function resolveChannelName(channelType: string): ChannelName | null {
   if (channelType.startsWith('qq')) return 'qq'
   if (channelType === 'weixin') return 'weixin'
   if (channelType.startsWith('wecom')) return 'wecom'
+  if (channelType.startsWith('feishu')) return 'feishu'
   return null
 }
 

@@ -10,6 +10,7 @@ export const SECRET_FIELD_PATHS = [
   ['channels', 'qq', 'app_secret'],
   ['channels', 'weixin', 'token'],
   ['channels', 'wecom', 'secret'],
+  ['channels', 'feishu', 'app_secret'],
 ] as const
 
 export type SecretFieldKey = typeof SECRET_FIELD_PATHS[number] extends readonly (infer P)[]
@@ -18,6 +19,14 @@ export type SecretFieldKey = typeof SECRET_FIELD_PATHS[number] extends readonly 
 
 export function secretFieldId(path: readonly string[]): string {
   return path.join('.')
+}
+
+function secretFieldPaths(settings: unknown): readonly (readonly string[])[] {
+  const configurations = (settings as Settings | null)?.model_configurations
+  return [
+    ...SECRET_FIELD_PATHS,
+    ...Object.keys(configurations || {}).map(id => ['model_configurations', id, 'api_key']),
+  ]
 }
 
 function getByPath(source: unknown, path: readonly string[]): string {
@@ -44,7 +53,7 @@ function setByPath(target: Record<string, unknown>, path: readonly string[], val
 
 export function extractSecrets(settings: Settings): Record<string, string> {
   const secrets: Record<string, string> = {}
-  for (const path of SECRET_FIELD_PATHS) {
+  for (const path of secretFieldPaths(settings)) {
     const value = getByPath(settings, path).trim()
     if (value) secrets[secretFieldId(path)] = value
   }
@@ -53,7 +62,7 @@ export function extractSecrets(settings: Settings): Record<string, string> {
 
 export function applySecrets(settings: Settings, secrets: Record<string, string>): Settings {
   const next = structuredClone(settings) as unknown as Record<string, unknown>
-  for (const path of SECRET_FIELD_PATHS) {
+  for (const path of secretFieldPaths(settings)) {
     const value = secrets[secretFieldId(path)] ?? ''
     setByPath(next, path, value)
   }
@@ -62,7 +71,7 @@ export function applySecrets(settings: Settings, secrets: Record<string, string>
 
 export function clearSecretsOnDisk(settings: Settings): Settings {
   const next = structuredClone(settings) as unknown as Record<string, unknown>
-  for (const path of SECRET_FIELD_PATHS) {
+  for (const path of secretFieldPaths(settings)) {
     setByPath(next, path, '')
   }
   return next as unknown as Settings
@@ -71,7 +80,7 @@ export function clearSecretsOnDisk(settings: Settings): Settings {
 export function collectPlaintextSecretsFromRaw(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== 'object') return {}
   const secrets: Record<string, string> = {}
-  for (const path of SECRET_FIELD_PATHS) {
+  for (const path of secretFieldPaths(raw)) {
     const value = getByPath(raw, path).trim()
     if (value) secrets[secretFieldId(path)] = value
   }

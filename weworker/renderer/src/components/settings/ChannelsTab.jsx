@@ -31,6 +31,7 @@ export default function ChannelsTab() {
     owner_permission_level: weixin.owner_permission_level ?? 'full',
   })
   const wecom = channels?.wecom ?? {}
+  const feishu = channels?.feishu ?? {}
   const [wecomForm, setWecomForm] = useState({
     enabled: wecom.enabled ?? false,
     bot_id: wecom.bot_id ?? '',
@@ -38,10 +39,17 @@ export default function ChannelsTab() {
     owner_user_id: wecom.owner_user_id ?? '',
     owner_permission_level: wecom.owner_permission_level ?? 'full',
   })
+  const [feishuForm, setFeishuForm] = useState({
+    enabled: feishu.enabled ?? false,
+    app_id: feishu.app_id ?? '',
+    app_secret: '',
+    owner_user_id: feishu.owner_user_id ?? '',
+    owner_permission_level: feishu.owner_permission_level ?? 'full',
+  })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveMessage, setSaveMessage] = useState(null)
-  const [ownerIdErrors, setOwnerIdErrors] = useState({ qq: '', weixin: '', wecom: '' })
+  const [ownerIdErrors, setOwnerIdErrors] = useState({ qq: '', weixin: '', wecom: '', feishu: '' })
 
   // WeChat QR login state
   const [qrData, setQrData] = useState(null) // raw URL content to encode as QR
@@ -79,7 +87,14 @@ export default function ChannelsTab() {
       owner_user_id: wecom.owner_user_id ?? '',
       owner_permission_level: wecom.owner_permission_level ?? 'full',
     }))
-  }, [qq.enabled, qq.app_id, qq.owner_user_id, qq.owner_permission_level, weixin.enabled, weixin.base_url, weixin.owner_user_id, weixin.owner_permission_level, wecom.enabled, wecom.bot_id, wecom.owner_user_id, wecom.owner_permission_level])
+    setFeishuForm((current) => ({
+      ...current,
+      enabled: feishu.enabled ?? false,
+      app_id: feishu.app_id ?? '',
+      owner_user_id: feishu.owner_user_id ?? '',
+      owner_permission_level: feishu.owner_permission_level ?? 'full',
+    }))
+  }, [qq.enabled, qq.app_id, qq.owner_user_id, qq.owner_permission_level, weixin.enabled, weixin.base_url, weixin.owner_user_id, weixin.owner_permission_level, wecom.enabled, wecom.bot_id, wecom.owner_user_id, wecom.owner_permission_level, feishu.enabled, feishu.app_id, feishu.owner_user_id, feishu.owner_permission_level])
 
   // Render QR code to canvas when data changes
   useEffect(() => {
@@ -140,9 +155,10 @@ export default function ChannelsTab() {
       qq: validateOwnerUserId('qq', form.owner_user_id) || '',
       weixin: validateOwnerUserId('weixin', wxForm.owner_user_id) || '',
       wecom: validateOwnerUserId('wecom', wecomForm.owner_user_id) || '',
+      feishu: validateOwnerUserId('feishu', feishuForm.owner_user_id) || '',
     }
     setOwnerIdErrors(nextErrors)
-    const firstError = nextErrors.qq || nextErrors.weixin || nextErrors.wecom
+    const firstError = nextErrors.qq || nextErrors.weixin || nextErrors.wecom || nextErrors.feishu
     if (firstError) {
       setSaveMessage({ ok: false, text: firstError })
       return
@@ -169,15 +185,23 @@ export default function ChannelsTab() {
         owner_user_id: normalizeOwnerUserId(wecomForm.owner_user_id),
         owner_permission_level: normalizeOwnerUserId(wecomForm.owner_user_id) ? wecomForm.owner_permission_level : 'full',
       },
+      feishu: {
+        enabled: feishuForm.enabled,
+        app_id: feishuForm.app_id,
+        owner_user_id: normalizeOwnerUserId(feishuForm.owner_user_id),
+        owner_permission_level: normalizeOwnerUserId(feishuForm.owner_user_id) ? feishuForm.owner_permission_level : 'full',
+      },
     }
     if (form.app_secret) payload.qq.app_secret = form.app_secret
     if (wecomForm.secret) payload.wecom.secret = wecomForm.secret
+    if (feishuForm.app_secret) payload.feishu.app_secret = feishuForm.app_secret
     try {
       await saveChannels(payload)
       const configured = []
       if (payload.qq.owner_user_id) configured.push('QQ')
       if (payload.weixin.owner_user_id) configured.push('微信')
       if (payload.wecom.owner_user_id) configured.push('企业微信')
+      if (payload.feishu.owner_user_id) configured.push('飞书')
       setSaved(true)
       setSaveMessage({
         ok: true,
@@ -231,6 +255,46 @@ export default function ChannelsTab() {
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
           在 <a href="https://q.qq.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>QQ 开放平台</a> 创建频道机器人后获取凭证。
           用户在频道中 @ 机器人即可对话，发送 /new 开启新对话，发送 /myid 查看用户 ID。
+          未配置主人 ID 时所有用户仅有问答权限；配置后可为主人选择权限级别。
+        </div>
+      </div>
+
+      {/* Feishu Card */}
+      <div className="settings-channel-card" style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>飞书</span>
+          <label style={toggleLabelStyle}>
+            <input type="checkbox" checked={feishuForm.enabled} onChange={e => setFeishuForm(f => ({ ...f, enabled: e.target.checked }))} style={checkboxStyle} />
+            启用
+          </label>
+        </div>
+        <Field label="App ID">
+          <input className="settings-input" value={feishuForm.app_id} onChange={e => setFeishuForm(f => ({ ...f, app_id: e.target.value }))} placeholder="飞书应用 App ID" />
+        </Field>
+        <Field label="App Secret" hint={feishu.has_app_secret ? '已设置（留空保持不变）' : '未设置'}>
+          <input className="settings-input" type="password" value={feishuForm.app_secret} onChange={e => setFeishuForm(f => ({ ...f, app_secret: e.target.value }))} placeholder={feishu.has_app_secret ? '••••••••••••' : '输入飞书应用 App Secret'} />
+        </Field>
+        <OwnerIdField
+          channel="feishu"
+          label="主人 ID"
+          hint="留空则所有用户仅有问答权限"
+          value={feishuForm.owner_user_id}
+          error={ownerIdErrors.feishu}
+          permissionLevel={feishuForm.owner_permission_level}
+          onChange={(owner_user_id) => {
+            setOwnerIdErrors((current) => ({ ...current, feishu: '' }))
+            setFeishuForm((f) => ({ ...f, owner_user_id }))
+          }}
+        />
+        <OwnerPermissionLevelField
+          name="feishu-owner-permission-level"
+          value={feishuForm.owner_permission_level}
+          disabled={!feishuForm.owner_user_id.trim()}
+          onChange={(owner_permission_level) => setFeishuForm((f) => ({ ...f, owner_permission_level }))}
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          在 <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>飞书开放平台</a> 创建企业自建应用，启用机器人并配置事件订阅的长连接模式，获取 App ID 和 App Secret。
+          用户在飞书中私聊机器人或在群聊中 @ 机器人即可对话，发送 /new 开启新对话，发送 /myid 查看用户 ID。
           未配置主人 ID 时所有用户仅有问答权限；配置后可为主人选择权限级别。
         </div>
       </div>

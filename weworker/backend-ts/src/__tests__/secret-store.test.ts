@@ -33,10 +33,12 @@ const baseSettings = (): Settings => ({
   exploration_model: '',
   exploration_use_main_key: true,
   custom_auth_type: 'auth_token',
+  added_providers: [],
   channels: {
     qq: { enabled: true, app_id: 'qq-id', app_secret: 'qq-secret', owner_user_id: 'owner-1', owner_permission_level: 'full' },
     weixin: { enabled: true, token: 'wx-token', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
     wecom: { enabled: true, bot_id: 'bot', secret: 'wecom-secret', owner_user_id: '', owner_permission_level: 'full' },
+    feishu: { enabled: true, app_id: 'feishu-app', app_secret: 'feishu-secret', owner_user_id: '', owner_permission_level: 'full' },
   },
   site_toggles: {},
   custom_test_prompts: {},
@@ -70,6 +72,9 @@ describe('settings-secrets', () => {
     expect(secrets.exploration_api_key).toBe('fixture-exploration-key')
     expect(clearSecretsOnDisk(settings).exploration_api_key).toBe('')
     expect(applySecrets(cleared, secrets).exploration_api_key).toBe('fixture-exploration-key')
+    expect(secrets['channels.feishu.app_secret']).toBe('feishu-secret')
+    expect(clearSecretsOnDisk(settings).channels.feishu.app_secret).toBe('')
+    expect(applySecrets(cleared, secrets).channels.feishu.app_secret).toBe('feishu-secret')
   })
 
   it('detects legacy plaintext secrets in raw settings', () => {

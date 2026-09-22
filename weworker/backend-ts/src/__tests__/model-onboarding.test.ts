@@ -16,6 +16,13 @@ const settings = (patch: Partial<Settings> = {}) => ({
 const chatResponse = () => Response.json({ choices: [{ message: { content: '{"ok":true}' } }] })
 const toolResponse = () => Response.json({ content: [{ type: 'tool_use', name: 'connection_check', input: { ok: true } }] })
 const mainInput = () => ({ provider: getProvider('custom')!, apiKey: 'fixture-main-key', model: 'fixture-model', anthropicBaseUrl: 'https://example.com/proxy', autoAuth: true })
+const configuredSettings = (id: string, baseUrl: string) => settings({
+  active_model_configuration: id,
+  model_configurations: {
+    [id]: { provider_id: 'custom', api_key: 'fixture-main-key', model: 'fixture-model',
+      base_url: baseUrl, openai_base_url: '', context_limit: 1000000, auth_type: 'api_key' },
+  },
+})
 
 describe('main model onboarding', () => {
   it('verifies a tool call using only the Claude Code address', async () => {
@@ -54,6 +61,28 @@ describe('main model onboarding', () => {
 })
 
 describe('exploration connection preparation', () => {
+  it.each(['switch', 'edit'])('invalidates a verified address after a configuration %s with the same model and key', async change => {
+    const fetchMock = vi.fn<typeof fetch>(async () => chatResponse())
+    const service = createExplorationModelService(fetchMock)
+    const first = configuredSettings('model-fixture-a', 'https://example.com/first')
+    const second = configuredSettings(change === 'switch' ? 'model-fixture-b' : 'model-fixture-a', 'https://example.org/second')
+    await service.check(first)
+    expect(service.status(first).status).toBe('connected')
+    expect(service.status(second).status).toBe('pending')
+    await service.check(second)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://example.com/first/chat/completions', 'https://example.org/second/chat/completions',
+    ])
+    expect(service.status(second).status).toBe('connected')
+  })
+
+  it('keeps status readable when the active configuration cannot be resolved', async () => {
+    const service = createExplorationModelService(vi.fn(async () => chatResponse()))
+    await service.check(settings())
+    expect(service.status(configuredSettings('model-fixture-a', 'file:///tmp/fixture')).status).toBe('pending')
+    expect(service.status(settings({ api_key: '' })).status).toBe('pending')
+  })
+
   it('reuses the exact address, deduplicates checks and invalidates success after model or key changes', async () => {
     const fetchMock = vi.fn(async () => chatResponse())
     const service = createExplorationModelService(fetchMock)
@@ -107,6 +136,26 @@ async function withRoutes(upstream: typeof fetch, run: (url: string, get: () => 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 describe('exploration settings API', () => {
+  it.each([
+    ['check', 'switch'], ['check', 'edit'], ['save', 'switch'], ['save', 'edit'],
+  ])('rejects an in-flight %s after a configuration address %s', async (action, change) => {
+    let release!: (value: Response) => void
+    let started!: () => void
+    const start = new Promise<void>(resolve => { started = resolve })
+    const upstream = vi.fn(() => { started(); return new Promise<Response>(resolve => { release = resolve }) })
+    await withRoutes(upstream, async (url, get, set) => {
+      set(configuredSettings('model-fixture-a', 'https://example.com/first'))
+      const response = action === 'check' ? post(`${url}/check`, {})
+        : post(url, { base_url: 'https://example.com/exploration', use_main_key: true, model: '' })
+      await start
+      set(configuredSettings(change === 'switch' ? 'model-fixture-b' : 'model-fixture-a', 'https://example.org/second'))
+      release(chatResponse())
+      expect((await response).status).toBe(409)
+      expect(get().exploration_base_url).toBe('')
+      expect(await (await fetch(url)).json()).toMatchObject({ status: 'pending' })
+    })
+  })
+
   it('returns an editable suggestion without persisting it or requiring main credentials', async () => {
     const upstream = vi.fn(async () => chatResponse())
     await withRoutes(upstream, async (url, get, set) => {

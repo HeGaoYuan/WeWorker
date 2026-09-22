@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, getVisibleModelRefreshDetail, isModelRefreshFailed, shouldShowModelRefreshFailure } from '../utils/model-selection.js'
+import { buildModelOptions, buildSettingsProviderLists, getVisibleModelRefreshDetail, isModelRefreshFailed, shouldShowModelRefreshFailure } from '../utils/model-selection.js'
 
 describe('provider model selection', () => {
   it('keeps an unlisted current model as an enabled option', () => {
@@ -10,6 +10,16 @@ describe('provider model selection', () => {
     ])
   })
 
+  it('can omit the current-config suffix for compact chat selectors', () => {
+    assert.deepEqual(
+      buildModelOptions(['deepseek-v4-flash'], 'deepseek-chat', { annotateCurrent: false }),
+      [
+        { value: 'deepseek-chat', label: 'deepseek-chat', currentOnly: true },
+        { value: 'deepseek-v4-flash', label: 'deepseek-v4-flash', currentOnly: false },
+      ],
+    )
+    assert.deepEqual(buildModelOptions(['deepseek-v4-flash'], 'deepseek-chat', { annotateCurrent: true })[0].label, 'deepseek-chat（当前配置）')
+  })
   it('deduplicates catalog models without relabeling a listed current model', () => {
     assert.deepEqual(buildModelOptions(['model-a', 'model-a', 'model-b'], 'model-a'), [
       { value: 'model-a', label: 'model-a', currentOnly: false },
@@ -38,26 +48,38 @@ describe('provider model selection', () => {
     assert.equal(getVisibleModelRefreshDetail({ source: 'remote', models: [], explicitRefresh: true }), '远程接口返回空模型列表')
   })
 
-  it('labels probe results with protocols and no internal product names', () => {
-    const rows = buildProbeResultRows([
-      { protocol: 'anthropic_messages', ok: true },
-      { protocol: 'openai_chat_completions', ok: false },
-    ])
-    assert.deepEqual(rows.map((row) => row.label), ['Anthropic 接口', 'OpenAI 接口'])
-    assert.doesNotMatch(JSON.stringify(rows), /weworker|webwright/i)
+  it('shows added and legacy-configured providers in settings', () => {
+    const providerList = [
+      { id: 'anthropic' },
+      { id: 'deepseek' },
+      { id: 'custom' },
+    ]
+    const { visible, addable } = buildSettingsProviderLists(providerList, {
+      anthropic: { added: true },
+      deepseek: { has_key: true },
+      custom: { base_url: 'https://gateway.example/v1' },
+    })
+    assert.deepEqual(visible.map(({ id }) => id), ['anthropic', 'deepseek', 'custom'])
+    assert.deepEqual(addable.map(({ id }) => id), ['anthropic', 'deepseek', 'custom'])
   })
 
-  it('distinguishes two Anthropic endpoints without internal product names', () => {
-    const rows = buildProbeResultRows([
-      { protocol: 'anthropic_messages', ok: true },
-      { protocol: 'anthropic_messages', ok: true },
-    ])
-    assert.deepEqual(rows.map((row) => row.label), ['Anthropic 接口', 'Anthropic 结构化输出接口'])
+  it('keeps unconfigured third-party providers out of settings until selected', () => {
+    const providerList = [{ id: 'anthropic' }, { id: 'custom' }]
+    const { visible, addable } = buildSettingsProviderLists(providerList, {})
+    assert.deepEqual(visible.map(({ id }) => id), [])
+    assert.deepEqual(addable.map(({ id }) => id), ['anthropic', 'custom'])
   })
 
-  it('skips the optional website agent probe when a custom OpenAI URL is absent', () => {
-    assert.deepEqual(buildProviderProbeTargets('custom', ''), ['weworker'])
-    assert.deepEqual(buildProviderProbeTargets('custom', 'https://gateway.example/v1'), ['weworker', 'webwright'])
-    assert.deepEqual(buildProviderProbeTargets('anthropic', ''), ['weworker', 'webwright'])
+  it('keeps the supplier selectable and shows multiple independent models', () => {
+    const providerList = [{ id: 'deepseek', name: 'DeepSeek' }, { id: 'custom' }]
+    const { visible, addable } = buildSettingsProviderLists(providerList, {
+      deepseek: { has_key: true, model: 'legacy' },
+      'model-first': { provider_id: 'deepseek', model: 'model-one' },
+      'model-second': { provider_id: 'deepseek', model: 'model-two' },
+      'model-custom': { provider_id: 'custom', model: 'gateway-model' },
+    })
+    assert.deepEqual(visible.map(({ id }) => id), ['deepseek', 'model-first', 'model-second', 'model-custom'])
+    assert.deepEqual(visible.slice(1).map(({ providerId }) => providerId), ['deepseek', 'deepseek', 'custom'])
+    assert.deepEqual(addable.map(({ id }) => id), ['deepseek', 'custom'])
   })
 })

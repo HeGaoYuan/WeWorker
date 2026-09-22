@@ -19,7 +19,7 @@ function normalizeBackendError(message, maxChatAttachments = 60) {
 
 export function isContextOverflowError(message) {
   const text = String(message || '').toLowerCase()
-  return /context.{0,24}(length|limit|window|exceed|maximum)|too many tokens|prompt.{0,16}too long|token.{0,16}limit/.test(text)
+  return /context.{0,40}(exceed|too (long|large)|overflow)|maximum context (length|window)|too many (input )?tokens|prompt.{0,16}too long|input.{0,24}token.{0,24}(exceed|limit)|上下文.{0,16}(过长|超出|超过|超限)|输入.{0,16}(过长|超出.{0,8}限制)/.test(text)
 }
 
 export function shouldAutoCompactAfterTurn(contextSnapshot, retryCompaction = false, compactedDuringRequest = false) {
@@ -167,7 +167,10 @@ export async function streamChat(workId, message, onEvent, signal, attachments =
       for (const event of result?.events || []) {
         if (event.type !== 'context_compaction_start') onEvent(event)
       }
-      if (result?.status === 'skipped') return
+      if (result?.status === 'skipped') {
+        if (overflowDetected) onEvent({ type: 'error', content: '上下文已超限，但当前没有可压缩的历史对话' })
+        return
+      }
       if (overflowDetected) {
         return streamChat(workId, message, onEvent, signal, attachments, maxChatAttachments, modelMessage, true)
       }

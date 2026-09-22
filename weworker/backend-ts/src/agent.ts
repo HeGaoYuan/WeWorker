@@ -12,6 +12,8 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import type { Settings } from './config.js'
 import { getConfigDirectory, getOpenBrowserAllowedOrigins, getSiteEnabled, getUserDirectory, getUserDirectoryBlacklist } from './config.js'
 import { formatBlacklistEntry } from './user-directory-blacklist.js'
@@ -23,7 +25,6 @@ import { refreshDesktopAdapterSkills } from '../../../webcli/adapter-desktop.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
-import { ASSISTANT_STATUS_PREFIX, normalizeAssistantStatusLine } from './assistant-status.js'
 import { composeSystemPromptWithZcf } from './zcf-sync.js'
 import { computeUsageMetrics } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
@@ -41,6 +42,7 @@ import {
 } from './context-assembly.js'
 import {
   buildCompactedConversationPrompt,
+  CONVERSATION_COMPACTION_TARGET_RATIO,
   planConversationCompaction,
   takeRecentWithinTokenBudget,
 } from './context/conversation-compaction.js'
@@ -62,19 +64,24 @@ const log = createLogger('agent')
 
 const compactedConversationByWork = new Map<string, {
   sourceMessageCount: number
+  sourceHash: string
   prompt: string
 }>()
 
-function takeStoredCompactedConversation(workId: string | undefined, messageCount: number): { prompt: string; includesCurrent: boolean } | undefined {
+function conversationHash(messages: Message[]): string {
+  return createHash('sha256').update(JSON.stringify(messages)).digest('hex')
+}
+
+function getStoredCompactedConversation(workId: string | undefined, messages: Message[]) {
   if (!workId) return undefined
   const stored = compactedConversationByWork.get(workId)
   if (!stored) return undefined
-  if (messageCount !== stored.sourceMessageCount && messageCount !== stored.sourceMessageCount + 1) {
-    if (messageCount > stored.sourceMessageCount + 1) compactedConversationByWork.delete(workId)
+  if (messages.length < stored.sourceMessageCount
+    || conversationHash(messages.slice(0, stored.sourceMessageCount)) !== stored.sourceHash) {
+    compactedConversationByWork.delete(workId)
     return undefined
   }
-  compactedConversationByWork.delete(workId)
-  return { prompt: stored.prompt, includesCurrent: messageCount === stored.sourceMessageCount }
+  return stored
 }
 
 export function clearStoredConversationCompaction(workId: string): void {
@@ -129,14 +136,14 @@ export function buildClaudeNativeShellEnv(
 }
 
 export function buildConfiguredModelEnv(
-  settings: Pick<Settings, 'api_key' | 'base_url'> & Partial<Pick<Settings, 'active_provider' | 'custom_auth_type'>>,
+  settings: Pick<Settings, 'api_key' | 'base_url'> & Partial<Pick<Settings, 'active_provider' | 'custom_auth_type' | 'active_auth_type'>>,
   extraEnv?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const env = { ...process.env, ...buildClaudeNativeShellEnv(), ...extraEnv }
   for (const key of MODEL_AUTH_ENV_KEYS) delete env[key]
   delete env.CLAUDE_CODE_GIT_BASH_PATH
   delete env.WEWORKER_BUNDLED_GIT_BASH
-  if (usesAnthropicBearerToken(settings.active_provider, settings.custom_auth_type)) {
+  if (usesAnthropicBearerToken(settings.active_provider, settings.active_auth_type ?? settings.custom_auth_type)) {
     env.ANTHROPIC_AUTH_TOKEN = settings.api_key
   } else {
     env.ANTHROPIC_API_KEY = settings.api_key
@@ -231,55 +238,6 @@ export interface UsageEvent {
   duration_ms?: number
   num_turns?: number
   kind?: 'turn' | 'post_compaction_probe'
-}
-
-export async function generateAssistantStatusLine(
-  replyText: string,
-  settings: Pick<Settings, 'api_key' | 'base_url' | 'model' | 'active_provider' | 'custom_auth_type'>,
-): Promise<string | null> {
-  const trimmedReply = String(replyText ?? '').trim()
-  if (!trimmedReply) return null
-
-  const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
-  const endpoint = `${baseUrl}/v1/messages`
-  const prompt = [
-    '请基于下面这条 AI 回复，输出一行简短中文状态。',
-    `必须只输出一行，格式固定为“${ASSISTANT_STATUS_PREFIX}<状态内容>”。`,
-    '不要输出解释、编号、Markdown、引号或多余文本。',
-    '',
-    '[AI 回复]',
-    trimmedReply,
-  ].join('\n')
-
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: settings.model,
-        max_tokens: 80,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(15000),
-    })
-    if (!response.ok) return null
-
-    const data = await response.json() as {
-      content?: Array<{ type?: string; text?: string }>
-    }
-    const text = (data.content ?? [])
-      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
-      .map((part) => part.text)
-      .join('\n')
-
-    return normalizeAssistantStatusLine(text)
-  } catch {
-    return null
-  }
 }
 
 export function buildSystemPrompt(opts?: {
@@ -414,7 +372,6 @@ ${authSites.join('\n')}
       ? '网站操作仍按 webcli 规则执行；不要为了调用网站工具而改用 `weworker_powershell`。'
       : '当前权限模式不能执行 Adapter；严禁用 `weworker_powershell` 调用 webcli。',
     windows_encryption_rules: windowsEncryptionRules,
-    assistant_status_prefix: ASSISTANT_STATUS_PREFIX,
     login_detection_rules: loginDetectionRules,
   }).trimEnd()}\n`
   return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
@@ -564,7 +521,7 @@ async function summarizeConversationOnly(input: {
       receivedResult = true
       const result = message as unknown as { subtype?: string; result?: string; is_error?: boolean; errors?: string[] }
       const summary = typeof result.result === 'string' ? result.result.trim() : ''
-      if (result.subtype === 'success' && summary) return summary
+      if (result.subtype === 'success' && !result.is_error && summary) return summary
       const providerErrors = Array.isArray(result.errors) ? result.errors.filter(Boolean).join('; ') : ''
       const detail = providerErrors || (result.subtype
         ? `摘要器返回状态 ${result.subtype}`
@@ -866,6 +823,14 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
 
   // Full assistant message 鈥?in non-streaming mode, extract text here (after all tool calls done)
   if (msg.type === 'assistant') {
+    if (msg.error) {
+      const detail = msg.message.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('\n')
+      yield { type: 'error', content: detail || msg.error }
+      return
+    }
     if (!streaming) {
       const assistantMsg = (msg as unknown as { message: { content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }> } }).message
       for (const block of assistantMsg.content ?? []) {
@@ -907,6 +872,7 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       num_turns?: number
       is_error?: boolean
       errors?: string[]
+      result?: string
     }
     if (r.usage) {
       const m = computeUsageMetrics(r.usage)
@@ -926,7 +892,7 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     if (r.is_error === true || r.subtype !== 'success') {
       yield {
         type: 'error',
-        content: (r.errors ?? []).filter(Boolean).join('\n') || `Claude Code execution failed (${r.subtype ?? 'unknown'})`,
+        content: (r.errors ?? []).filter(Boolean).join('\n') || r.result || `Claude Code execution failed (${r.subtype ?? 'unknown'})`,
       }
     }
     yield { type: 'done' }
@@ -1053,13 +1019,17 @@ export async function* streamChat(
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
   log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
-  const storedCompactedConversation = takeStoredCompactedConversation(opts.workId, messages.length)
-  const latestMessage = messages[messages.length - 1]
-  const promptRaw = storedCompactedConversation
-    ? storedCompactedConversation.includesCurrent || !latestMessage
-      ? storedCompactedConversation.prompt
-      : `${storedCompactedConversation.prompt}\n\nUser: ${messagePromptText(latestMessage)}`
-    : buildPromptString(messages)
+  const storedCompactedConversation = getStoredCompactedConversation(opts.workId, messages)
+  const conversationMessages: Message[] = storedCompactedConversation
+    ? [{
+        ...messages[0],
+        role: 'assistant',
+        content: [{ type: 'text', text: storedCompactedConversation.prompt }],
+      }, ...messages.slice(storedCompactedConversation.sourceMessageCount)]
+    : messages
+  const promptRaw = storedCompactedConversation && conversationMessages.length === 1
+    ? storedCompactedConversation.prompt
+    : buildPromptString(conversationMessages)
   const prompt = promptRaw
   const memoryQuery = messages.length > 0
     ? messagePromptText(messages[messages.length - 1]).slice(0, 2_000)
@@ -1121,13 +1091,16 @@ export async function* streamChat(
   let compactionEventEmitted = false
   let compactionCompleted = false
 
-  if ((compactionPlan.shouldCompact || opts.forceCompaction) && messages.length > 1) {
-    const historyMessages = messages.slice(0, -1)
-    const currentMessage = messages[messages.length - 1]
+  if ((compactionPlan.shouldCompact || opts.forceCompaction) && conversationMessages.length > 1) {
+    const historyMessages = conversationMessages.slice(0, -1)
+    const currentMessage = conversationMessages[conversationMessages.length - 1]
     const currentTokens = estimateContextTokens(messagePromptText(currentMessage))
+    const targetTokens = opts.forceCompaction
+      ? Math.min(compactionPlan.targetTokens, Math.floor(conversationTokens * CONVERSATION_COMPACTION_TARGET_RATIO))
+      : compactionPlan.targetTokens
     const recentSelection = takeRecentWithinTokenBudget(
       historyMessages,
-      Math.max(1, compactionPlan.targetTokens - currentTokens),
+      Math.max(1, targetTokens - currentTokens),
       (message) => estimateContextTokens(messagePromptText(message)),
     )
     const compactionBase = {
@@ -1164,11 +1137,15 @@ export async function* streamChat(
             ...compactionBase,
             after_tokens: estimateContextTokens(compactedPrompt),
           }
+          if (compaction.after_tokens >= conversationTokens) {
+            throw new Error('摘要未缩减对话上下文，请重试压缩或新建对话')
+          }
           contextAssembly = buildAssembly(compactedPrompt, compaction)
           compactionCompleted = true
-          if (opts.compactionOnly && opts.workId) {
+          if (opts.workId) {
             compactedConversationByWork.set(opts.workId, {
               sourceMessageCount: messages.length,
+              sourceHash: conversationHash(messages),
               prompt: compactedConversation,
             })
           }

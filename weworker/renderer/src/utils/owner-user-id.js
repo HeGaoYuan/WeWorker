@@ -4,6 +4,7 @@ const CHANNEL_LABELS = {
   qq: 'QQ',
   weixin: '微信',
   wecom: '企业微信',
+  feishu: '飞书',
 }
 
 const OWNER_USER_ID_MIN_LENGTH = 6

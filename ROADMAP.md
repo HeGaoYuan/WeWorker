@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-09-28：从 develop-archive 迁移多模型配置、压缩交互及飞书支持（来源 3e6c9d9d），保留公开 develop 的 Adapter、查询路由与 Profile 边界，不导入旧版内置凭据和内部 Provider。补齐配置切换后的探索连接缓存失效、飞书异步启停清理回归；Backend 类型检查、72 项模型/渠道测试及记忆/压缩聚焦回归通过，Backend bundle、Renderer 188 项测试、生产构建与语法检查通过。完整 URL 功能（29499e29）继续迁移；未进行真实模型或飞书联调。
+
 - 2026-09-24：按已审阅策略更新 7 个公共 Adapter 的写操作确认配置，并同步 v2 bootstrap 的调用级旧确认兼容处理；read 命令不自动获得兼容标志，调用参数与共享运行时不被修改。聚焦 6 文件 76 项通过，公开 Profile 7 包 prepare 通过。 未执行真实业务写操作；客户端需重启、扩展需重载后验收。
 
 - 2026-09-24：命令确认策略与写操作分类分离：v2 manifest 支持布尔 `requires_confirmation`，未配置的写命令仍默认需确认；CLI、Bridge、Extension、bootstrap、帮助与派生 Skill 同步采用包内策略。关闭安装包写确认视为额外权限变更。两仓聚焦策略/路由/Skill 测试、Backend TypeScript 和 Profile prepare 通过；未执行真实写操作。配置说明见 `docs/adapter_confirmation_policy.md`。

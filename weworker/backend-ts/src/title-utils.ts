@@ -52,7 +52,7 @@ export async function generateTitleWithLLM(message: string, settings: Settings):
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
+        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.active_auth_type ?? settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },

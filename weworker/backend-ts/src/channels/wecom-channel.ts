@@ -18,7 +18,7 @@ import crypto from 'node:crypto'
 
 import type { Channel, ChannelStatus } from './channel-manager.js'
 import { runChannelChat } from './channel-manager.js'
-import { generateAssistantStatusLine, streamChat } from '../agent.js'
+import { streamChat } from '../agent.js'
 import { resolveZcfPrefs } from '../zcf-sync.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
 import { resolveToolDisplayName } from '../tools.js'
@@ -26,7 +26,6 @@ import { getSettings } from '../config.js'
 import { generateTitle, generateTitleWithLLM } from '../title-utils.js'
 import * as store from '../works-store.js'
 import { createLogger } from '../logger.js'
-import { ensureAssistantStatusLine } from '../assistant-status.js'
 
 const log = createLogger('wecom')
 
@@ -799,14 +798,6 @@ export class WecomChannel implements Channel {
 
     // Account for trailing LLM text generation after the last tool
     llmMsTotal += Date.now() - lastStepEndTime
-
-    fullText = fullText
-      ? await ensureAssistantStatusLine({
-          text: fullText,
-          generateStatusLine: () => generateAssistantStatusLine(fullText, settings),
-          fallbackStatusLine: '当前状态：已完成当前回复，等待下一步指令',
-        })
-      : fullText
 
     // Save any remaining text chunk
     if (currentTextChunk.trim()) {

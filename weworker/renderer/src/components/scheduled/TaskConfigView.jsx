@@ -159,6 +159,7 @@ function getEnabledChannels(channels) {
   if (channels?.qq?.enabled) result.push({ id: 'qq', label: 'QQ' })
   if (channels?.weixin?.enabled) result.push({ id: 'weixin', label: '微信' })
   if (channels?.wecom?.enabled) result.push({ id: 'wecom', label: '企业微信' })
+  if (channels?.feishu?.enabled) result.push({ id: 'feishu', label: '飞书' })
   return result
 }
 
@@ -397,7 +398,7 @@ export default function TaskConfigView({ taskId }) {
               </div>
             ) : (
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                暂无可用通道，请在设置 → 通道中启用微信、QQ 或企业微信
+                暂无可用通道，请在设置 → 通道中启用微信、QQ、企业微信或飞书
               </div>
             )}
           </div>

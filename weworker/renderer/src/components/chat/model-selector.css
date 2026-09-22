@@ -1,0 +1,72 @@
+.chat-input-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-input-toolbar-actions > .chat-input-action {
+  flex-shrink: 0;
+}
+
+.chat-model-selector {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.chat-model-selector .app-dropdown-select {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.chat-model-selector .app-dropdown-select__trigger {
+  width: 100%;
+  max-width: none;
+  height: 28px;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.chat-model-selector__provider {
+  width: 104px;
+}
+
+.chat-model-selector__model {
+  width: 184px;
+}
+
+.chat-model-selector .app-dropdown-select__label {
+  font-weight: 500;
+}
+
+.chat-model-selector-menu .app-dropdown-menu-item {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .chat-model-selector {
+    gap: 4px;
+  }
+
+  .chat-model-selector .app-dropdown-select__trigger {
+    padding: 0 6px;
+  }
+
+  .chat-model-selector__provider {
+    width: 96px;
+  }
+
+  .chat-model-selector__model {
+    width: 128px;
+  }
+}

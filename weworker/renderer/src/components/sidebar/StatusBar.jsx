@@ -63,7 +63,7 @@ export default function StatusBar() {
     return <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: color, marginRight: 4, flexShrink: 0 }} />
   }
 
-  const CHANNEL_NAMES = { qq: 'QQ', weixin: '微信', wecom: '企业微信' }
+  const CHANNEL_NAMES = { qq: 'QQ', weixin: '微信', wecom: '企业微信', feishu: '飞书' }
   const STATUS_TEXT = { connected: '已连接', starting: '连接中', error: '错误' }
 
   return (

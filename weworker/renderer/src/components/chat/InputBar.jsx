@@ -20,6 +20,7 @@ import {
 import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeIcon.jsx'
 import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
 import ContextPanel from './ContextPanel.jsx'
+import ModelSelector from './ModelSelector.jsx'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
@@ -73,6 +74,7 @@ export default function InputBar({
   embedded,
   attachmentTarget = 'welcome',
   contextSnapshot = null,
+  historyMessages = [],
 }) {
   const textareaRef = useRef(null)
   const slashMenuRef = useRef(null)
@@ -88,13 +90,17 @@ export default function InputBar({
   const contextLimit = useSettingsStore((s) => s.contextLimit)
   const textAttachmentThreshold = Math.max(1, Number(pasteTextAttachmentThreshold) || DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD)
   const overAttachmentLimit = attachments.length > attachmentLimit
-  const inputDisabled = !!disabled || !!streaming
+  const [modelSelectionPending, setModelSelectionPending] = useState(false)
+  const inputDisabled = !!disabled || !!streaming || modelSelectionPending
   const isCommandMode = String(text || '').trimStart().startsWith('!')
   const [attachmentNotice, setAttachmentNotice] = useState('')
   const [slashMenuState, setSlashMenuState] = useState(null)
   const [slashMenuPlacement, setSlashMenuPlacement] = useState(null)
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [bangCompletionSource, setBangCompletionSource] = useState(null)
+  const [historyIndex, setHistoryIndex] = useState(-1)
+  const historyDraftRef = useRef('')
+  const historyNavigationRef = useRef(false)
   const minLineHeight = 22
   const chatAttachmentSeq = useUserFilesStore((s) => s.chatAttachmentSeq)
   const pendingChatAttachmentTarget = useUserFilesStore((s) => s.pendingChatAttachmentTarget)
@@ -104,6 +110,7 @@ export default function InputBar({
   const userFiles = useUserFilesStore((s) => s.files)
   const loadUserFiles = useUserFilesStore((s) => s.load)
   const terminalSessions = useTerminalStore((s) => s.sessions)
+  const commandHistory = useTerminalStore((s) => s.commandHistory)
   const sites = useSitesStore((s) => Array.isArray(s.sites) ? s.sites : [])
   const webcliSlashCommands = useMemo(() => buildWebcliSlashCommands(sites), [sites])
   const buildBangSlashItems = useCallback((query) => {
@@ -136,6 +143,53 @@ export default function InputBar({
     if (slashMenuState.kind === 'bang') return buildBangSlashItems(slashMenuState.query)
     return filterChatSlashCommands(webcliSlashCommands, slashMenuState.query)
   }, [buildBangSlashItems, slashMenuState, webcliSlashCommands])
+
+  const inputHistory = useMemo(() => {
+    const entries = []
+    const seen = new Set()
+    const add = (value) => {
+      const textValue = String(value || '').trim()
+      if (!textValue || seen.has(textValue)) return
+      seen.add(textValue)
+      entries.push(textValue)
+    }
+
+    for (const message of historyMessages || []) {
+      if (message?.role !== 'user') continue
+      const value = (message.content || [])
+        .filter((block) => block?.type === 'text' && block.text)
+        .map((block) => block.text)
+        .join('')
+      add(value)
+    }
+    for (const session of [...(terminalSessions || [])].reverse()) {
+      const command = String(session?.command || '').trim()
+      if (command) add(command.startsWith('!') ? command : `!${command}`)
+    }
+    for (const command of [...(commandHistory || [])].reverse()) {
+      const value = String(command || '').trim()
+      if (value) add(value.startsWith('!') ? value : `!${value}`)
+    }
+    return entries
+  }, [commandHistory, historyMessages, terminalSessions])
+
+  const navigateHistory = (direction) => {
+    if (!inputHistory.length) return
+    if (historyIndex < 0) historyDraftRef.current = text || ''
+    const nextIndex = Math.max(-1, Math.min(inputHistory.length - 1, historyIndex + direction))
+    if (nextIndex === historyIndex) return
+    historyNavigationRef.current = true
+    setHistoryIndex(nextIndex)
+    onTextChange(nextIndex < 0 ? historyDraftRef.current : inputHistory[inputHistory.length - 1 - nextIndex])
+    setSlashMenuState(null)
+    setBangCompletionSource(null)
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    })
+  }
 
   const syncSlashMenuPlacement = useCallback(() => {
     const textarea = textareaRef.current
@@ -287,6 +341,11 @@ export default function InputBar({
 
   const handleTextChange = (event) => {
     const nextText = event.target.value
+    if (historyNavigationRef.current) {
+      historyNavigationRef.current = false
+    } else if (historyIndex >= 0) {
+      setHistoryIndex(-1)
+    }
     onTextChange(nextText)
     syncSlashMenuFromText(nextText, event.target.selectionStart ?? nextText.length)
   }
@@ -431,6 +490,17 @@ export default function InputBar({
         e.preventDefault()
         setSlashMenuState(null)
         setBangCompletionSource(null)
+        return
+      }
+    }
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey) {
+      const textarea = textareaRef.current
+      const isSingleLine = !String(text || '').includes('\n')
+      const atStart = textarea ? textarea.selectionStart === 0 && textarea.selectionEnd === 0 : true
+      const atEnd = textarea ? textarea.selectionStart === textarea.value.length && textarea.selectionEnd === textarea.value.length : true
+      if (isSingleLine && ((e.key === 'ArrowUp' && atStart) || (e.key === 'ArrowDown' && atEnd))) {
+        e.preventDefault()
+        navigateHistory(e.key === 'ArrowUp' ? 1 : -1)
         return
       }
     }
@@ -704,8 +774,9 @@ export default function InputBar({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
         {uploadBtn}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      <div className="chat-input-toolbar-actions">
         <ContextPanel snapshot={contextSnapshot} contextLimit={contextLimit} />
+        <ModelSelector disabled={!!disabled || !!streaming} onPendingChange={setModelSelectionPending} />
         {actionBtn}
       </div>
     </div>
@@ -745,7 +816,7 @@ export default function InputBar({
             role="listbox"
             aria-label="Shell 命令提示"
           >
-            <div className="skill-slash-menu-group-title">! Shell 提示 · Shift+Tab 切换命令/文件</div>
+            <div className="skill-slash-menu-group-title">! Shell 提示 · Shift+Tab 切换命令/文件 · Esc 关闭提示</div>
             <div className="chat-slash-menu-list">
               {slashItems.map((item, index) => {
                 const active = index === slashActiveIndex

@@ -1,6 +1,7 @@
 import deployment from '../../config/deployment.json'
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
+import { isBuiltinProvider } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
 import ExplorationModelSettings from './ExplorationModelSettings.jsx'
 import { connectionMessage } from '../../utils/model-connection.js'
@@ -10,13 +11,14 @@ import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
+import { buildModelOptions, buildSettingsProviderLists, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
 import weworkerLogo from '../../../../asset/logo.png'
 import './settings-theme.css'
 import { backendFetch } from '../../api/http.js'
+import { fetchProviderModels } from '../../api/provider-models.js'
 
 const API = 'http://127.0.0.1:8765'
 const OFFICIAL_URL = deployment.officialUrl
@@ -90,6 +92,9 @@ const LOGOS = {
   builtin: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor" fillOpacity="0.18"/><path d="M7 12.5 10.2 15 17 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
   ),
+  builtin_dev: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor" fillOpacity="0.18"/><path d="M7 12.5 10.2 15 17 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+  ),
   deepseek: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
@@ -154,7 +159,7 @@ export default function SettingsModal({ onClose }) {
           {tab === 'skills' && <SkillsTab />}
           {tab === 'logs' && <LogsTab />}
           {tab === 'about' && <AboutTab appVersion={appVersion} commitHash={commitHash} />}
-          {tab === 'model' && <ModelTab onClose={onClose} />}
+          {tab === 'model' && <ModelTab />}
         </div>
 
         <div className="settings-footer">
@@ -1226,9 +1231,11 @@ function ConfigTab() {
   )
 }
 
-function ModelTab({ onClose }) {
-  const { activeProvider, model, hasApiKey, providers, saveProvider, activateProvider } = useSettingsStore()
+function ModelTab() {
+  const { activeProvider, model, hasApiKey, providers, addProvider, saveProvider, activateProvider } = useSettingsStore()
   const [expandedProvider, setExpandedProvider] = useState(null)
+  const [addPickerOpen, setAddPickerOpen] = useState(false)
+  const [addingProvider, setAddingProvider] = useState(null)
   const [forms, setForms] = useState({})
   const [catalogs, setCatalogs] = useState({})
   const [catalogLoading, setCatalogLoading] = useState(null)
@@ -1242,10 +1249,21 @@ function ModelTab({ onClose }) {
   const [testResult, setTestResult] = useState(null)
 
   const singleProvider = PROVIDERS.length === 1
+  const { visible: visibleProviders, addable: addableProviders } = useMemo(() => {
+    const lists = buildSettingsProviderLists(PROVIDERS, providers)
+    if (activeProvider && !lists.visible.some((provider) => provider.id === activeProvider)) {
+      const templateId = providers[activeProvider]?.provider_id || activeProvider
+      const template = PROVIDERS.find((provider) => provider.id === templateId)
+      if (template) lists.visible.unshift({ ...template, id: activeProvider, providerId: templateId })
+    }
+    return lists
+  }, [activeProvider, providers])
+  const providerType = (id) => providers[id]?.provider_id || id
+  const providerDefinition = (id) => PROVIDERS.find(provider => provider.id === providerType(id))
 
   const getForm = (pid) => {
     if (forms[pid]) return forms[pid]
-    const p = PROVIDERS.find((x) => x.id === pid)
+    const p = providerDefinition(pid)
     const stored = providers[pid] ?? {}
     return {
       api_key: '',
@@ -1267,7 +1285,7 @@ function ModelTab({ onClose }) {
       delete next[pid]
       return next
     })
-    if (k === 'api_key' || k === 'base_url' || k === 'auth_type') {
+    if (k === 'api_key' || k === 'base_url' || k === 'auth_type' || k === 'auto_auth') {
       catalogRequestIds.current[pid] = (catalogRequestIds.current[pid] || 0) + 1
       setCatalogLoading((current) => current === pid ? null : current)
       setCatalogs((current) => {
@@ -1284,7 +1302,7 @@ function ModelTab({ onClose }) {
       provider: pid,
       api_key: f.api_key,
       model: f.model,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: '', auth_type: f.auth_type, auto_auth: f.auto_auth } : {}),
+      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, auth_type: f.auth_type, auto_auth: f.auto_auth } : {}),
     }
   }
 
@@ -1293,7 +1311,7 @@ function ModelTab({ onClose }) {
     return {
       provider: pid,
       api_key: f.api_key,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: '', auth_type: f.auth_type } : {}),
+      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, auth_type: f.auth_type } : {}),
     }
   }
 
@@ -1302,18 +1320,12 @@ function ModelTab({ onClose }) {
     catalogRequestIds.current[pid] = requestId
     setCatalogLoading(pid)
     try {
-      const res = await backendFetch(`${API}/settings/provider/models`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(providerAccessBody(pid)),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || '模型列表获取失败')
+      const data = await fetchProviderModels(providerAccessBody(pid))
       if (catalogRequestIds.current[pid] !== requestId) return
       setCatalogs((current) => ({ ...current, [pid]: { ...data, explicitRefresh } }))
     } catch (error) {
       if (catalogRequestIds.current[pid] !== requestId) return
-      const provider = PROVIDERS.find((item) => item.id === pid)
+      const provider = providerDefinition(pid)
       setCatalogs((current) => ({
         ...current,
         [pid]: { models: provider?.models || [], source: 'fallback', warning: error.message || '模型列表获取失败', explicitRefresh },
@@ -1332,6 +1344,21 @@ function ModelTab({ onClose }) {
     if (willExpand) void loadModels(pid)
   }
 
+  const handleAddProvider = async (pid) => {
+    setAddingProvider(pid)
+    setTestResult(null)
+    try {
+      const configurationId = await addProvider(pid)
+      setAddPickerOpen(false)
+      setExpandedProvider(configurationId)
+      void loadModels(configurationId)
+    } catch (error) {
+      setTestResult({ ok: false, message: error.message || '添加模型失败' })
+    } finally {
+      setAddingProvider(null)
+    }
+  }
+
   useEffect(() => {
     if (singleProvider) void loadModels(PROVIDERS[0].id)
   }, [])
@@ -1348,7 +1375,7 @@ function ModelTab({ onClose }) {
     }
     const updates = { model: f.model, context_limit: contextLimit }
     if (f.api_key) updates.api_key = f.api_key
-    if (pid === 'custom') {
+    if (providerType(pid) === 'custom') {
       updates.base_url = f.base_url
       updates.auth_type = f.auth_type
     }
@@ -1421,10 +1448,10 @@ function ModelTab({ onClose }) {
       <div className="settings-banner">
         <span className="settings-banner-label">当前使用</span>
         {(() => {
-          const p = PROVIDERS.find((x) => x.id === activeProvider)
+          const p = providerDefinition(activeProvider)
           return p ? (
             <span style={{ color: p.color, display: 'flex', alignItems: 'center', gap: 6 }}>
-              {LOGOS[p.id]}
+              {LOGOS[p.id === p.providerId ? p.id : p.providerId || p.id]}
               <span style={{ fontSize: 13, fontWeight: 700 }}>{p.name}</span>
             </span>
           ) : null
@@ -1441,8 +1468,8 @@ function ModelTab({ onClose }) {
         </div>
       </div>
 
-      <div className="settings-card-list">
-        {PROVIDERS.map((p) => {
+      <div className="settings-card-list settings-model-list">
+        {visibleProviders.map((p) => {
           const isActive = singleProvider || activeProvider === p.id
           const isExpanded = singleProvider || expandedProvider === p.id
           const stored = providers[p.id] ?? {}
@@ -1460,9 +1487,10 @@ function ModelTab({ onClose }) {
                   ? `已获取 ${catalog.models.length} 个模型`
                   : '内置模型列表'
               : '展开后自动获取厂商模型列表'
-          const providerColor = p.id === 'custom' ? 'var(--provider-custom)' : p.color
+          const templateId = p.providerId || p.id
+          const providerColor = templateId === 'custom' ? 'var(--provider-custom)' : p.color
 
-          if (p.id === 'builtin') {
+          if (isBuiltinProvider(p.id)) {
             const builtinActive = activeProvider === p.id
             return (
               <div key={p.id} className={`settings-card settings-card-builtin${builtinActive ? ' is-active' : ''}`}>
@@ -1471,8 +1499,8 @@ function ModelTab({ onClose }) {
                   <div style={{ flex: 1 }}>
                     <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
                       {p.name}{builtinActive && <span className="settings-badge-active">使用中</span>}
+                       <span className="settings-card-inline-subtitle">{` · ${builtinActive ? `当前使用 ${stored.model || p.defaultModel || ''}` : '无需配置'}`}</span>
                     </div>
-                    <div className="settings-card-subtitle">火山方舟 Coding Plan · {builtinActive ? '当前使用 ark-code-latest' : '无需配置，下载即可使用'}</div>
                   </div>
                   <div className="settings-btn-group">
                     {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating} className="settings-btn settings-btn-provider" style={{ background: providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
@@ -1485,18 +1513,16 @@ function ModelTab({ onClose }) {
           }
 
           return (
-            <div key={p.id} className={`settings-card${isActive ? ' is-active' : ''}`}>
+            <div key={p.id} data-model-configuration={p.id} className={`settings-card${isActive ? ' is-active' : ''}`}>
               <div className="settings-card-header">
-                <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id]}</span>
+                <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[templateId]}</span>
                 <div style={{ flex: 1 }}>
                   <div className="settings-card-title" style={{ color: isActive ? p.color : 'var(--text-primary)' }}>
                     {p.name}
                     {isActive && !singleProvider && <span className="settings-badge-active">使用中</span>}
-                  </div>
-                  <div className="settings-card-subtitle">
                     {stored.has_key
-                      ? <span style={{ color: 'var(--success)' }}>● 已配置 · {stored.model || p.subtitle}</span>
-                      : <span>{p.subtitle} · 未配置</span>}
+                      ? <span className="settings-card-inline-status is-configured"> · 已配置 {stored.model || p.subtitle}</span>
+                      : <span className="settings-card-inline-status"> · 未配置</span>}
                   </div>
                 </div>
                 {!singleProvider && (
@@ -1525,7 +1551,7 @@ function ModelTab({ onClose }) {
 
               {isExpanded && (
                 <fieldset className="settings-card-body settings-model-form" disabled={saving === p.id}>
-                  {p.id === 'custom' && <Field label="服务地址" hint="填写 Claude Code 使用的 Base URL">
+                   {templateId === 'custom' && <Field label="服务地址" hint="填写模型服务 Base URL，连接测试会检测协议">
                     <input className="settings-input" value={f.base_url} onChange={e => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://example.com/anthropic" />
                   </Field>}
                   <Field label="API Key" hint={stored.has_key ? '已设置（留空保持不变）' : '未设置'}>
@@ -1542,7 +1568,7 @@ function ModelTab({ onClose }) {
                   <Field label="模型" hint={catalogHint} hintError={catalogRefreshFailed || Boolean(catalogErrorDetail)}>
                     <div style={{ width: '100%' }}>
                       <div style={{ display: 'flex', gap: 8, width: '100%' }}>
-                        {p.id === 'custom' ? (
+                        {templateId === 'custom' ? (
                           <>
                             <input className="settings-input" list={`provider-models-${p.id}`} value={f.model} onChange={(e) => setFormField(p.id, 'model', e.target.value)} placeholder="输入或选择模型名称" />
                             <datalist id={`provider-models-${p.id}`}>
@@ -1585,7 +1611,7 @@ function ModelTab({ onClose }) {
                     </datalist>
                   </Field>
 
-                  {p.id === 'custom' && (
+                  {templateId === 'custom' && (
                     <>
                       <Field label="API Key 类型">
                         <AppDropdownSelect
@@ -1649,6 +1675,57 @@ function ModelTab({ onClose }) {
             </div>
           )
         })}
+        {addableProviders.length > 0 && (
+          <div className="settings-card">
+            <div className="settings-card-header">
+              <div style={{ flex: 1 }}>
+                <div className="settings-card-title">添加模型</div>
+                <div className="settings-card-subtitle">选择预置供应商，或添加自定义供应商</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddPickerOpen((open) => !open)}
+                className="settings-btn settings-btn-primary"
+                aria-expanded={addPickerOpen}
+              >
+                {addPickerOpen ? '收起' : '添加模型'}
+              </button>
+            </div>
+            {addPickerOpen && (
+              <div className="settings-card-body">
+                {addableProviders.filter((provider) => provider.id !== 'custom').length > 0 && (
+                  <Field label="预置供应商" hint="添加后再填写 API Key 和模型">
+                    <div className="settings-btn-group" style={{ justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                      {addableProviders.filter((provider) => provider.id !== 'custom').map((provider) => (
+                        <button
+                          key={provider.id}
+                          type="button"
+                          onClick={() => handleAddProvider(provider.id)}
+                          disabled={Boolean(addingProvider)}
+                          className="settings-btn settings-btn-secondary"
+                        >
+                          {addingProvider === provider.id ? '添加中…' : provider.name}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+                )}
+                {addableProviders.some((provider) => provider.id === 'custom') && (
+                   <Field label="自定义供应商" hint="填写服务地址后自动检测兼容的模型协议">
+                    <button
+                      type="button"
+                      onClick={() => handleAddProvider('custom')}
+                      disabled={Boolean(addingProvider)}
+                      className="settings-btn settings-btn-secondary"
+                    >
+                      {addingProvider === 'custom' ? '添加中…' : '添加自定义供应商'}
+                    </button>
+                  </Field>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <ExplorationModelSettings />
