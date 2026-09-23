@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-09-23：OpenCLI 携程迁移第二批完成本地实现：固定来源 SHA `8271afc67e8504bda94c147f446ee29775d08274`，将剩余 13 项接入根 v2 包，累计 15 个命令（14 read、1 write）。分类为业务数据 DOM 8、API 2、Cookie/导航 2、SSR 2、网络响应 1；单程航班在既有 Extension Runner 内增加受限响应捕获，没有旁路 Runner 或 Toolkit 改动。登录按页面导航边界改为确认后打开官方页、人工完成后以 `whoami` 验证。Ctrip/mock 与包聚焦 61 项、WebCLI 全量 83 文件/597 项、扩展加载器/运行时 16 项、Profile/打包 6 项全部通过；公开预处理成功，内建包和 CLI 均发现 15 命令。真实携程页面、测试账号登录/验证码、live 只读查询、完整安装包及 macOS 仍未验收，详见 `docs/opencli_ctrip_migration.md`。
+
 - 2026-09-23：OpenCLI 携程迁移第一批（来源 SHA 8271afc）：核查 Apache-2.0 与 15 个来源命令，根 v2 包及公开 Profile 加入两个只读联想命令；其余 13 项页面、登录及网络捕获命令逐项记录在 `docs/opencli_ctrip_migration.md`，不算完成。WebCLI 83 文件 566/566、扩展加载/运行时 14/14、构建 Profile/打包聚焦 6/6 通过；公开 Profile 预处理与 CLI 帮助确认 2 命令可发现。真实携程与登录验收未执行。
 
 ## 当前阶段
