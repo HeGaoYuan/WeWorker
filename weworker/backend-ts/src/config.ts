@@ -703,7 +703,8 @@ function deepMerge(base: unknown, override: unknown): unknown {
 
 /** Check if a site (adapter) is enabled. Missing keys use the provided default (true if not specified). */
 
-export function getSiteEnabled(adapterId: string, defaultEnabled = true): boolean {
+export function getSiteEnabled(adapterId: string, defaultEnabled = true, managedEnabled?: boolean): boolean {
+  if (managedEnabled !== undefined) return managedEnabled
 
   const s = getSettings()
 
@@ -765,7 +766,7 @@ export function toggleSite(adapterId: string): boolean {
 
 /** Set a site's visibility on the welcome page. Only works when site is enabled. */
 
-export function setSiteVisibility(adapterId: string, visible: boolean): void {
+export function setSiteVisibility(adapterId: string, visible: boolean, managedEnabled?: boolean): void {
 
   const s = getSettings()
 
@@ -773,7 +774,7 @@ export function setSiteVisibility(adapterId: string, visible: boolean): void {
 
   // Only change visibility if site is enabled (not false)
 
-  if (current === false) return
+  if (!(managedEnabled ?? (current !== false))) return
 
   const newState: boolean | 'hidden' = visible ? true : 'hidden'
 
@@ -785,11 +786,12 @@ export function setSiteVisibility(adapterId: string, visible: boolean): void {
 export function setAllEnabledSitesWelcomeVisibility(
   adapterIds: string[],
   visible: boolean,
+  managedStates = new Map<string, boolean>(),
 ): void {
   const s = getSettings()
   const toggles = { ...s.site_toggles }
   for (const id of adapterIds) {
-    if (toggles[id] === false) continue
+    if (!(managedStates.get(id) ?? (toggles[id] !== false))) continue
     toggles[id] = visible ? true : 'hidden'
   }
   updateSettings({ site_toggles: toggles })
