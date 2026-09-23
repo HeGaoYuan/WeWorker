@@ -13,6 +13,7 @@ export type ProbeErrorCode =
   | 'protocol_mismatch'
   | 'network_error'
   | 'timeout'
+  | 'service_unavailable'
 
 export interface ProviderAccessInput {
   provider: ProviderEntry
@@ -39,6 +40,7 @@ export interface ProtocolProbeResult {
   model: string
   error?: ProbeErrorCode
   detail?: string
+  auth_type?: AnthropicAuthType
 }
 
 type FetchLike = typeof fetch
@@ -134,13 +136,14 @@ export async function listProviderModels(
 function classifyProbeFailure(status: number, detail: string): ProbeErrorCode {
   if (status === 401 || status === 403) return 'auth_failed'
   if (status === 429) return 'rate_limited'
+  if (status >= 500) return 'service_unavailable'
   if (/model/i.test(detail) && (status === 400 || status === 404)) return 'model_unavailable'
   if (status === 404) return 'endpoint_missing'
   return 'protocol_mismatch'
 }
 
 export async function probeProviderProtocol(
-  input: ProviderConnectionInput & { target: ProbeTarget },
+  input: ProviderConnectionInput & { target: ProbeTarget; verifyResponse?: boolean },
   fetchImpl: FetchLike = fetch,
 ): Promise<ProtocolProbeResult> {
   const config = input.target === 'weworker' ? input.provider.weworker : input.provider.webwright
@@ -161,13 +164,17 @@ export async function probeProviderProtocol(
   const body = isAnthropic
     ? {
         model: input.model,
-        max_tokens: 20,
+        max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
+        ...(input.verifyResponse && input.target === 'weworker' ? {
+          tools: [{ name: 'connection_check', description: 'Confirm the connection without performing any action.', input_schema: schema }],
+          tool_choice: { type: 'tool', name: 'connection_check' },
+        } : {}),
         ...(input.target === 'webwright' ? { output_config: { format: { type: 'json_schema', schema } } } : {}),
       }
     : {
         model: input.model,
-        max_tokens: 20,
+        max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return JSON: {"ok":true}.' }],
         response_format: { type: 'json_object' },
       }
@@ -178,9 +185,27 @@ export async function probeProviderProtocol(
       headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15000),
+      redirect: 'error',
     })
-    if (response.ok) return { ok: true, target: input.target, protocol, model: input.model }
-    const detail = (await readRemoteResponse(response)).detail
+    if (response.ok) {
+      if (input.verifyResponse) {
+        try {
+          const data = await response.json() as any
+          if (isAnthropic && input.target === 'weworker') {
+            if (!data.content?.some((block: any) => block.type === 'tool_use' && block.name === 'connection_check' && block.input?.ok === true)) throw new Error()
+          } else {
+            const content = isAnthropic
+              ? data.content?.filter((block: any) => block.type === 'text').map((block: any) => block.text).join('')
+              : data.choices?.[0]?.message?.content
+            if (JSON.parse(content).ok !== true) throw new Error()
+          }
+        } catch {
+          return { ok: false, target: input.target, protocol, model: input.model, error: 'protocol_mismatch', detail: input.target === 'weworker' ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力' }
+        }
+      }
+      return { ok: true, target: input.target, protocol, model: input.model }
+    }
+    const detail = (await readRemoteResponse(response)).detail.split(input.apiKey).join('[已隐藏]')
     return { ok: false, target: input.target, protocol, model: input.model, error: classifyProbeFailure(response.status, detail), detail }
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
@@ -190,7 +215,18 @@ export async function probeProviderProtocol(
       protocol,
       model: input.model,
       error: timedOut ? 'timeout' : 'network_error',
-      detail: timedOut ? '连接超时' : (error instanceof Error ? error.message : '连接失败'),
+      detail: timedOut ? '连接超时' : (error instanceof Error ? error.message : '连接失败').split(input.apiKey).join('[已隐藏]'),
     }
   }
+}
+
+export async function probeMainConnection(input: ProviderConnectionInput & { autoAuth?: boolean }, fetchImpl: FetchLike = fetch): Promise<ProtocolProbeResult> {
+  const authType = input.anthropicAuthType || 'auth_token'
+  const result = await probeProviderProtocol({ ...input, target: 'weworker', verifyResponse: true }, fetchImpl)
+  if (input.provider.id !== 'custom') return result
+  if (result.ok) return { ...result, auth_type: authType }
+  if (!input.autoAuth || result.error !== 'auth_failed') return result
+  const alternate = authType === 'auth_token' ? 'api_key' : 'auth_token'
+  const retried = await probeProviderProtocol({ ...input, anthropicAuthType: alternate, target: 'weworker', verifyResponse: true }, fetchImpl)
+  return retried.ok ? { ...retried, auth_type: alternate } : retried
 }

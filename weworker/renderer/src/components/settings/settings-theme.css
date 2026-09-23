@@ -1,3 +1,7 @@
+.settings-model-form { border: 0; margin: 0; min-width: 0; }
+.settings-model-form .settings-btn { white-space: nowrap; flex-shrink: 0; }
+.settings-model-advanced summary { cursor: pointer; margin-bottom: 12px; color: var(--text-secondary); }
+
 .settings-overlay {
   position: fixed;
   inset: 0;

@@ -104,7 +104,7 @@ describe('provider protocol probe', () => {
     const fetchImpl = vi.fn(async () => new Response(remoteBody, { status: 401, statusText: 'Unauthorized' })) as typeof fetch
     const result = await probeProviderProtocol({
       provider: provider('anthropic'),
-      apiKey: 'bad',
+      apiKey: 'fixture-invalid-key',
       model: 'claude-current',
       target: 'weworker',
     }, fetchImpl)

@@ -200,6 +200,11 @@ export interface Settings {
 
   openai_base_url_custom: string
 
+  exploration_base_url: string
+  exploration_api_key: string
+  exploration_model: string
+  exploration_use_main_key: boolean
+
   custom_auth_type: import('./anthropic-auth.js').AnthropicAuthType
 
   channels: ChannelsConfig
@@ -318,6 +323,11 @@ const DEFAULTS: Settings = {
   api_query_llm_route: true,
 
   openai_base_url_custom: '',
+
+  exploration_base_url: '',
+  exploration_api_key: '',
+  exploration_model: '',
+  exploration_use_main_key: true,
 
   custom_auth_type: 'auth_token',
 

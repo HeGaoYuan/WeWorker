@@ -3,7 +3,7 @@ import * as api from '../../api/website-exploration-api.js'
 import { useWebsiteExplorationStore as useStore, changeWebsiteContext } from '../../store/website-exploration.js'
 import { ActionMenu, ErrorMessage, JsonView, Modal, ResourceImage, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
 
-export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy }) {
+export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy, modelReady = true }) {
   const scope = toolkitId + '/' + tool.tool_id
   const snapshot = useSnapshot(() => api.getSlots(toolkitId, tool.tool_id), [scope], '/api/toolkits/' + scope.replace('/', '/tools/') + '/development/events')
   const action = useAction(snapshot.refresh)
@@ -42,12 +42,12 @@ export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy
         {dev?.source_exploration_id && <p>当前开发来源：{dev.source_exploration_id}</p>}
         {evidence && <p>修复依据：{evidence.debug_run_id} {evidence.code_hash !== slot?.code_hash ? '（来自旧代码版本）' : '（当前代码）'} <button onClick={() => setEvidence(null)}>移除</button></p>}
         <label>开发指令<textarea value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="描述需要开发或修复的行为" /></label>
-        <div className="wx-actions"><button className="wx-quiet" disabled={blocked || !instruction.trim() || (!dev && !source)} onClick={() => action.run(async () => {
+        <div className="wx-actions"><button className="wx-quiet" disabled={blocked || !modelReady || !instruction.trim() || (!dev && !source)} onClick={() => action.run(async () => {
           if (dev) await api.continueDevelopment(toolkitId, tool.tool_id, instruction, evidence?.debug_run_id || '')
           else await api.startDevelopment(toolkitId, tool.tool_id, { instruction, sourceExplorationId: source })
           setInstruction('')
         })}>提交给 Developer Agent</button>
-          {dev && source && <button disabled={blocked || !instruction.trim()} onClick={() => setConfirm('restart')}>从所选探索重新开发</button>}
+          {dev && source && <button disabled={blocked || !modelReady || !instruction.trim()} onClick={() => setConfirm('restart')}>从所选探索重新开发</button>}
           {['queued', 'running'].includes(data?.latest_run?.status) && <button disabled={disabled || action.busy} onClick={() => action.run(() => api.cancelDevelopment(toolkitId, tool.tool_id))}>取消开发</button>}
         </div>
         {data?.latest_run && <details><summary>最近开发运行 · <Status value={data.latest_run.status} /></summary><RunDetail run={data.latest_run} /></details>}

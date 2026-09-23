@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
+import ExplorationModelSettings from './ExplorationModelSettings.jsx'
+import { connectionMessage } from '../../utils/model-connection.js'
 import SkillsTab from './SkillsTab.jsx'
 import LogsTab from './LogsTab.jsx'
 import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
+import { buildModelOptions, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
@@ -109,7 +111,7 @@ export default function SettingsModal({ onClose }) {
   const commitHash = typeof __BUILD_COMMIT_HASH__ !== 'undefined' ? __BUILD_COMMIT_HASH__ : 'dev'
 
   return (
-    <div className="settings-overlay" onClick={onClose}>
+    <div className="settings-overlay">
       <div className="settings-shell" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <div>
@@ -1246,8 +1248,8 @@ function ModelTab({ onClose }) {
       model: stored.model || p?.models[0] || '',
       context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
-      openai_base_url: stored.openai_base_url || '',
       auth_type: stored.auth_type === 'api_key' ? 'api_key' : 'auth_token',
+      auto_auth: true,
     }
   }
 
@@ -1261,7 +1263,7 @@ function ModelTab({ onClose }) {
       delete next[pid]
       return next
     })
-    if (k === 'api_key' || k === 'base_url' || k === 'openai_base_url' || k === 'auth_type') {
+    if (k === 'api_key' || k === 'base_url' || k === 'auth_type') {
       catalogRequestIds.current[pid] = (catalogRequestIds.current[pid] || 0) + 1
       setCatalogLoading((current) => current === pid ? null : current)
       setCatalogs((current) => {
@@ -1278,7 +1280,7 @@ function ModelTab({ onClose }) {
       provider: pid,
       api_key: f.api_key,
       model: f.model,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url, auth_type: f.auth_type } : {}),
+      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: '', auth_type: f.auth_type, auto_auth: f.auto_auth } : {}),
     }
   }
 
@@ -1287,7 +1289,7 @@ function ModelTab({ onClose }) {
     return {
       provider: pid,
       api_key: f.api_key,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url, auth_type: f.auth_type } : {}),
+      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: '', auth_type: f.auth_type } : {}),
     }
   }
 
@@ -1344,15 +1346,18 @@ function ModelTab({ onClose }) {
     if (f.api_key) updates.api_key = f.api_key
     if (pid === 'custom') {
       updates.base_url = f.base_url
-      updates.openai_base_url = f.openai_base_url
       updates.auth_type = f.auth_type
     }
     try {
+      const result = await handleTest(pid)
+      if (!result?.ok) return
+      if (result.auth_type) updates.auth_type = result.auth_type
       await saveProvider(pid, updates)
+      await activateProvider(pid)
       // Clear the api_key field after save
-      setForms((prev) => ({ ...prev, [pid]: { ...getForm(pid), api_key: '' } }))
+      setForms((prev) => ({ ...prev, [pid]: { ...getForm(pid), api_key: '', auth_type: result.auth_type || f.auth_type } }))
       setSaved(pid)
-      setTestResult({ ok: true, message: '配置已保存' })
+      setTestResult({ ok: true, message: '验证通过，已开始使用' })
       setTimeout(() => setSaved(null), 2000)
     } catch (e) {
       setTestResult({ ok: false, message: e.message || '保存失败' })
@@ -1379,43 +1384,26 @@ function ModelTab({ onClose }) {
     setTesting(pid)
     setProbeResults((results) => ({ ...results, [pid]: null }))
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 30000)
+    const timer = setTimeout(() => controller.abort(), 35000)
     try {
-      const provider = PROVIDERS.find((item) => item.id === pid)
-      const probe = async (target) => {
-        const fallbackProtocol = target === 'weworker'
-          ? 'anthropic_messages'
-          : provider?.webwright?.protocol || (pid === 'anthropic' ? 'anthropic_messages' : 'openai_chat_completions')
-        try {
-          const res = await backendFetch(`${API}/settings/provider/probe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...providerRequestBody(pid), target }),
-            signal: controller.signal,
-          })
-          const data = await res.json()
-          return res.ok && data.ok
-            ? { ok: true, protocol: data.protocol || fallbackProtocol, message: `连接成功 · ${data.model}` }
-            : { ok: false, protocol: data.protocol || fallbackProtocol, message: data.detail || '连接失败' }
-        } catch (error) {
-          return {
-            ok: false,
-            protocol: fallbackProtocol,
-            message: error.name === 'AbortError' ? '连接超时（30s）' : `无法连接：${error.message}`,
-          }
-        }
+      const res = await backendFetch(`${API}/settings/provider/probe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...providerRequestBody(pid), target: 'weworker' }),
+        signal: controller.signal,
+      })
+      const data = await res.json()
+      if (probeRequestIds.current[pid] !== requestId) return null
+      const result = { ...data, ok: res.ok && data.ok }
+      setProbeResults(current => ({ ...current, [pid]: [{ ...result, label: '模型连接', message: connectionMessage(result) }] }))
+      if (result.ok && result.auth_type) {
+        setForms(current => ({ ...current, [pid]: { ...getForm(pid), auth_type: result.auth_type } }))
       }
-      const targets = buildProviderProbeTargets(pid, getForm(pid).openai_base_url)
-      const results = await Promise.all(targets.map(probe))
-      if (pid === 'custom' && !targets.includes('webwright')) {
-        results.push({
-          ok: null,
-          protocol: 'openai_chat_completions',
-          message: '未配置，仅影响网站探索 agent',
-        })
-      }
-      if (probeRequestIds.current[pid] !== requestId) return
-      setProbeResults((current) => ({ ...current, [pid]: buildProbeResultRows(results) }))
+      return result
+    } catch (error) {
+      if (probeRequestIds.current[pid] !== requestId) return null
+      setProbeResults(current => ({ ...current, [pid]: [{ label: '模型连接', ok: false, message: error.name === 'AbortError' ? '连接超时，请重试' : '无法连接，请检查网络后重试' }] }))
+      return null
     } finally {
       clearTimeout(timer)
       if (probeRequestIds.current[pid] === requestId) {
@@ -1510,7 +1498,10 @@ function ModelTab({ onClose }) {
               </div>
 
               {isExpanded && (
-                <div className="settings-card-body">
+                <fieldset className="settings-card-body settings-model-form" disabled={saving === p.id}>
+                  {p.id === 'custom' && <Field label="服务地址" hint="填写 Claude Code 使用的 Base URL">
+                    <input className="settings-input" value={f.base_url} onChange={e => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://example.com/anthropic" />
+                  </Field>}
                   <Field label="API Key" hint={stored.has_key ? '已设置（留空保持不变）' : '未设置'}>
                     <input
                       type="password"
@@ -1549,6 +1540,7 @@ function ModelTab({ onClose }) {
                     </div>
                   </Field>
 
+                  <details className="settings-model-advanced"><summary>高级设置</summary>
                   <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
                     <input
                       className="settings-input"
@@ -1571,26 +1563,29 @@ function ModelTab({ onClose }) {
                     <>
                       <Field label="API Key 类型">
                         <AppDropdownSelect
-                          value={f.auth_type}
+                          value={f.auto_auth ? 'auto' : f.auth_type}
                           options={[
-                            { value: 'auth_token', label: 'Bearer Token（ANTHROPIC_AUTH_TOKEN）' },
-                            { value: 'api_key', label: 'API Key（ANTHROPIC_API_KEY）' },
+                            { value: 'auto', label: '自动检测（推荐）' },
+                            { value: 'auth_token', label: 'Bearer Token' },
+                            { value: 'api_key', label: 'API Key' },
                           ]}
-                          onChange={(value) => setFormField(p.id, 'auth_type', value)}
+                          onChange={value => {
+                            if (value === 'auto') setFormField(p.id, 'auto_auth', true)
+                            else {
+                              setFormField(p.id, 'auth_type', value)
+                              setForms(current => ({ ...current, [p.id]: { ...current[p.id], auto_auth: false } }))
+                            }
+                          }}
                           ariaLabel="API Key 类型"
                           minMenuWidth={320}
                           matchAnchorWidth
                           className="settings-provider-auth-select"
                         />
                       </Field>
-                      <Field label="Anthropic 兼容 Base URL" hint="（不要加/v1/messages 后缀）">
-                        <input className="settings-input" value={f.base_url} onChange={(e) => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://gateway.example/anthropic" />
-                      </Field>
-                      <Field label="OpenAI Chat Completions 兼容 Base URL" hint="（不要加/chat/completions 后缀）">
-                        <input className="settings-input" value={f.openai_base_url} onChange={(e) => setFormField(p.id, 'openai_base_url', e.target.value)} onBlur={() => { if (f.openai_base_url) void loadModels(p.id) }} placeholder="https://gateway.example/openai/v1" />
-                      </Field>
                     </>
                   )}
+
+                  </details>
 
                   <div className="settings-btn-group" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
                     <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">
@@ -1614,20 +1609,23 @@ function ModelTab({ onClose }) {
                       disabled={saving === p.id}
                       className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}
                     >
-                      {saving === p.id ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
+                      {saving === p.id ? '验证并保存中…' : saved === p.id ? '已启用' : '验证并开始使用'}
                     </button>
                   </div>
                   {(probeResults[p.id] || []).map((result) => (
                     <div key={result.label} className={`settings-action-hint settings-remote-detail${result.ok === true ? ' is-success' : result.ok === false ? ' is-error' : ''}`} style={{ textAlign: 'right' }}>
-                      {result.label}：{result.ok === true ? '✓ ' : result.ok === false ? '✗ ' : ''}{result.message}
+                      {result.message}
+                      {!result.ok && result.detail && <details><summary>查看详情</summary><pre>{result.detail}</pre></details>}
                     </div>
                   ))}
-                </div>
+                </fieldset>
               )}
             </div>
           )
         })}
       </div>
+
+      <ExplorationModelSettings />
 
       <div className="settings-actions">
         <button type="button" onClick={onClose} className="settings-btn settings-btn-ghost">关闭</button>
