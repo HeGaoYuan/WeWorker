@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "name": "ctrip.com",
+  "version": "0.1.0",
+  "description": "Ctrip public destination and hotel suggestions (open m.ctrip.com first)",
+  "match": ["m.ctrip.com"],
+  "requires_auth": false,
+  "commands": [
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "description": "Search destinations, landmarks and stations; up to 50 suggestions, no further pages. Open m.ctrip.com first.",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "number", "description": "Integer 1-50, default 15"}}, "required": ["query"]}
+    },
+    {
+      "id": "hotel-suggest",
+      "runtime": "extension",
+      "module": "extension/commands/hotel-suggest.js",
+      "description": "Search hotel-related city, district and hotel suggestions; up to 50, no further pages. Open m.ctrip.com first.",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "number", "description": "Integer 1-50, default 15"}}, "required": ["query"]}
+    }
+  ]
+}

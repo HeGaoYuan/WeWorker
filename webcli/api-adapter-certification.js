@@ -115,6 +115,11 @@ export async function loadShippedApiInventory({ repoRoot = defaultRepoRoot } = {
     }
     seenAdapterIds.add(adapterId)
 
+    if (!extensionIndex.has(adapterId)
+      && existsSync(join(repoRoot, 'adapters', adapterId, 'manifest.json'))) {
+      continue
+    }
+
     const adapterDir = join(adaptersRoot, adapterId)
     const manifestPath = join(adapterDir, 'manifest.json')
     if (!existsSync(manifestPath)) {
