@@ -186,6 +186,14 @@ function loadServiceWorker(options = {}) {
             }],
           }
         }
+        if (command === 'Network.getResponseBody') {
+          return {
+            body: options.networkResponseBase64
+              ? Buffer.from(options.networkResponseBody || '', 'utf8').toString('base64')
+              : options.networkResponseBody || '',
+            base64Encoded: Boolean(options.networkResponseBase64),
+          }
+        }
         if (command === 'DOM.getDocument') return { root: { nodeId: 1 } }
         if (command === 'DOM.querySelector') return { nodeId: 2 }
         if (command === 'DOM.setFileInputFiles') return {}
@@ -265,8 +273,12 @@ function loadServiceWorker(options = {}) {
     Map,
     Promise,
     Set,
+    TextDecoder,
+    TextEncoder,
+    Uint8Array,
     URL,
     WebSocket: FakeWebSocket,
+    atob: (value) => Buffer.from(value, 'base64').toString('binary'),
     btoa: (value) => Buffer.from(value, 'binary').toString('base64'),
     chrome,
     console: { log() {}, warn() {}, error() {} },
@@ -412,6 +424,77 @@ test('service worker allows ProjectDemo runtime helpers to read SDL sibling-doma
   const rejected = await request('cookies_get', { url: 'https://evil.example/' })
   assert.equal(rejected.ok, false)
   assert.equal(rejected.error.code, 'HOST_NOT_ALLOWED')
+})
+
+test('service worker captures only matching same-host Adapter responses and releases its debugger', async () => {
+  const payload = JSON.stringify({ status: 0, data: { context: { finished: true }, flightItineraryList: [] } })
+  const worker = loadServiceWorker({
+    tab: { id: 7, url: 'https://flights.ctrip.com/online/list', windowId: 1 },
+    networkResponseBody: payload,
+    networkResponseBase64: true,
+  })
+  const started = await worker.request('network_capture_start', {
+    pattern: '/international/search/api/search/batchSearch',
+  })
+  assert.equal(started.ok, true)
+  const emitDebuggerEvent = worker.context.chrome.debugger.onEvent.listeners[0]
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
+    requestId: 'ignored',
+    request: { url: 'https://evil.example/international/search/api/search/batchSearch', method: 'POST' },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
+    requestId: 'flight',
+    request: { url: 'https://flights.ctrip.com/international/search/api/search/batchSearch', method: 'POST' },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.responseReceived', {
+    requestId: 'flight',
+    response: { status: 200, mimeType: 'application/json', headers: { 'content-type': 'application/json' } },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'flight', encodedDataLength: payload.length })
+  const captured = await worker.request('network_capture_read', { waitMs: 0, finish: true })
+  assert.equal(captured.ok, true)
+  assert.deepEqual(plain(captured.result.entries), [{
+    kind: 'cdp',
+    url: 'https://flights.ctrip.com/international/search/api/search/batchSearch',
+    method: 'POST',
+    timestamp: captured.result.entries[0].timestamp,
+    responseStatus: 200,
+    responseContentType: 'application/json',
+    responsePreview: payload,
+    responseBodyFullSize: payload.length,
+    responseBodyTruncated: false,
+  }])
+  assert.deepEqual(plain(worker.debuggerAttachCalls), [{ tabId: 7 }])
+  assert.deepEqual(plain(worker.debuggerDetachCalls), [{ tabId: 7 }])
+  assert.equal(worker.context.ensureCdpState(7).entries.length, 0)
+})
+
+test('Adapter response capture enforces its body limit and keeps a borrowed debugger attached', async () => {
+  const payload = 'x'.repeat(8 * 1024 * 1024 + 1)
+  const worker = loadServiceWorker({
+    tab: { id: 7, url: 'https://flights.ctrip.com/online/list', windowId: 1 },
+    networkResponseBody: payload,
+  })
+  await worker.context.ensureCdpAttached(7)
+  const started = await worker.request('network_capture_start', { pattern: 'batchSearch' })
+  assert.equal(started.ok, true)
+  const emitDebuggerEvent = worker.context.chrome.debugger.onEvent.listeners[0]
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
+    requestId: 'large-flight',
+    request: { url: 'https://flights.ctrip.com/api/batchSearch', method: 'POST' },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.responseReceived', {
+    requestId: 'large-flight',
+    response: { status: 200, mimeType: 'application/json', headers: {} },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'large-flight' })
+  const captured = await worker.request('network_capture_read', { finish: true })
+  assert.equal(captured.ok, true)
+  assert.equal(captured.result.entries[0].responseBodyFullSize, payload.length)
+  assert.equal(captured.result.entries[0].responsePreview.length, 8 * 1024 * 1024)
+  assert.equal(captured.result.entries[0].responseBodyTruncated, true)
+  assert.deepEqual(plain(worker.debuggerAttachCalls), [{ tabId: 7 }])
+  assert.deepEqual(plain(worker.debuggerDetachCalls), [])
 })
 
 test('direct browser_fetch reuses the existing ITSM tab and browser credentials', async () => {

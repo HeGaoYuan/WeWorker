@@ -215,10 +215,13 @@ const adapterInjectionStatus = new Map();
 const cdpAttachedTabs = new Set();
 const cdpNetworkState = new Map();
 const cdpActionCaptureSessions = new Map();
+const adapterNetworkCaptureSessions = new Map();
 const cdpExecutionContexts = new Map();
 const CDP_NETWORK_ENTRY_LIMIT = 200;
 const CDP_RESPONSE_PREVIEW_LIMIT = 4000;
 const CDP_REQUEST_PREVIEW_LIMIT = 2000;
+const ADAPTER_RESPONSE_CAPTURE_LIMIT = 8 * 1024 * 1024;
+const ADAPTER_CAPTURE_ENTRY_LIMIT = 20;
 const ACTION_CAPTURE_VERSION = 'opencli-action-capture-v1';
 
 function ensureCdpState(tabId) {
@@ -451,6 +454,69 @@ async function clearCdpNetworkEntries(tabId) {
   state.entries = [];
   state.requests.clear();
   state.totalCaptured = 0;
+}
+
+function adapterCaptureAllowsUrl(session, url) {
+  try {
+    const targetHost = new URL(url).hostname;
+    return isRuntimeHelperHostAllowed(session.tabHost, targetHost, session.allowedHosts)
+      && matchesCapturePattern(url, session.patterns);
+  } catch {
+    return false;
+  }
+}
+
+async function startAdapterNetworkCapture(tab, payload, allowedHosts) {
+  const pattern = String(payload.pattern || '').trim();
+  if (!pattern || pattern.length > 256 || /[\x00-\x1f]/.test(pattern)) {
+    throw createRuntimeHelperError('INVALID_ARGS', 'network_capture_start requires a pattern of at most 256 characters');
+  }
+  const tabHost = new URL(tab.url).hostname;
+  const existing = adapterNetworkCaptureSessions.get(tab.id);
+  const wasAttached = cdpAttachedTabs.has(tab.id);
+  await ensureCdpAttached(tab.id);
+  await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable', {
+    maxTotalBufferSize: ADAPTER_RESPONSE_CAPTURE_LIMIT * 2,
+    maxResourceBufferSize: ADAPTER_RESPONSE_CAPTURE_LIMIT,
+    maxPostDataSize: 262144,
+  });
+  adapterNetworkCaptureSessions.set(tab.id, {
+    tabHost,
+    allowedHosts: normalizeRouteHosts(allowedHosts),
+    patterns: normalizeCapturePatterns(pattern),
+    entries: [],
+    requestIds: new Set(),
+    lastEventAt: Date.now(),
+    ownedAttachment: existing?.ownedAttachment ?? !wasAttached,
+  });
+  return { started: true, pattern };
+}
+
+async function finishAdapterNetworkCapture(tabId, session) {
+  adapterNetworkCaptureSessions.delete(tabId);
+  if (!session?.ownedAttachment || !cdpAttachedTabs.has(tabId)) return;
+  await clearCdpNetworkEntries(tabId);
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch { }
+  cdpAttachedTabs.delete(tabId);
+}
+
+async function readAdapterNetworkCapture(tab, payload) {
+  const session = adapterNetworkCaptureSessions.get(tab.id);
+  if (!session) throw createRuntimeHelperError('CAPTURE_NOT_STARTED', 'No Adapter network capture is active for this tab');
+  const waitMs = payload.waitMs === undefined ? 0 : Number(payload.waitMs);
+  if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 20000) {
+    throw createRuntimeHelperError('INVALID_ARGS', 'network_capture_read waitMs must be an integer between 0 and 20000');
+  }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (session.entries.length > 0 && session.requestIds.size === 0 && Date.now() - session.lastEventAt >= 300) break;
+    await delay(100);
+  }
+  const result = { entries: session.entries.slice() };
+  if (payload.finish !== false) await finishAdapterNetworkCapture(tab.id, session);
+  return result;
 }
 
 async function delay(ms) {
@@ -2207,6 +2273,11 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         requestBodyFullSize: rawPostData.length,
         requestBodyTruncated: rawPostData.length > CDP_REQUEST_PREVIEW_LIMIT,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession && adapterCaptureAllowsUrl(adapterSession, request.url || '')) {
+        adapterSession.requestIds.add(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       return;
     }
 
@@ -2227,10 +2298,16 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       if (!pending) return;
 
       let responsePreview = '';
+      let responseBody = '';
       try {
         const body = await chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: params.requestId });
-        const raw = body?.base64Encoded ? atob(body.body || '') : (body.body || '');
-        responsePreview = truncateText(raw, CDP_RESPONSE_PREVIEW_LIMIT);
+        if (body?.base64Encoded) {
+          const binary = atob(body.body || '');
+          responseBody = new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)));
+        } else {
+          responseBody = body?.body || '';
+        }
+        responsePreview = truncateText(responseBody, CDP_RESPONSE_PREVIEW_LIMIT);
       } catch { }
 
       pushCdpNetworkEntry(tabId, {
@@ -2249,6 +2326,29 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         responsePreview,
         encodedDataLength: params.encodedDataLength || 0,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession?.requestIds.has(params.requestId)) {
+        const encodedBody = new TextEncoder().encode(responseBody);
+        const truncated = encodedBody.byteLength > ADAPTER_RESPONSE_CAPTURE_LIMIT;
+        adapterSession.entries.push({
+          kind: 'cdp',
+          url: pending.url,
+          method: pending.method,
+          timestamp: pending.timestamp,
+          responseStatus: pending.status,
+          responseContentType: pending.responseContentType || pending.mimeType || '',
+          responsePreview: truncated
+            ? new TextDecoder().decode(encodedBody.subarray(0, ADAPTER_RESPONSE_CAPTURE_LIMIT))
+            : responseBody,
+          responseBodyFullSize: encodedBody.byteLength,
+          responseBodyTruncated: truncated,
+        });
+        if (adapterSession.entries.length > ADAPTER_CAPTURE_ENTRY_LIMIT) {
+          adapterSession.entries.splice(0, adapterSession.entries.length - ADAPTER_CAPTURE_ENTRY_LIMIT);
+        }
+        adapterSession.requestIds.delete(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       requests.delete(params.requestId);
       return;
     }
@@ -2268,6 +2368,19 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         errorText: params.errorText || 'loading failed',
         canceled: !!params.canceled,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession?.requestIds.has(params.requestId)) {
+        adapterSession.entries.push({
+          kind: 'cdp',
+          url: pending.url,
+          method: pending.method,
+          timestamp: pending.timestamp,
+          responseStatus: pending.status,
+          errorText: params.errorText || 'loading failed',
+        });
+        adapterSession.requestIds.delete(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       requests.delete(params.requestId);
     }
   } catch (err) {
@@ -2280,6 +2393,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   if (!tabId) return;
   cdpAttachedTabs.delete(tabId);
   cdpExecutionContexts.delete(tabId);
+  adapterNetworkCaptureSessions.delete(tabId);
   const state = cdpNetworkState.get(tabId);
   if (state) state.lastError = reason || 'detached';
 });
@@ -6715,6 +6829,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     actionCaptureSession.errors.push('TARGET_TAB_NOT_FOUND');
     actionCaptureSession.requestStop('target_tab_closed');
   }
+  adapterNetworkCaptureSessions.delete(tabId);
   clearTabInjectedAdapters(tabId);
   const domain = tabDomainMap.get(tabId);
   if (domain) {
@@ -7914,6 +8029,12 @@ async function handleWecliRuntimeRequest(msg, sender) {
     case 'main_world_eval':
       traceLog(traceID, `[ServiceWorkerRuntime] main_world_eval`);
       return runRuntimeMainWorldEval(tab, payload);
+    case 'network_capture_start':
+      traceLog(traceID, `[ServiceWorkerRuntime] network_capture_start pattern=${String(payload.pattern || '')}`);
+      return startAdapterNetworkCapture(tab, payload, allowedHosts);
+    case 'network_capture_read':
+      traceLog(traceID, '[ServiceWorkerRuntime] network_capture_read');
+      return readAdapterNetworkCapture(tab, payload);
     case 'download':
       traceLog(traceID, `[ServiceWorkerRuntime] download ${String(payload.url || payload.filename || '')}`);
       return runRuntimeDownload(tab, payload, allowedHosts);
