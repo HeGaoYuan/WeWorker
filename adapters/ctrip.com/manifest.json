@@ -1,26 +1,156 @@
 {
   "schema_version": 2,
   "name": "ctrip.com",
-  "version": "0.1.0",
-  "description": "Ctrip public destination and hotel suggestions (open m.ctrip.com first)",
-  "match": ["m.ctrip.com"],
+  "version": "0.2.0",
+  "description": "携程：目的地、酒店、交通、景点、邮轮、旅游产品及浏览器登录能力",
+  "match": [
+    "m.ctrip.com",
+    "www.ctrip.com",
+    "hotels.ctrip.com",
+    "trains.ctrip.com",
+    "bus.ctrip.com",
+    "ship.ctrip.com",
+    "cruise.ctrip.com",
+    "vacations.ctrip.com",
+    "you.ctrip.com",
+    "flights.ctrip.com"
+  ],
   "requires_auth": false,
   "commands": [
     {
       "id": "search",
       "runtime": "extension",
       "module": "extension/commands/search.js",
-      "description": "Search destinations, landmarks and stations; up to 50 suggestions, no further pages. Open m.ctrip.com first.",
+      "routeDomain": "m.ctrip.com",
+      "description": "搜索目的地、景区、车站和地标联想；最多返回 50 条，不提供后续分页。",
       "safety": "read",
-      "schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "number", "description": "Integer 1-50, default 15"}}, "required": ["query"]}
+      "schema": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词"}, "limit": {"type": "integer", "description": "结果上限，1-50", "default": 15}}, "required": ["query"], "additionalProperties": false}
     },
     {
       "id": "hotel-suggest",
       "runtime": "extension",
       "module": "extension/commands/hotel-suggest.js",
-      "description": "Search hotel-related city, district and hotel suggestions; up to 50, no further pages. Open m.ctrip.com first.",
+      "routeDomain": "m.ctrip.com",
+      "description": "搜索酒店相关城市、商圈和酒店联想；最多返回 50 条，不提供后续分页。",
       "safety": "read",
-      "schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "number", "description": "Integer 1-50, default 15"}}, "required": ["query"]}
+      "schema": {"type": "object", "properties": {"query": {"type": "string", "description": "城市、商圈或酒店关键词"}, "limit": {"type": "integer", "description": "结果上限，1-50", "default": 15}}, "required": ["query"], "additionalProperties": false}
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "www.ctrip.com",
+      "description": "检查当前携程浏览器会话并返回最小化账号信息；不会返回 Cookie 或登录标识值。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "www.ctrip.com",
+      "description": "打开携程官方登录页；会改变浏览器登录状态，必须显式确认。完成人工登录后使用 whoami 验证。",
+      "safety": "write",
+      "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}
+    },
+    {
+      "id": "hotel-search",
+      "runtime": "extension",
+      "module": "extension/commands/hotel-search.js",
+      "routeDomain": "hotels.ctrip.com",
+      "description": "按城市 ID 和入住日期搜索酒店；读取 SSR 首屏，通常约 13 条，最多返回 30 条。首次调用可能导航，加载后需再次调用。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"city": {"type": "integer"}, "checkin": {"type": "string", "description": "YYYY-MM-DD"}, "checkout": {"type": "string", "description": "YYYY-MM-DD"}, "limit": {"type": "integer", "default": 10}}, "required": ["city", "checkin", "checkout"], "additionalProperties": false}
+    },
+    {
+      "id": "hotel",
+      "runtime": "extension",
+      "module": "extension/commands/hotel.js",
+      "routeDomain": "hotels.ctrip.com",
+      "description": "按酒店 ID 读取酒店详情、评分、设施、入住政策和位置。首次调用可能导航，加载后需再次调用。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"id": {"type": "integer", "description": "携程酒店 ID"}}, "required": ["id"], "additionalProperties": false}
+    },
+    {
+      "id": "train",
+      "runtime": "extension",
+      "module": "extension/commands/train.js",
+      "routeDomain": "trains.ctrip.com",
+      "description": "按出发站、到达站和日期搜索火车票；通过滚动加载最多返回 50 条。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "date": {"type": "string", "description": "YYYY-MM-DD"}, "limit": {"type": "integer", "default": 20}}, "required": ["from", "to", "date"], "additionalProperties": false}
+    },
+    {
+      "id": "bus",
+      "runtime": "extension",
+      "module": "extension/commands/bus.js",
+      "routeDomain": "bus.ctrip.com",
+      "description": "按出发城市、到达城市和日期搜索汽车票；通过滚动加载最多返回 50 条。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "date": {"type": "string", "description": "YYYY-MM-DD"}, "limit": {"type": "integer", "default": 20}}, "required": ["from", "to", "date"], "additionalProperties": false}
+    },
+    {
+      "id": "ferry",
+      "runtime": "extension",
+      "module": "extension/commands/ferry.js",
+      "routeDomain": "ship.ctrip.com",
+      "description": "按出发城市、到达城市和日期搜索船票；通过滚动加载最多返回 50 条。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "date": {"type": "string", "description": "YYYY-MM-DD"}, "limit": {"type": "integer", "default": 20}}, "required": ["from", "to", "date"], "additionalProperties": false}
+    },
+    {
+      "id": "flight",
+      "runtime": "extension",
+      "module": "extension/commands/flight.js",
+      "routeDomain": "flights.ctrip.com",
+      "description": "按 IATA 三字码和日期搜索单程航班；结果来自页面自然产生的结构化航班响应。首次调用启动捕获并导航，加载后需再次调用。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "date": {"type": "string", "description": "YYYY-MM-DD"}, "limit": {"type": "integer", "default": 20}}, "required": ["from", "to", "date"], "additionalProperties": false}
+    },
+    {
+      "id": "flight-round",
+      "runtime": "extension",
+      "module": "extension/commands/flight-round.js",
+      "routeDomain": "flights.ctrip.com",
+      "description": "按 IATA 三字码和往返日期搜索往返航班；返回去程腿及往返总价。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "depart": {"type": "string", "description": "YYYY-MM-DD"}, "return": {"type": "string", "description": "YYYY-MM-DD"}, "limit": {"type": "integer", "default": 20}}, "required": ["from", "to", "depart", "return"], "additionalProperties": false}
+    },
+    {
+      "id": "attraction",
+      "runtime": "extension",
+      "module": "extension/commands/attraction.js",
+      "routeDomain": "you.ctrip.com",
+      "description": "按携程城市 ID 列出热门景点、评分和点评数；最多返回 50 条。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"city": {"type": "integer"}, "limit": {"type": "integer", "default": 20}}, "required": ["city"], "additionalProperties": false}
+    },
+    {
+      "id": "cruise",
+      "runtime": "extension",
+      "module": "extension/commands/cruise.js",
+      "routeDomain": "cruise.ctrip.com",
+      "description": "按出发港名称搜索邮轮线路；解析港口代码可能需要两次页面导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"port": {"type": "string"}, "limit": {"type": "integer", "default": 20}}, "required": ["port"], "additionalProperties": false}
+    },
+    {
+      "id": "tour",
+      "runtime": "extension",
+      "module": "extension/commands/tour.js",
+      "routeDomain": "vacations.ctrip.com",
+      "description": "按目的地搜索旅游线路；最多返回 50 条当前列表结果。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"destination": {"type": "string"}, "limit": {"type": "integer", "default": 20}}, "required": ["destination"], "additionalProperties": false}
+    },
+    {
+      "id": "package",
+      "runtime": "extension",
+      "module": "extension/commands/package.js",
+      "routeDomain": "vacations.ctrip.com",
+      "description": "按目的地搜索机票加酒店自由行套餐；最多返回 50 条当前列表结果。首次调用可能导航。",
+      "safety": "read",
+      "schema": {"type": "object", "properties": {"destination": {"type": "string"}, "limit": {"type": "integer", "default": 20}}, "required": ["destination"], "additionalProperties": false}
     }
   ]
 }
