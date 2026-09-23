@@ -3,6 +3,8 @@ import * as api from '../../api/website-exploration-api.js'
 import { useWebsiteExplorationStore as useStore, changeWebsiteContext } from '../../store/website-exploration.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
 import ExploreWorkspace from './ExploreWorkspace.jsx'
+import { useSettingsStore } from '../../store/settings.js'
+import { connectionMessage } from '../../utils/model-connection.js'
 import DevelopWorkspace, { TestRunner } from './DevelopWorkspace.jsx'
 import { ActionMenu, Icon, ErrorMessage, Modal, RequiredMark, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
 import './website-exploration.css'
@@ -15,6 +17,26 @@ export default function WebsiteExplorationPage({ onOpenSettings }) {
   const [treeVisible, setTreeVisible] = useState(true)
   const [modal, setModal] = useState(null)
   const [expanded, setExpanded] = useState({})
+  const [modelReady, setModelReady] = useState(false)
+  const [modelConnection, setModelConnection] = useState(null)
+  const [modelRetry, setModelRetry] = useState(0)
+  const providers = useSettingsStore(s => s.providers)
+  const activeProvider = useSettingsStore(s => s.activeProvider)
+  const model = useSettingsStore(s => s.model)
+  const modelRevision = useSettingsStore(s => s.explorationModelRevision)
+  useEffect(() => {
+    let current = true
+    setModelReady(false)
+    setModelConnection(null)
+    api.checkExplorationModel(modelRetry > 0).then(result => {
+      if (!current) return
+      setModelReady(Boolean(result.ok))
+      setModelConnection(result)
+    }).catch(error => {
+      if (current) setModelConnection({ ok: false, detail: error.message })
+    })
+    return () => { current = false }
+  }, [providers, activeProvider, model, modelRevision, modelRetry])
   const catalog = useSnapshot(async () => {
     const kits = await api.listToolkits()
     return Promise.all(kits.map(async kit => ({ ...kit, tools: await api.listTools(kit.toolkit_id) })))
@@ -53,6 +75,12 @@ export default function WebsiteExplorationPage({ onOpenSettings }) {
       </div>
     </header>
     <ErrorMessage>{status.error || catalog.error || action.error}</ErrorMessage>
+    {!modelConnection && <p role="status">正在检查模型连接…</p>}
+    {modelConnection && !modelConnection.ok && <div className="wx-actions" role="status">
+      <p>{connectionMessage(modelConnection)}</p>
+      <button onClick={() => setModelRetry(value => value + 1)}>重试</button>
+      <button onClick={onOpenSettings}>模型设置</button>
+    </div>}
     {unavailable && <div className="wx-actions"><p>正在等待客户端托管的网站探索服务。连接恢复后会自动同步。</p><button onClick={() => action.run(async () => {})}>重新检查</button></div>}
     <div className="wx-layout">
       {treeVisible && <aside className="wx-tree" aria-label="Adapter 目录">
@@ -83,7 +111,7 @@ export default function WebsiteExplorationPage({ onOpenSettings }) {
       <main className="wx-main">
         {kit ? <><header className="wx-context"><div><div className="wx-breadcrumb"><span>{kit.name}</span>{tool && <><span aria-hidden="true">/</span><strong>{tool.name}</strong></>}</div><p>{kit.description}</p></div></header>
           <nav className="wx-tabs" aria-label="网站探索工作区">{[['explore', '探索'], ['develop', '开发'], ['verify', 'Adapter 验证']].map(([id, label]) => <button key={id} aria-current={workspace === id ? 'page' : undefined} className={workspace === id ? 'is-active' : ''} onClick={() => changeWebsiteContext({ workspace: id })}>{label}</button>)}</nav>
-          <div className="wx-workspace">{workspace === 'verify' ? <VerifyWorkspace key={kit.toolkit_id} kit={kit} tool={tool} disabled={unavailable} globalBusy={globalBusy} /> : tool ? workspace === 'develop' ? <DevelopWorkspace key={toolkitId + '/' + toolId} toolkitId={toolkitId} tool={tool} disabled={unavailable} globalBusy={globalBusy} /> : <ExploreWorkspace key={toolkitId + '/' + toolId} toolkitId={toolkitId} tool={tool} disabled={unavailable} globalBusy={globalBusy} /> : <div className="wx-empty">创建一个 Tool，说明目标、起始网址和预期效果。</div>}</div>
+          <div className="wx-workspace">{workspace === 'verify' ? <VerifyWorkspace key={kit.toolkit_id} kit={kit} tool={tool} disabled={unavailable} globalBusy={globalBusy} /> : tool ? workspace === 'develop' ? <DevelopWorkspace key={toolkitId + '/' + toolId} toolkitId={toolkitId} tool={tool} disabled={unavailable} modelReady={modelReady} globalBusy={globalBusy} /> : <ExploreWorkspace key={toolkitId + '/' + toolId} toolkitId={toolkitId} tool={tool} disabled={unavailable} modelReady={modelReady} globalBusy={globalBusy} /> : <div className="wx-empty">创建一个 Tool，说明目标、起始网址和预期效果。</div>}</div>
         </> : <div className="wx-empty">{catalog.loading ? '正在加载 Adapter…' : '创建或选择 Adapter，开始探索网站能力。'}</div>}
       </main>
     </div>

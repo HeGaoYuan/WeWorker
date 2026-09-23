@@ -3,7 +3,7 @@ import * as api from '../../api/website-exploration-api.js'
 import { useWebsiteExplorationStore as useStore, changeWebsiteContext } from '../../store/website-exploration.js'
 import { ErrorMessage, JsonView, Modal, RequiredMark, ResourceImage, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
 
-export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy }) {
+export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy, modelReady = true }) {
   const scope = toolkitId + '/' + tool.tool_id
   const snapshot = useSnapshot(() => api.getSlots(toolkitId, tool.tool_id), [scope], '/api/toolkits/' + scope.replace('/', '/tools/') + '/development/events')
   const action = useAction(snapshot.refresh)
@@ -58,7 +58,7 @@ export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy
             <h3>首次开发</h3><p>来源探索：{source || data.latest_run?.source_exploration_id || '尚未选择'}</p>
             {!developing && (source ? <p className="wx-muted">{rebuilding ? '本轮会完全基于所选探索重新实现此 Tool。点击「开始开发」后才清空当前开发中修改。' : 'Developer Agent 将基于所选探索和下面的指令生成首个实现。'}</p> : <p>请先到探索工作区选择一次成功探索作为开发输入。<button className="wx-quiet" onClick={() => changeWebsiteContext({ workspace: 'explore' })}>前往探索</button></p>)}
             {failure}
-            <DevelopmentPrompt label="首次开发指令" value={initialInstruction} onChange={setInitialInstruction} placeholder="描述首个实现需要重点关注的内容" hint="必填。该指令会与所选探索一起提供给 Developer Agent。" submitLabel="开始开发" developing={developing} disabled={blocked || !source || !initialInstruction.trim()} stopDisabled={disabled || action.busy} onStop={stopDevelopment} onSubmit={() => perform(async () => {
+            <DevelopmentPrompt label="首次开发指令" value={initialInstruction} onChange={setInitialInstruction} placeholder="描述首个实现需要重点关注的内容" hint="必填。该指令会与所选探索一起提供给 Developer Agent。" submitLabel="开始开发" developing={developing} disabled={blocked || !modelReady || !source || !initialInstruction.trim()} stopDisabled={disabled || action.busy} onStop={stopDevelopment} onSubmit={() => perform(async () => {
               if (rebuilding) await api.restartDevelopmentFromExploration(toolkitId, tool.tool_id, source, initialInstruction)
               else await api.startDevelopment(toolkitId, tool.tool_id, { instruction: initialInstruction, sourceExplorationId: source })
               setSource(''); setRebuilding(false); setEvidence(null); setInitialInstruction('')
@@ -73,7 +73,7 @@ export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy
               <label>上下文参考<select aria-label="上下文参考" value={evidence?.debug_run_id || ''} disabled={blocked} onChange={e => setEvidence(runs.data?.find(run => run.debug_run_id === e.target.value) || null)}><option value="">关联试运行记录（可选）</option>{runs.data?.map(run => <option key={run.debug_run_id} value={run.debug_run_id}>{run.created_at} · {run.status} · {run.debug_run_id}</option>)}</select></label>
               <ErrorMessage>{runs.error}</ErrorMessage>
               {evidence && <p className="wx-muted">{evidence.code_hash === dev.code_hash ? '当前代码的参考记录' : '旧代码的参考记录'}<button className="wx-quiet" disabled={blocked} onClick={() => setEvidence(null)}>清除引用</button></p>}
-              <DevelopmentPrompt label="继续开发" value={instruction} onChange={setInstruction} placeholder="描述本次要修改或补充的内容，例如：增加分页参数、修复搜索框定位不稳定的问题" submitLabel="提交" developing={developing} disabled={blocked || !instruction.trim()} stopDisabled={disabled || action.busy} onStop={stopDevelopment} onSubmit={() => perform(async () => { await api.continueDevelopment(toolkitId, tool.tool_id, instruction, evidence?.debug_run_id || ''); if (useStore.getState().drafts[scope + '/instruction'] === instruction) setInstruction('') }, '已提交开发指令')} />
+              <DevelopmentPrompt label="继续开发" value={instruction} onChange={setInstruction} placeholder="描述本次要修改或补充的内容，例如：增加分页参数、修复搜索框定位不稳定的问题" submitLabel="提交" developing={developing} disabled={blocked || !modelReady || !instruction.trim()} stopDisabled={disabled || action.busy} onStop={stopDevelopment} onSubmit={() => perform(async () => { await api.continueDevelopment(toolkitId, tool.tool_id, instruction, evidence?.debug_run_id || ''); if (useStore.getState().drafts[scope + '/instruction'] === instruction) setInstruction('') }, '已提交开发指令')} />
             </section>
           </> : <section className="wx-dev-card">{failure}<p className="wx-empty">尚未开始开发。可以基于已应用版本继续开发，或选择一次成功探索重新开发。</p></section>}
         </div>

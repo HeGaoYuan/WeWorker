@@ -53,7 +53,8 @@ import {
   buildRuntimeAllowedLlmBaseUrls,
   getProvider,
 } from './provider-registry.js'
-import { listProviderModels, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { registerExplorationModelRoutes } from './exploration-model-settings.js'
 import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
 import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
@@ -633,6 +634,7 @@ type ProviderRequestBody = {
   openai_base_url?: string
   auth_type?: unknown
   target?: ProbeTarget
+  auto_auth?: boolean
 }
 
 function resolveProviderAccess(body: ProviderRequestBody) {
@@ -696,11 +698,15 @@ app.post('/settings/provider/probe', async (req, res) => {
       return
     }
     const input = resolveProviderRequest(body)
-    res.json(await probeProviderProtocol({ ...input, target: body.target }))
+    res.json(body.target === 'weworker'
+      ? await probeMainConnection({ ...input, autoAuth: body.auto_auth === true })
+      : await probeProviderProtocol({ ...input, target: body.target, verifyResponse: true }))
   } catch (error) {
     res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
   }
 })
+
+registerExplorationModelRoutes(app, { getSettings, updateSettings })
 
 app.get('/settings/channels', (_req, res) => {
   const s = getSettings()

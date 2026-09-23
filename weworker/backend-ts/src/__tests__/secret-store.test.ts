@@ -4,6 +4,7 @@ import {
   collectPlaintextSecretsFromRaw,
   extractSecrets,
   rawFileHasPlaintextSecrets,
+  clearSecretsOnDisk,
 } from '../settings-secrets.js'
 import type { Settings } from '../config.js'
 
@@ -27,6 +28,10 @@ const baseSettings = (): Settings => ({
   context_limit_custom: 1_000_000,
   base_url_custom: '',
   openai_base_url_custom: '',
+  exploration_base_url: '',
+  exploration_api_key: 'fixture-exploration-key',
+  exploration_model: '',
+  exploration_use_main_key: true,
   custom_auth_type: 'auth_token',
   channels: {
     qq: { enabled: true, app_id: 'qq-id', app_secret: 'qq-secret', owner_user_id: 'owner-1', owner_permission_level: 'full' },
@@ -62,6 +67,9 @@ describe('settings-secrets', () => {
     const cleared = applySecrets(settings, {})
     expect(cleared.api_key_anthropic).toBe('')
     expect(cleared.channels.qq.app_secret).toBe('')
+    expect(secrets.exploration_api_key).toBe('fixture-exploration-key')
+    expect(clearSecretsOnDisk(settings).exploration_api_key).toBe('')
+    expect(applySecrets(cleared, secrets).exploration_api_key).toBe('fixture-exploration-key')
   })
 
   it('detects legacy plaintext secrets in raw settings', () => {

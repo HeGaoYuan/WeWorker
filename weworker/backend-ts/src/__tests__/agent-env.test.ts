@@ -1,7 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildConfiguredModelEnv } from '../agent.js'
+
+vi.mock('../config.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../config.js')>()
+  const os = await import('node:os')
+  const fixtureRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-model-env-')), '.weworker')
+  return { ...actual, getConfigDirectory: () => fixtureRoot }
+})
 
 const managedKeys = [
   'ANTHROPIC_API_KEY',
@@ -78,5 +85,11 @@ describe('buildConfiguredModelEnv', () => {
 
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('custom-token')
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+
+  it('uses the detected API Key authentication for custom providers', () => {
+    const env = buildConfiguredModelEnv({ active_provider: 'custom', api_key: 'fixture-custom-key', base_url: 'https://example.com/proxy', custom_auth_type: 'api_key' })
+    expect(env.ANTHROPIC_API_KEY).toBe('fixture-custom-key')
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
   })
 })

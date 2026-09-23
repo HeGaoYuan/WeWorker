@@ -114,6 +114,7 @@ export const useSettingsStore = create((set, get) => ({
     custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token' },
   },
   loaded: false,
+  explorationModelRevision: 0,
   channels: { qq: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' }, weixin: { enabled: false, has_token: false, base_url: '', owner_user_id: '' }, wecom: { enabled: false, bot_id: '', has_secret: false, owner_user_id: '' } },
 
   load: async () => {

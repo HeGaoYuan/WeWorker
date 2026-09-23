@@ -3,7 +3,7 @@ import * as api from '../../api/website-exploration-api.js'
 import { changeWebsiteContext, useWebsiteExplorationStore as useStore } from '../../store/website-exploration.js'
 import { ActionMenu, Icon, ErrorMessage, JsonView, Modal, RequiredMark, ResourceImage, ScrollArea, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
 
-export default function ExploreWorkspace({ toolkitId, tool, disabled, globalBusy }) {
+export default function ExploreWorkspace({ toolkitId, tool, disabled, globalBusy, modelReady = true }) {
   const key = toolkitId + '/' + tool.tool_id
   const selected = useStore(s => s.selections[key + '/exploration'])
   const [creating, setCreating] = useState(false)
@@ -11,7 +11,7 @@ export default function ExploreWorkspace({ toolkitId, tool, disabled, globalBusy
   const list = useSnapshot(() => api.listExplorations(toolkitId, tool.tool_id), [key])
   const currentId = selected && list.data?.some(item => item.exploration_id === selected) ? selected : list.data?.[0]?.exploration_id
   return <div className="wx-explore">
-    <aside className="wx-history"><header><h2>探索记录</h2><button className="wx-icon-button" title="新建探索" aria-label="新建探索" disabled={disabled || globalBusy} onClick={() => setCreating(true)}><Icon name="plus" /></button></header>
+    <aside className="wx-history"><header><h2>探索记录</h2><button className="wx-icon-button" title="新建探索" aria-label="新建探索" disabled={disabled || globalBusy || !modelReady} onClick={() => setCreating(true)}><Icon name="plus" /></button></header>
       <input aria-label="搜索探索记录" placeholder="搜索记录或状态" value={filter} onChange={e => setFilter(e.target.value)} />
       <ErrorMessage>{list.error}</ErrorMessage>
       {list.loading && <p>正在加载…</p>}
@@ -20,8 +20,8 @@ export default function ExploreWorkspace({ toolkitId, tool, disabled, globalBusy
       </button>)}
       {!list.loading && !list.data?.length && <p className="wx-empty">先打开目标网站并登录，再开始第一次探索。</p>}
     </aside>
-    {currentId ? <ExplorationDetail key={currentId} id={currentId} scope={key} disabled={disabled} globalBusy={globalBusy} tool={tool} /> : <div className="wx-empty"><p>选择或新建探索，执行过程与结果将在这里显示。</p><button className="wx-primary" disabled={disabled || globalBusy} onClick={() => setCreating(true)}>开始第一次探索</button></div>}
-    {creating && <NewExploration toolkitId={toolkitId} tool={tool} disabled={disabled || globalBusy} onClose={() => setCreating(false)} onCreated={id => { useStore.getState().selectRecord(key + '/exploration', id); setCreating(false); void list.refresh() }} />}
+    {currentId ? <ExplorationDetail key={currentId} id={currentId} scope={key} disabled={disabled} globalBusy={globalBusy} tool={tool} /> : <div className="wx-empty"><p>选择或新建探索，执行过程与结果将在这里显示。</p><button className="wx-primary" disabled={disabled || globalBusy || !modelReady} onClick={() => setCreating(true)}>开始第一次探索</button></div>}
+    {creating && <NewExploration toolkitId={toolkitId} tool={tool} disabled={disabled || globalBusy || !modelReady} onClose={() => setCreating(false)} onCreated={id => { useStore.getState().selectRecord(key + '/exploration', id); setCreating(false); void list.refresh() }} />}
   </div>
 }
 

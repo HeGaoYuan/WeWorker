@@ -6,6 +6,7 @@ export const SECRET_FIELD_PATHS = [
   ['api_key_glm'],
   ['api_key_deepseek'],
   ['api_key_custom'],
+  ['exploration_api_key'],
   ['channels', 'qq', 'app_secret'],
   ['channels', 'weixin', 'token'],
   ['channels', 'wecom', 'secret'],

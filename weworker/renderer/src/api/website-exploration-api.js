@@ -2,6 +2,18 @@ import { backendFetch } from './http.js'
 import { consumeSSE } from './website-exploration-events.js'
 
 export const PREFIX = '/api/website-exploration'
+async function modelRequest(path = '', body) {
+  const response = await backendFetch(`/settings/exploration-model${path}`, {
+    ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  })
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.detail || '网站探索模型连接失败')
+  return data
+}
+export const getExplorationModel = () => modelRequest()
+export const checkExplorationModel = (force = false) => modelRequest('/check', { force })
+export const saveExplorationModel = body => modelRequest('', body)
+
 export function resourcePath(path) {
   if (typeof path !== 'string' || path.includes('..') || path.includes('\\')) throw new Error('无效的网站探索资源')
   if (path.startsWith(PREFIX + '/')) return path
