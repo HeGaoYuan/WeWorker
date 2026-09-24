@@ -2,6 +2,7 @@ import { buildV2Bootstrap, v2InjectionFiles } from './v2-loader.js';
 
 export const MANAGED_RUNNER_PATH = 'offscreen/managed-runner.html';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const isMissingOffscreenDocument = (error) => /No current offscreen document/i.test(error?.message || '');
 
 // Executed by CDP in a fresh, extension-owned offscreen document. Package code is
 // installed executable code; this is lifecycle isolation, not a JavaScript sandbox.
@@ -99,7 +100,10 @@ export function createManagedBackgroundRuntime({ bundle, request, exclusive, api
       const known = [api.runtime.getURL('offscreen/direct-runner.html'), api.runtime.getURL(MANAGED_RUNNER_PATH)];
       const contexts = await api.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
       if (contexts.some((entry) => !known.includes(entry.documentUrl?.split('?')[0]))) throw new Error('An unrelated offscreen document is active.');
-      if (contexts.length) await api.offscreen.closeDocument();
+      if (contexts.length) {
+        try { await api.offscreen.closeDocument(); }
+        catch (error) { if (!isMissingOffscreenDocument(error)) throw error; }
+      }
       let ownedDocument = false, attached = false, target;
       const evaluate = async (expression) => {
         if (!call.accepting) throw new Error('Adapter execution has ended.');
@@ -138,7 +142,15 @@ export function createManagedBackgroundRuntime({ bundle, request, exclusive, api
         call.accepting = false;
         if (active === call) active = null;
         if (attached) await api.debugger.detach(target).catch(() => {});
-        try { if (ownedDocument) await api.offscreen.closeDocument(); }
+        try {
+          if (ownedDocument) {
+            try { await api.offscreen.closeDocument(); }
+            catch (error) {
+              // A refresh or Chrome lifecycle cleanup may have closed it first.
+              if (!isMissingOffscreenDocument(error)) throw error;
+            }
+          }
+        }
         finally {
           // A late helper must finish under its original context before releasing
           // the shared queue. Closing the document prevents new helper requests.

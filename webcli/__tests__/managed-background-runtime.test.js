@@ -97,6 +97,21 @@ describe('managed background execution lifecycle', () => {
     await legacy.run();
     expect(legacy.events).toEqual(['close','create','attach','detach','close']);
   });
+  it('preserves a completed call when Chrome has already closed its offscreen document', async () => {
+    const f = fixture();
+    f.api.offscreen.closeDocument.mockRejectedValueOnce(new Error('No current offscreen document'));
+    expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
+    expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
+    expect(f.api.offscreen.createDocument).toHaveBeenCalledTimes(2);
+  });
+  it('tolerates a stale document context but preserves other close failures', async () => {
+    const stale = fixture({ documents: [{ documentUrl: 'chrome-extension://test-extension/offscreen/direct-runner.html' }] });
+    stale.api.offscreen.closeDocument.mockRejectedValueOnce(new Error('No current offscreen document'));
+    expect(await stale.run()).toEqual({ __confirmed: true, count: '007' });
+    const unexpected = fixture();
+    unexpected.api.offscreen.closeDocument.mockRejectedValueOnce(new Error('Offscreen cleanup failed'));
+    await expect(unexpected.run()).rejects.toThrow('Offscreen cleanup failed');
+  });
   it('cleans up timeout and source failures and leaves the next call usable', async () => {
     const f = fixture({ source: '__webcliRegisterCommand("run", () => new Promise(() => {}));', timeoutMs: 20 });
     await expect(f.run()).rejects.toThrow(/timed out/);
