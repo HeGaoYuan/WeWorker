@@ -7688,12 +7688,14 @@ async function refreshAdapterTabs(adapterId) {
   const matchedTabs = [];
   const adapterManifest = await loadAdapterManifestAnywhere(adapterId);
 
-  directAdapterLoadPromises.clear();
-  try {
-    await chrome.offscreen?.closeDocument?.();
-  } catch {
-    // No offscreen document exists yet.
-  }
+  await runDirectToolExclusive(async () => {
+    directAdapterLoadPromises.clear();
+    try {
+      await chrome.offscreen?.closeDocument?.();
+    } catch {
+      // No offscreen document exists yet.
+    }
+  });
 
   for (const tab of tabs) {
     if (!Number.isInteger(tab?.id) || !shouldHandleTabUrl(tab?.url)) continue;

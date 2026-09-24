@@ -209,6 +209,29 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {},
   return { registerTools, callNativeTool, listNativeTools, sentToTabs, flushStaticRoutes, context };
 }
 
+test("adapter refresh waits for the active background call before closing offscreen", async () => {
+  const worker = loadServiceWorker();
+  const events = [];
+  worker.context.loadAdapterManifestAnywhere = async () => null;
+  worker.context.chrome.offscreen = { closeDocument: async () => events.push('close') };
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const call = worker.context.runDirectToolExclusive(async () => {
+    events.push('started');
+    await pending;
+    events.push('result');
+    return 'completed';
+  });
+  await new Promise(setImmediate);
+  const refresh = worker.context.refreshAdapterTabs('fixture');
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ['started']);
+  release();
+  assert.equal(await call, 'completed');
+  await refresh;
+  assert.deepEqual(events, ['started', 'result', 'close']);
+});
+
 test("managed background calls select the offscreen runner without opening a site tab", async () => {
   const manifest = { name: 'fixture', match: ['example.com'], runtime_allowed_hosts: ['api.example.org'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },

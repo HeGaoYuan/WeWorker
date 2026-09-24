@@ -559,7 +559,12 @@ export class WebSocketBridge extends EventEmitter {
 
         // New long-lived consumers may have missed revisions while disconnected.
         // Send one idempotent sync snapshot after the client completes its hello.
-        const stateSyncTimer = setTimeout(() => this._sendAdapterStateSnapshot(ws), 500);
+        let stateSyncSent = false;
+        const sendInitialState = () => {
+          if (stateSyncSent) return;
+          stateSyncSent = this._sendAdapterStateSnapshot(ws);
+        };
+        const stateSyncTimer = setTimeout(sendInitialState, 500);
         stateSyncTimer.unref?.();
         ws.on('close', () => clearTimeout(stateSyncTimer));
 
@@ -585,7 +590,7 @@ export class WebSocketBridge extends EventEmitter {
               } catch (e) {
                 process.stderr.write(`[${ts()}] [Bridge] Failed to ack extension hello: ${e.message}\n`);
               }
-              this._sendAdapterStateSnapshot(ws);
+              sendInitialState();
               // 如果这是扩展首次被识别（之前未连接），通知所有其他客户端
               if (!wasConnected) {
                 this._broadcast({
