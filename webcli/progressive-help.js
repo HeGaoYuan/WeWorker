@@ -35,6 +35,7 @@ export function toAdapterHelpModel(adapter, source = "v1-extension") {
         aliases: [...(c.aliases || []).map((alias) => adapter.name + '.' + alias), ...(c.legacyNames || [])],
         description: c.description || "",
         safety: c.safety || "read",
+        requires_confirmation: c.requires_confirmation ?? c.safety === "write",
         runtime: c.runtime,
         execution: c.execution,
         params: schemaToParams(c.schema),
@@ -142,6 +143,7 @@ export function renderCommandHelp(adapterModel, command) {
   if (command.execution?.runtime === 'background') lines.push('Execution: background API');
   if (command.description) lines.push("", command.description);
   if (command.safety && command.safety !== "read") lines.push("", `Safety: ${command.safety}`);
+  if (command.requires_confirmation !== undefined) lines.push(`Confirmation: ${command.requires_confirmation ? "required" : "not required"}`);
   const required = sortParams(command.params).filter((p) => p.required);
   const optional = sortParams(command.params).filter((p) => !p.required);
   lines.push("", `Arguments (required):`);

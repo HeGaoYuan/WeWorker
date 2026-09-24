@@ -559,7 +559,12 @@ export class WebSocketBridge extends EventEmitter {
 
         // New long-lived consumers may have missed revisions while disconnected.
         // Send one idempotent sync snapshot after the client completes its hello.
-        const stateSyncTimer = setTimeout(() => this._sendAdapterStateSnapshot(ws), 500);
+        let stateSyncSent = false;
+        const sendInitialState = () => {
+          if (stateSyncSent) return;
+          stateSyncSent = this._sendAdapterStateSnapshot(ws);
+        };
+        const stateSyncTimer = setTimeout(sendInitialState, 500);
         stateSyncTimer.unref?.();
         ws.on('close', () => clearTimeout(stateSyncTimer));
 
@@ -585,7 +590,7 @@ export class WebSocketBridge extends EventEmitter {
               } catch (e) {
                 process.stderr.write(`[${ts()}] [Bridge] Failed to ack extension hello: ${e.message}\n`);
               }
-              this._sendAdapterStateSnapshot(ws);
+              sendInitialState();
               // 如果这是扩展首次被识别（之前未连接），通知所有其他客户端
               if (!wasConnected) {
                 this._broadcast({
@@ -1456,7 +1461,7 @@ export class WebSocketBridge extends EventEmitter {
       || adapterSnapshot.digest !== selected.snapshot.digest || adapterSnapshot.profile !== selected.snapshot.profile)) {
       throw new Error('Adapter changed since this call started; refresh the catalog.');
     }
-    if (selected?.command.safety === 'write' && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this write command.');
+    if ((selected?.command.requires_confirmation ?? selected?.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
     if (selected?.command.runtime === 'wewright') {
       const { runToolkitTool } = await import('./toolkit-runner.js');
       const completed = await runToolkitTool({
@@ -1530,7 +1535,10 @@ export class WebSocketBridge extends EventEmitter {
    * 优先使用Chrome扩展API（如果已连接），否则使用系统命令
    */
   async openBrowser(url) {
-    const allowedOrigins = buildAllowedOpenBrowserOrigins(loadAdapterManifests());
+    let managed = [];
+    try { managed = describeAdapterCatalog().adapters; }
+    catch { /* The legacy allowlist remains available if the managed catalog cannot be read. */ }
+    const allowedOrigins = buildAllowedOpenBrowserOrigins([...loadAdapterManifests(), ...managed]);
     const allowedUrl = assertAllowedOpenBrowserUrl(url, allowedOrigins);
     url = allowedUrl;
 

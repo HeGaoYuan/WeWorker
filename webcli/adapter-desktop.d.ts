@@ -14,7 +14,7 @@ export interface DesktopAdapter {
   route_templates?: unknown[]
   prompt_var_display?: Record<string, { label?: string; style?: 'code' | 'placeholder'; resolve?: string }>
   i18n?: { zh?: { name?: string; description?: string } }
-  commands: Array<{ name: string; id: string; aliases?: string[]; runtime: string; execution?: { type: 'api'; runtime: 'background' }; safety: string; description: string; schema: Record<string, unknown> }>
+  commands: Array<{ name: string; id: string; aliases?: string[]; runtime: string; execution?: { type: 'api'; runtime: 'background' }; safety: string; requires_confirmation?: boolean; description: string; schema: Record<string, unknown> }>
   managed: { enabled: boolean; profile: string; source: string | null; digest: string | null; version: string | null; canEnable: boolean; diagnostics: string[] }
 }
 export function describeDesktopAdapters(options?: object): { adapters: DesktopAdapter[]; managedNames: Set<string>; revision: number }

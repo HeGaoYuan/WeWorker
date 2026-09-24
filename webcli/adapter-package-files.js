@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { validateV2Manifest } from './adapter-package-validation.js';
+import { validateAgentGuidance, validateV2Manifest } from './adapter-package-validation.js';
 
 export function adapterError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -70,11 +70,16 @@ export function validatePackageFiles(input) {
   try { manifest = JSON.parse(files.get('manifest.json')?.toString('utf8')); }
   catch { throw adapterError('INVALID_PACKAGE', 'Adapter manifest is missing or invalid.'); }
   const validated = validateV2Manifest(manifest, manifest?.name);
+  const guidanceBytes = files.get('guidance.md');
+  if (guidanceBytes) {
+    try { validateAgentGuidance(guidanceBytes); }
+    catch (error) { throw adapterError('INVALID_PACKAGE', error.message); }
+  }
   const runtimes = new Set(validated.commands.map((command) => command.runtime));
   const commands = new Set(validated.commands.map((command) => command.module));
   for (const command of commands) if (!files.has(command)) throw adapterError('INVALID_PACKAGE', 'Adapter command module is missing.');
   for (const name of files.keys()) {
-    if (name === 'manifest.json') continue;
+    if (name === 'manifest.json' || name === 'guidance.md') continue;
     const [runtime, folder, ...rest] = name.split('/');
     if (!runtimes.has(runtime) || !['commands', 'internal'].includes(folder) || !rest.length
       || (folder === 'commands' && !commands.has(name))

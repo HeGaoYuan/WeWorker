@@ -2662,7 +2662,7 @@ async function handleNativeMessage(msg) {
       }
       if (selected.managed) {
         if (selected.command.runtime !== 'extension') throw new Error('This command requires the host Toolkit runtime.');
-        if (selected.command.safety === 'write' && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this write command.');
+        if ((selected.command.requires_confirmation ?? selected.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
         if (selected.command.execution?.runtime === 'background') {
           const result = await callManagedBackgroundTool(selected.manifest, selected.command, args || {}, traceID);
           sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
@@ -7803,12 +7803,14 @@ async function refreshAdapterTabs(adapterId) {
   const matchedTabs = [];
   const adapterManifest = await loadAdapterManifestAnywhere(adapterId);
 
-  directAdapterLoadPromises.clear();
-  try {
-    await chrome.offscreen?.closeDocument?.();
-  } catch {
-    // No offscreen document exists yet.
-  }
+  await runDirectToolExclusive(async () => {
+    directAdapterLoadPromises.clear();
+    try {
+      await chrome.offscreen?.closeDocument?.();
+    } catch {
+      // No offscreen document exists yet.
+    }
+  });
 
   for (const tab of tabs) {
     if (!Number.isInteger(tab?.id) || !shouldHandleTabUrl(tab?.url)) continue;

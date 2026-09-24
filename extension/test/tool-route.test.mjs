@@ -209,6 +209,29 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {},
   return { registerTools, callNativeTool, listNativeTools, sentToTabs, flushStaticRoutes, context };
 }
 
+test("adapter refresh waits for the active background call before closing offscreen", async () => {
+  const worker = loadServiceWorker();
+  const events = [];
+  worker.context.loadAdapterManifestAnywhere = async () => null;
+  worker.context.chrome.offscreen = { closeDocument: async () => events.push('close') };
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const call = worker.context.runDirectToolExclusive(async () => {
+    events.push('started');
+    await pending;
+    events.push('result');
+    return 'completed';
+  });
+  await new Promise(setImmediate);
+  const refresh = worker.context.refreshAdapterTabs('fixture');
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ['started']);
+  release();
+  assert.equal(await call, 'completed');
+  await refresh;
+  assert.deepEqual(events, ['started', 'result', 'close']);
+});
+
 test("managed background calls select the offscreen runner without opening a site tab", async () => {
   const manifest = { name: 'fixture', match: ['example.com'], runtime_allowed_hosts: ['api.example.org'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
@@ -222,6 +245,21 @@ test("managed background calls select the offscreen runner without opening a sit
   assert.equal(calls[0][1].id, 'read-item');
   assert.deepEqual(calls[0][2], {count:'007'});
   assert.deepEqual(calls[0][3].declaredHosts, ['example.com','api.example.org']);
+});
+
+test("managed write opt-out comes from the pinned package, not caller arguments", async () => {
+  for (const requires_confirmation of [undefined, true, false]) {
+    const manifest = { name: 'fixture', match: ['example.com'],
+      _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+      commands: [{ id: 'reserve', aliases: ['reserve_room'], runtime: 'extension', safety: 'write',
+        requires_confirmation, execution: { type: 'api', runtime: 'background' } }] };
+    const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+    const calls = [];
+    worker.context.getManagedBackgroundRuntime = () => ({ execute: async (...args) => { calls.push(args); return 'reserved'; } });
+    const result = await worker.callNativeTool('fixture.reserve_room', { requires_confirmation: false });
+    if (requires_confirmation === false) assert.equal(result.result, 'reserved');
+    else { assert.match(result.error, /confirmation/); assert.equal(calls.length, 0); }
+  }
 });
 
 test("managed helper targets must remain in the current package's declared hosts", () => {

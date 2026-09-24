@@ -8,6 +8,8 @@ import { installAdapter, selectAdapter, removeInstalledAdapter } from '../adapte
 import { writePackageDirectory, readPackageDirectory } from '../adapter-package-files.js';
 import { managedAdapterView, managedAdapterViews, managedAdapterSkill } from '../adapter-views.js';
 import { syncManagedAdapterSkills } from '../adapter-skill-sync.js';
+import { describeAdapterCatalog } from '../adapter-host.js';
+import { WebSocketBridge } from '../bridge.js';
 
 const cli = fileURLToPath(new URL('../index.js', import.meta.url));
 let root, target;
@@ -91,6 +93,38 @@ describe('effective Adapter CLI views and generated Skills', () => {
     expect(view.tools[0].parameters).toEqual(manifest.commands[0].schema);
     expect(view.tools[0].params.find((entry) => entry.name === 'payload').type).toBe('object|null');
     expect(managedAdapterSkill(view)).toContain('"extra": true');
+  });
+
+  it('includes versioned human guidance and discovery phrases in the generated Skill', () => {
+    const pkg = files();
+    const manifest = JSON.parse(pkg.get('manifest.json'));
+    manifest.discovery_terms = ['find pending items', 'check project queue'];
+    pkg.set('manifest.json', JSON.stringify(manifest));
+    pkg.set('guidance.md', '## Selection\n\nChoose `demo.list` when the user asks for pending items.\n');
+    const installed = installAdapter({ files: pkg, origin: { kind: 'local' } });
+    const view = managedAdapterView('demo');
+    expect(view.guidance).toContain('pending items');
+    const generated = managedAdapterSkill(view);
+    expect(generated).toContain('find pending items');
+    expect(generated).toContain('Choose `demo.list`');
+    expect(generated.indexOf('## Adapter usage guidance')).toBeLessThan(generated.indexOf('## demo.list'));
+    sync();
+    expect(skill()).toContain('Choose `demo.list`');
+    expect(readPackageDirectory(installed.executionRoot).digest).toBe(installed.digest);
+    expect(existsSync(join(installed.executionRoot, 'SKILL.md'))).toBe(false);
+    expect(JSON.stringify(describeAdapterCatalog())).not.toContain('Choose `demo.list`');
+  });
+
+  it('allows open_browser for an effective v2 Adapter website only while it is active', async () => {
+    install();
+    const bridge = {
+      isExtensionConnected: () => true,
+      _request: async () => ({ tabId: 7 }),
+    };
+    const result = await WebSocketBridge.prototype.openBrowser.call(bridge, 'https://example.com/');
+    expect(result).toMatchObject({ success: true, method: 'extension', tabId: 7 });
+    selectAdapter('demo', 'disabled');
+    await expect(WebSocketBridge.prototype.openBrowser.call(bridge, 'https://example.com/')).rejects.toThrow(/not allowed/i);
   });
 
   it('suppresses stale legacy copies when active, disabled, corrupted and removed', () => {

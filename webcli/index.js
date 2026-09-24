@@ -402,7 +402,7 @@ async function cmdCall(toolName, argsStr, options = {}) {
   const { resolveAdapterCall } = await import("./adapter-host.js");
   const v2Match = resolveAdapterCall(toolName);
   if (v2Match) {
-    if (v2Match.command.safety === "write" && args.__confirmed !== true) throw new Error("Explicit confirmation is required for this write command.");
+    if ((v2Match.command.requires_confirmation ?? v2Match.command.safety === "write") && args.__confirmed !== true) throw new Error("Explicit confirmation is required for this command.");
     if (v2Match.command.runtime === "wewright") {
       // v2 wewright 命令：内嵌 Runtime --internal-script，入口取 manifest module（现有合同不变）
       try {

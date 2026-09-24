@@ -1,8 +1,15 @@
 {
   "schema_version": 2,
   "name": "bilibili.com",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Bilibili / B 站：登录检查、搜索视频、打开视频详情、读取评论、点赞/收藏视频",
+  "discovery_terms": [
+    "B站",
+    "查视频",
+    "视频评论",
+    "点赞视频",
+    "收藏视频"
+  ],
   "match": [
     "bilibili.com"
   ],
@@ -91,7 +98,7 @@
       "id": "like-video",
       "runtime": "extension",
       "module": "extension/commands/like-video.js",
-      "description": "对当前或指定 B 站视频执行点赞；如果已经点赞则返回已点赞，不执行取消。必须显式传入 confirm=true 才会修改当前账号状态。",
+      "description": "对当前或指定 B 站视频执行点赞；如果已经点赞则返回已点赞，不执行取消。用户明确要求时执行。",
       "safety": "write",
       "schema": {
         "type": "object",
@@ -102,20 +109,21 @@
           },
           "confirm": {
             "type": "boolean",
-            "description": "必须显式为 true 才执行点赞"
+            "description": "兼容旧调用的确认参数；当前包无需二次确认。"
           }
         },
         "required": []
       },
       "aliases": [
         "like_video"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "favorite-video",
       "runtime": "extension",
       "module": "extension/commands/favorite-video.js",
-      "description": "对当前或指定 B 站视频执行收藏；如果已经收藏则返回已收藏，不执行取消。必须显式传入 confirm=true 才会修改当前账号状态；需要选择收藏夹时可传 folder_name。",
+      "description": "对当前或指定 B 站视频执行收藏；如果已经收藏则返回已收藏，不执行取消。用户明确要求时执行；需要选择收藏夹时可传 folder_name。",
       "safety": "write",
       "schema": {
         "type": "object",
@@ -130,14 +138,15 @@
           },
           "confirm": {
             "type": "boolean",
-            "description": "必须显式为 true 才执行收藏"
+            "description": "兼容旧调用的确认参数；当前包无需二次确认。"
           }
         },
         "required": []
       },
       "aliases": [
         "favorite_video"
-      ]
+      ],
+      "requires_confirmation": false
     }
   ],
   "homepage_url": "https://www.bilibili.com",

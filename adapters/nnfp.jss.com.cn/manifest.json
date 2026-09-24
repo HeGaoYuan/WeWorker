@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "nnfp.jss.com.cn",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "诺诺网发票平台：获取发票信息、下载 PDF/OFD/XML、自动下载并返回 QQ 邮箱",
   "match": [
     "nnfp.jss.com.cn"
@@ -52,7 +52,8 @@
       },
       "aliases": [
         "download_invoice"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "auto-download-and-return",
@@ -83,7 +84,8 @@
       },
       "aliases": [
         "auto_download_and_return"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "return-to-qqmail",

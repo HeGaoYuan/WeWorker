@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WebSocketBridge } from '../bridge.js'
+import { EventEmitter } from 'node:events'
+
+vi.mock('ws', async () => {
+  const { EventEmitter } = await import('node:events')
+  return { WebSocketServer: class extends EventEmitter {} }
+})
 
 describe('bridge generated-adapter hot reload event', () => {
   it.each(['completed', 'awaiting_approval', 'failed'])('broadcasts only a completed installation (%s)', async status => {
@@ -36,6 +42,39 @@ describe('bridge Adapter state event broadcast', () => {
 })
 
 describe('bridge Adapter reconnect snapshot', () => {
+  it('acknowledges heartbeats without refreshing Adapters again and syncs a new connection', () => {
+    vi.useFakeTimers()
+    try {
+      const bridge = Object.create(WebSocketBridge.prototype)
+      bridge._clients = new Set()
+      bridge._extensionWs = null
+      bridge._broadcast = vi.fn()
+      bridge._handleExtensionMessage = vi.fn()
+      bridge._adapterStateWatcher = { snapshot: () => ({ profile: 'public', revision: 7, adapters: [], sync: true }) }
+      bridge._startServer()
+      const connect = () => {
+        const ws = new EventEmitter()
+        ws.readyState = 1
+        ws.send = vi.fn()
+        bridge._wss.emit('connection', ws, { headers: {} })
+        return ws
+      }
+      const hello = ws => ws.emit('message', JSON.stringify({ type: 'extension_hello', capabilities: [] }))
+      const count = (ws, type) => ws.send.mock.calls.filter(([value]) => JSON.parse(value).type === type).length
+      const first = connect()
+      hello(first)
+      vi.advanceTimersByTime(600)
+      hello(first)
+      hello(first)
+      expect(count(first, 'extension_hello_ack')).toBe(3)
+      expect(count(first, 'adapter_state_changed')).toBe(1)
+      const replacement = connect()
+      hello(replacement)
+      vi.advanceTimersByTime(600)
+      expect(count(replacement, 'adapter_state_changed')).toBe(1)
+    } finally { vi.useRealTimers() }
+  })
+
   it('sends the current revision without inventing changed Adapter names', () => {
     const bridge = Object.create(WebSocketBridge.prototype)
     bridge._adapterStateWatcher = {
