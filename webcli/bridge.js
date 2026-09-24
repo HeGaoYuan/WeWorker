@@ -1530,7 +1530,10 @@ export class WebSocketBridge extends EventEmitter {
    * 优先使用Chrome扩展API（如果已连接），否则使用系统命令
    */
   async openBrowser(url) {
-    const allowedOrigins = buildAllowedOpenBrowserOrigins(loadAdapterManifests());
+    let managed = [];
+    try { managed = describeAdapterCatalog().adapters; }
+    catch { /* The legacy allowlist remains available if the managed catalog cannot be read. */ }
+    const allowedOrigins = buildAllowedOpenBrowserOrigins([...loadAdapterManifests(), ...managed]);
     const allowedUrl = assertAllowedOpenBrowserUrl(url, allowedOrigins);
     url = allowedUrl;
 
