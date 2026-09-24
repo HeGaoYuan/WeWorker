@@ -76,6 +76,19 @@ describe("validateV2Manifest", () => {
     expect(result.commands[0].safety).toBe("read");
   });
 
+  it("validates discovery phrases and an optional guidance source", () => {
+    const manifest = v2Manifest("blog", { discovery_terms: ["find pending posts", "review drafts"] });
+    expect(validateV2Manifest(manifest, "blog").manifest.discovery_terms).toEqual(["find pending posts", "review drafts"]);
+    for (const terms of ["find posts", [""], ["bad\nphrase"], Array(17).fill("phrase")]) {
+      expect(() => validateV2Manifest(v2Manifest("blog", { discovery_terms: terms }), "blog")).toThrow(/discovery_terms/);
+    }
+    const root = mkdtempSync(join(tmpdir(), "webcli-v2-guidance-"));
+    const adapter = makeAdapterDir(root, "blog", { manifest, files: { ...defaultFiles, "guidance.md": "## Workflow\n\nSearch before opening a post.\n" } });
+    expect(validateV2AdapterDir(adapter).name).toBe("blog");
+    writeFileSync(join(adapter, "guidance.md"), "---\nname: fake\n---\n");
+    expect(() => validateV2AdapterDir(adapter)).toThrow(/Skill frontmatter/);
+  });
+
   it("accepts route metadata only for hosts declared by the package", () => {
     const routed = v2Manifest("blog");
     routed.match = [...routed.match, "checkout.blog.example.com"];

@@ -37,6 +37,7 @@ export function describeAdapterCatalog(options = {}) {
     adapters: catalog.effective.map((entry) => ({
       ...entry.manifest, id: entry.name,
       _hostSnapshot: { profile: catalog.profile, digest: entry.digest, source: entry.source },
+      ...(options.includeGuidance ? { _hostGuidance: entry.guidance } : {}),
     })),
   };
 }

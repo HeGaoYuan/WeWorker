@@ -94,6 +94,7 @@ export function buildAdapterCatalog(options = {}) {
       candidates.push({
         name, version: pkg.manifest.version, root: resolve(root), source,
         digest: pkg.digest, manifest: pkg.manifest, commands: pkg.commands,
+        guidance: pkg.files.get('guidance.md')?.toString('utf8') || '',
         permissions, origin: record?.origin || null,
       });
     } catch (error) {

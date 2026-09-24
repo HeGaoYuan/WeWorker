@@ -8,6 +8,7 @@ import { createHash } from "crypto";
 import { unzipSync } from "fflate";
 import path from "path";
 import { validateV2Manifest } from "./adapter-package-v2.js";
+import { validateAgentGuidance } from "./adapter-package-validation.js";
 
 const MAX_FILES = 512;
 const MAX_EXPANDED_BYTES = 32 * 1024 * 1024;
@@ -47,7 +48,8 @@ export function readAdapterPackage(input) {
     if (!files.has(command.module)) throw new Error(`Missing command module: ${command.module}`);
   }
   const runtimes = new Set(manifest.commands.map((c) => c.runtime));
-  const roots = new Set(["manifest.json", ...runtimes]);
+  if (files.has('guidance.md')) validateAgentGuidance(files.get('guidance.md'));
+  const roots = new Set(["manifest.json", "guidance.md", ...runtimes]);
   for (const name of files.keys()) {
     if (name.split("/").includes("__pycache__")) throw new Error(`Forbidden directory entry: ${name}`);
     const base = name.split("/").pop();
@@ -55,7 +57,8 @@ export function readAdapterPackage(input) {
     if (/\.generated\.(js|py|md|txt)$/.test(base)) throw new Error(`Forbidden generated file: ${name}`);
     const [root, sub] = name.split("/");
     if (!roots.has(root)) throw new Error(`Unexpected package root entry: ${root}`);
-    if (root !== "manifest.json" && sub !== "commands" && sub !== "internal") {
+    if ((root === 'guidance.md' || root === 'manifest.json') && sub) throw new Error(`Unexpected package root entry: ${name}`);
+    if (root !== "manifest.json" && root !== "guidance.md" && sub !== "commands" && sub !== "internal") {
       throw new Error(`Runtime "${root}" may only contain commands/ and internal/`);
     }
   }

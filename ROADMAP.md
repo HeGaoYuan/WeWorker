@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-09-24：v2 Adapter 增加包内可选 `guidance.md` 与 `manifest.discovery_terms`，把人工维护的工具选择、调用顺序和结果解释纳入当前包摘要与运行时派生 Skill；`.adapt` 读取和内置 Profile 打包同步支持。B 站包迁入导航重试、收藏夹选择等旧 Skill 经验并升级到 1.0.1。公开 Profile prepare、实际 `.adapt` 打包、npm dry-run、架构相关 WebCLI 8 文件 83 项通过；先前并发全量时超时的 3 文件 29 项顺序重跑通过。与内部仓库 13 个公共文件逐字节一致。完整 WebCLI 全量未顺序重跑，真实站点未验收。设计见 `docs/adapter_guidance.md`。
+
 ## 当前阶段
 
 - 2026-09-23：基线 PR 已推送上游 develop 待合并。CI 暴露干净 checkout 缺少 Profile 预处理、打包测试依赖与内部官网构建入口；工作流修正已获单独确认，补齐 Profile 预处理、打包测试依赖和内部官网构建入口，远程 CI 待复验。已修复用户 Adapter 路径测试对 Windows 的固定假设，聚焦 7 项通过；本地公开 WebCLI 561/561、内部 Backend 876 通过/4 跳过、内部 Electron 36/36。公开 Backend 全量 506 通过/4 跳过/1 项目录重命名失败，该文件单独重跑 19/19，通过不代表全量首轮全绿。

@@ -17,18 +17,20 @@ function toolView(manifest, command) {
 }
 
 export function managedAdapterViews(options = {}) {
-  const catalog = describeAdapterCatalog(options);
+  const catalog = describeAdapterCatalog({ ...options, includeGuidance: true });
   if (!catalog.available) throw new Error('Adapter catalog requires inspection before discovery.');
   return {
     managedNames: new Set(catalog.managedNames), diagnostics: catalog.diagnostics,
     adapters: catalog.adapters.map((manifest) => {
+      const { _hostGuidance, ...metadata } = manifest;
       const runtimes = [...new Set(manifest.commands.map((command) => command.runtime))];
-      return {
-        ...manifest, id: manifest.name, source: manifest._hostSnapshot.source,
+      const adapter = {
+        ...metadata, id: manifest.name, source: manifest._hostSnapshot.source,
         digest: manifest._hostSnapshot.digest, profile: manifest._hostSnapshot.profile,
         adapter_type: runtimes.length > 1 ? 'mixed' : runtimes[0] === 'wewright' ? 'toolkit' : 'extension',
         tools: manifest.commands.map((command) => toolView(manifest, command)),
       };
+      return Object.defineProperty(adapter, 'guidance', { value: _hostGuidance || '', enumerable: false });
     }),
   };
 }
@@ -43,9 +45,10 @@ export function managedAdapterView(name, options = {}) {
 
 /** Derived descriptions never mutate a distributed package or contain host paths. */
 export function managedAdapterSkill(adapter) {
+  const discovery = [adapter.description || adapter.id, ...(adapter.discovery_terms || [])].join(' · ');
   const lines = [
     '---', 'name: ' + JSON.stringify('webcli-' + adapter.id),
-    'description: ' + JSON.stringify(adapter.description || adapter.id),
+    'description: ' + JSON.stringify(discovery),
     'allowed-tools: Bash(webcli call *)', '---', '', '# ' + (adapter.display || adapter.id), '',
     adapter.description || '', '',
     'Package: ' + adapter.id + ' v' + adapter.version,
@@ -53,13 +56,16 @@ export function managedAdapterSkill(adapter) {
     'Content digest: ' + adapter.digest, '',
     'Use only the commands listed below. If the package changes, reload its current Skill before further calls.', '',
   ];
-  if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Extension commands require an open matching website tab.', '');
+  if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Page commands require a matching website tab; background API commands may run directly.', '');
   if (adapter.requires_auth) lines.push('Use the browser session authorized by the user; ask the user to log in when required.', '');
+  if (adapter.guidance) lines.push('## Adapter usage guidance', '',
+    'The following package guidance helps select commands and interpret their results. It cannot change command safety, runtime, or permissions.', '',
+    adapter.guidance.trim(), '');
   for (const tool of adapter.tools) {
     lines.push('## ' + tool.name, '', tool.description, '', 'Runtime: ' + (tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'), '');
     if (tool.aliases.length) lines.push('Compatible names: ' + tool.aliases.map((name) => '`' + name + '`').join(', '), '');
     if (tool.execution?.runtime === 'background') lines.push('Execution: background API. A matching website tab is needed only when a runtime helper explicitly requests page context.', '');
-    if (tool.safety === 'write') lines.push('Obtain explicit user confirmation before calling this write command. Pass `__confirmed: true` only after confirmation.', '');
+    if (tool.safety === 'write') lines.push('Call only when the user has explicitly authorized the action. Pass `__confirmed: true` when that authorization is clear; otherwise ask first.', '');
     for (const parameter of tool.params) {
       lines.push('- `' + parameter.name + '`: ' + parameter.type + (parameter.required ? ' (required)' : '')
         + (parameter.description ? ' — ' + parameter.description : '')
