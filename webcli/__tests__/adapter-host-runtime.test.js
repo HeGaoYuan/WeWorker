@@ -63,7 +63,7 @@ describe('v2 page registration', () => {
       id: 'reserve', runtime: 'extension', safety: 'write', requires_confirmation: false, schema: {}
     }] }), context);
     vm.runInContext('window.__webcliRegisterCommand("reserve", args => args)', context);
-    expect(registrations[0].tools[0].handler({ value: 'requested' })).toEqual({ value: 'requested' });
+    expect(registrations[0].tools[0].handler({ value: 'requested' })).toEqual({ value: 'requested', __confirmed: true });
   });
   it('refreshes definitions after update and enforces the declared write gate', () => {
     const registrations = [];
@@ -77,5 +77,35 @@ describe('v2 page registration', () => {
     expect(() => registrations[1].tools[0].handler({ value: 'blocked' })).toThrow(/confirmation/);
     expect(registrations[1].tools[0].handler({ value: 'approved', __confirmed: true })).toBe('approved');
     expect(() => vm.runInContext('window.__webcliRegisterCommand("old", () => "stale")', context)).toThrow(/unknown command/);
+  });
+});
+
+
+describe('legacy confirmation compatibility', () => {
+  it('scopes grants to opted-out writes without mutating args or read branches', async () => {
+    const registrations = [];
+    const scope = vm.createContext({ window: { __webmcpRegister: entry => registrations.push(...entry.tools) } });
+    vm.runInContext(buildV2Bootstrap({ name: 'demo', commands: [
+      { id: 'write', runtime: 'extension', safety: 'write', requires_confirmation: false },
+      { id: 'read', runtime: 'extension', safety: 'read', requires_confirmation: false },
+      { id: 'guarded', runtime: 'extension', safety: 'write', requires_confirmation: true },
+    ] }), scope);
+    vm.runInContext(`
+      ['write', 'read', 'guarded'].forEach(id => window.__webcliRegisterCommand(id, async args => {
+        await Promise.resolve();
+        if (args['dry-run']) return 'preview';
+        if (args.__confirmed !== true) throw new Error('legacy confirmation required');
+        return { action: args.submit ? 'submit' : 'save', value: args.value };
+      }));
+    `, scope);
+    const [write, read, guarded] = registrations;
+    const args = Object.freeze({ value: 'requested' });
+    expect(await write.handler(args)).toEqual({ action: 'save', value: 'requested' });
+    expect(args).toEqual({ value: 'requested' });
+    expect(await write.handler({ 'dry-run': true })).toBe('preview');
+    await expect(read.handler({ requires_confirmation: false })).rejects.toThrow('legacy confirmation');
+    expect(() => guarded.handler({ requires_confirmation: false })).toThrow('confirmation');
+    const results = await Promise.allSettled([write.handler(args), read.handler(args)]);
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
   });
 });

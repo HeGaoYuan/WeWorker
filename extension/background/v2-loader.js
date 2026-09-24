@@ -59,6 +59,11 @@ export function buildV2Bootstrap(manifest) {
             error.code = 'CONFIRMATION_REQUIRED';
             throw error;
           }
+          // Per-invocation compatibility grant for legacy confirmation guards.
+          // Never mutate caller arguments or grant it to read/conditional commands.
+          if (def.safety === 'write' && def.requires_confirmation === false) {
+            return handler.call(this, Object.assign({}, args, { __confirmed: true }));
+          }
           return handler.apply(this, arguments);
         },
       }],

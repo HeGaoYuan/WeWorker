@@ -36,10 +36,19 @@ describe('managed background execution lifecycle', () => {
     const f = fixture();
     await expect(f.run({ requires_confirmation: false })).rejects.toThrow(/confirmation/);
     f.manifest.commands[0].requires_confirmation = false;
-    expect(await f.run({ count: '007' })).toEqual({ count: '007' });
+    expect(await f.run({ count: '007' })).toEqual({ count: '007', __confirmed: true });
     expect(f.manifest.commands[0].safety).toBe('write');
     f.manifest.commands[0].requires_confirmation = true;
     await expect(f.run({})).rejects.toThrow(/confirmation/);
+  });
+  it('honors opt-out through the preserved runtime helper', async () => {
+    const f = fixture({ source: '__webcliRegisterCommand("run", args => { __webmcpWecliRuntime.requireConfirmation(args); return args.value; });' });
+    f.manifest.commands[0].requires_confirmation = false;
+    const args = Object.freeze({ value: 'requested' });
+    expect(await f.run(args)).toBe('requested');
+    expect(args).toEqual({ value: 'requested' });
+    f.manifest.commands[0].safety = 'read';
+    await expect(f.run({})).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
   });
   it('executes the pinned module without argument conversion and cleans up owned resources', async () => {
     const f = fixture();

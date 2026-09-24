@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "juejin.cn",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Generated adapter shell for juejin.cn",
   "match": [
     "juejin.cn"
@@ -36,7 +36,8 @@
       },
       "aliases": [
         "like_current_item"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "favorite-current-item",
@@ -56,7 +57,8 @@
       },
       "aliases": [
         "favorite_current_item"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "list-detail-candidates",
