@@ -56,6 +56,15 @@ describe('managed page execution', () => {
 });
 
 describe('v2 page registration', () => {
+  it('allows writes without a second confirmation only when the package opts out', () => {
+    const registrations = [];
+    const context = vm.createContext({ window: { __webmcpRegister: entry => registrations.push(entry) } });
+    vm.runInContext(buildV2Bootstrap({ name: 'demo', match: ['example.com'], commands: [{
+      id: 'reserve', runtime: 'extension', safety: 'write', requires_confirmation: false, schema: {}
+    }] }), context);
+    vm.runInContext('window.__webcliRegisterCommand("reserve", args => args)', context);
+    expect(registrations[0].tools[0].handler({ value: 'requested' })).toEqual({ value: 'requested' });
+  });
   it('refreshes definitions after update and enforces the declared write gate', () => {
     const registrations = [];
     const context = vm.createContext({ window: { __webmcpRegister: (entry) => registrations.push(entry) } });

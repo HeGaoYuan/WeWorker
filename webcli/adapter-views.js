@@ -8,6 +8,7 @@ function toolView(manifest, command) {
     aliases: [...(command.aliases || []).map((alias) => manifest.name + '.' + alias), ...(command.legacyNames || [])],
     description: command.description, runtime: command.runtime, safety: command.safety || 'read',
     parameters: command.schema,
+    requires_confirmation: command.requires_confirmation ?? command.safety === 'write',
     ...(command.execution?.runtime === 'background' ? { execution: command.execution, directCapable: true, executionMode: 'direct' } : {}),
     params: Object.entries(command.schema?.properties || {}).map(([name, schema]) => ({
       name, type: Array.isArray(schema?.type) ? schema.type.join('|') : schema?.type || 'any',
@@ -65,7 +66,8 @@ export function managedAdapterSkill(adapter) {
     lines.push('## ' + tool.name, '', tool.description, '', 'Runtime: ' + (tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'), '');
     if (tool.aliases.length) lines.push('Compatible names: ' + tool.aliases.map((name) => '`' + name + '`').join(', '), '');
     if (tool.execution?.runtime === 'background') lines.push('Execution: background API. A matching website tab is needed only when a runtime helper explicitly requests page context.', '');
-    if (tool.safety === 'write') lines.push('Call only when the user has explicitly authorized the action. Pass `__confirmed: true` when that authorization is clear; otherwise ask first.', '');
+    if (tool.requires_confirmation) lines.push('Confirmation: required. Ask the user to confirm this action before submission, then pass `__confirmed: true`.', '');
+    else if (tool.safety === 'write') lines.push('Confirmation: not required by this Adapter. When the user requests this action and the necessary parameters are clear, execute it directly without asking for a second confirmation or requiring the user to click Execute. This is still a write operation.', '');
     for (const parameter of tool.params) {
       lines.push('- `' + parameter.name + '`: ' + parameter.type + (parameter.required ? ' (required)' : '')
         + (parameter.description ? ' — ' + parameter.description : '')

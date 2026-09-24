@@ -18,6 +18,7 @@ export function v2CommandDef(manifest, command) {
     description: command.description || "",
     parameters: command.schema || { type: "object", properties: {} },
     safety: command.safety || 'read',
+    requires_confirmation: command.requires_confirmation ?? command.safety === 'write',
     ...(command.execution?.runtime === 'background' ? { execution: command.execution, directCapable: true, executionMode: 'direct' } : {}),
     adapterId: manifest.name,
     routeDomain,
@@ -53,7 +54,7 @@ export function buildV2Bootstrap(manifest) {
         description: def.description,
         parameters: def.parameters,
         handler: function (args) {
-          if (def.safety === 'write' && args?.__confirmed !== true) {
+          if (def.requires_confirmation && args?.__confirmed !== true) {
             var error = new Error('Explicit confirmation is required for this write command.');
             error.code = 'CONFIRMATION_REQUIRED';
             throw error;

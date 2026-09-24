@@ -1461,7 +1461,7 @@ export class WebSocketBridge extends EventEmitter {
       || adapterSnapshot.digest !== selected.snapshot.digest || adapterSnapshot.profile !== selected.snapshot.profile)) {
       throw new Error('Adapter changed since this call started; refresh the catalog.');
     }
-    if (selected?.command.safety === 'write' && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this write command.');
+    if ((selected?.command.requires_confirmation ?? selected?.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
     if (selected?.command.runtime === 'wewright') {
       const { runToolkitTool } = await import('./toolkit-runner.js');
       const completed = await runToolkitTool({

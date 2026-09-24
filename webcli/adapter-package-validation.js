@@ -174,6 +174,9 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command?.safety != null && !["read", "write"].includes(command.safety)) {
       fail(adapterName, `command "${id}": safety must be read|write.`);
     }
+    if (command?.requires_confirmation !== undefined && typeof command.requires_confirmation !== 'boolean') {
+      fail(adapterName, `command "${id}": requires_confirmation must be a boolean.`);
+    }
     const schema = command?.schema;
     if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
       fail(adapterName, `command "${id}": schema is required (JSON Schema object).`);

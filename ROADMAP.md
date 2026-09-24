@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-09-24：命令确认策略与写操作分类分离：v2 manifest 支持布尔 `requires_confirmation`，未配置的写命令仍默认需确认；CLI、Bridge、Extension、bootstrap、帮助与派生 Skill 同步采用包内策略。关闭安装包写确认视为额外权限变更。两仓聚焦策略/路由/Skill 测试、Backend TypeScript 和 Profile prepare 通过；未执行真实写操作。配置说明见 `docs/adapter_confirmation_policy.md`。
+
 - 2026-09-24：修复后台调用被 Adapter 刷新中断的生命周期竞争：心跳握手仅确认连接，不重复发送初始目录快照；刷新关闭 offscreen 文档前等待公共执行队列。聚焦回归 31/31 通过。内部开发扩展重建、重载后真实只读查询成功返回，未执行写操作；运行中的 Bridge 心跳优化待客户端重启加载。
 
 - 2026-09-24：修复托管后台 Adapter 查询已完成却被 Chrome `No current offscreen document` 清理错误覆盖的问题；已消失文档的清理不会覆盖原始结果，下一次调用仍创建独立文档。`open_browser` 白名单同时纳入有效 v2 包网站，停用包不会获得许可。聚焦测试 25/25 通过。真实客户端与浏览器扩展仍需更新后复验。

@@ -93,7 +93,7 @@ export function createManagedBackgroundRuntime({ bundle, request, exclusive, api
       if (current?.runtime !== 'extension' || current.execution?.type !== 'api' || current.execution?.runtime !== 'background') {
         throw new Error('Adapter command does not support background execution.');
       }
-      if (current.safety === 'write' && args.__confirmed !== true) throw new Error('Explicit confirmation is required for this write command.');
+      if ((current.requires_confirmation ?? current.safety === 'write') && args.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
       const token = crypto.randomUUID();
       const url = api.runtime.getURL(MANAGED_RUNNER_PATH) + '?call=' + token;
       const call = { token, url, accepting: true, pending: new Set(), context };

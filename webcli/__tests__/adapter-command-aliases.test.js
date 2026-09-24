@@ -108,6 +108,20 @@ describe('same-package command aliases', () => {
     expect(request.mock.calls[0][0].adapterSnapshot.digest).toBe(installed.digest);
   });
 
+  it('honors the package opt-out for canonical and alias calls without inventing confirmation', async () => {
+    const pkg = manifest();
+    pkg.commands[0].requires_confirmation = false;
+    install(pkg);
+    const request = vi.fn().mockResolvedValue('done');
+    const bridge = { _request: request, _extensionCapabilities: ['adapter_catalog_v1'] };
+    for (const name of ['demo.list-items', 'demo.list_items']) {
+      expect(await WebSocketBridge.prototype._callToolInner.call(bridge, name, { count: '007' })).toBe('done');
+    }
+    expect(request.mock.calls[0][0].args).toEqual({ count: '007' });
+    expect(managedAdapterView('demo').tools[0]).toMatchObject({ safety: 'write', requires_confirmation: false });
+    expect(managedAdapterSkill(managedAdapterView('demo'))).toContain('Confirmation: not required');
+  });
+
   it('routes Toolkit aliases to the canonical module without converting parameters', async () => {
     const pkg = manifest(); delete pkg.match;
     pkg.commands[0].runtime = 'wewright'; pkg.commands[0].module = 'wewright/commands/list-items.py';

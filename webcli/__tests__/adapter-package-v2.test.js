@@ -23,6 +23,21 @@ function makeAdapterDir(root, name, { manifest, files = {} } = {}) {
   return adapterRoot;
 }
 
+it('validates requires_confirmation as a package boolean, without changing write classification', () => {
+  const manifest = v2Manifest();
+  const command = manifest.commands[0];
+  command.safety = 'write';
+  for (const value of [false, true]) {
+    command.requires_confirmation = value;
+    expect(() => validateV2Manifest(manifest)).not.toThrow();
+    expect(command.safety).toBe('write');
+  }
+  for (const value of ['false', 0, null, {}]) {
+    command.requires_confirmation = value;
+    expect(() => validateV2Manifest(manifest)).toThrow(/requires_confirmation/);
+  }
+});
+
 function v2Manifest(name = "blog", overrides = {}) {
   return {
     schema_version: 2,

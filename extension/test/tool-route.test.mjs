@@ -247,6 +247,21 @@ test("managed background calls select the offscreen runner without opening a sit
   assert.deepEqual(calls[0][3].declaredHosts, ['example.com','api.example.org']);
 });
 
+test("managed write opt-out comes from the pinned package, not caller arguments", async () => {
+  for (const requires_confirmation of [undefined, true, false]) {
+    const manifest = { name: 'fixture', match: ['example.com'],
+      _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+      commands: [{ id: 'reserve', aliases: ['reserve_room'], runtime: 'extension', safety: 'write',
+        requires_confirmation, execution: { type: 'api', runtime: 'background' } }] };
+    const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+    const calls = [];
+    worker.context.getManagedBackgroundRuntime = () => ({ execute: async (...args) => { calls.push(args); return 'reserved'; } });
+    const result = await worker.callNativeTool('fixture.reserve_room', { requires_confirmation: false });
+    if (requires_confirmation === false) assert.equal(result.result, 'reserved');
+    else { assert.match(result.error, /confirmation/); assert.equal(calls.length, 0); }
+  }
+});
+
 test("managed helper targets must remain in the current package's declared hosts", () => {
   const { context } = loadServiceWorker();
   const call = {declaredHosts:['app.example.com','*.api.example.org']};

@@ -112,6 +112,15 @@ function arbitraryParsedAdapter(): fc.Arbitrary<ParsedAdapter> {
 
 // Feature: skill-based-adapter-architecture, Property 4: Skill content completeness
 describe('Property 4: Skill content completeness', () => {
+  it('describes per-command confirmation independently of write access', () => {
+    const adapter = fc.sample(arbitraryParsedAdapter(), 1)[0]
+    adapter.tools = [{ name: 'fixture.reserve', description: 'Reserve an item', parameters: {}, safety: 'write', requiresConfirmation: false }]
+    expect(generateSkillContent(adapter)).toContain('Confirmation: not required')
+    expect(generateSkillContent(adapter)).not.toContain('__confirmed')
+    adapter.tools[0].requiresConfirmation = true
+    expect(generateSkillContent(adapter)).toContain('Confirmation: required')
+    expect(generateSkillContent(adapter)).toContain('__confirmed: true')
+  })
   // **Validates: Requirements 2.2, 2.3, 6.1, 6.2, 6.3**
 
   it('(a) generated content contains YAML frontmatter with name and description', () => {

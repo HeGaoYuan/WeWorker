@@ -15,6 +15,8 @@ import { mergePromptVarDisplay } from './prompt-var-display.js'
 const log = createLogger('adapter-parser')
 
 export interface StaticToolDef {
+  safety?: string
+  requiresConfirmation?: boolean
   aliases?: string[]
   name: string
   description: string
@@ -452,6 +454,7 @@ export function parseAllAdapters(): Map<string, ParsedAdapter> {
       homepageUrl: manifest.homepage_url || (manifest.match?.[0] ? 'https://' + manifest.match[0].replace(/^\*\./, '') + '/' : ''),
       tools: manifest.commands.map(command => ({ name: command.name, aliases: (command.aliases || []).map(alias => manifest.name + '.' + alias),
         ...(command.execution ? { execution: command.execution, directCapable: true, executionMode: 'direct' as const } : {}),
+        safety: command.safety, requiresConfirmation: command.requires_confirmation ?? command.safety === 'write',
         description: command.description, parameters: command.schema })),
       testPrompts: manifest.test_prompts || [], requiresAuth: manifest.requires_auth === true,
       authCheckTool: manifest.auth_check_tool || null, hidden: manifest.hidden === true,

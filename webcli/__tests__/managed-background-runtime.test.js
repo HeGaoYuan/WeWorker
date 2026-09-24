@@ -32,6 +32,15 @@ function fixture({ source, timeoutMs = 1000, failAttach = false, documents = [] 
 }
 
 describe('managed background execution lifecycle', () => {
+  it('uses package confirmation policy independently of write classification', async () => {
+    const f = fixture();
+    await expect(f.run({ requires_confirmation: false })).rejects.toThrow(/confirmation/);
+    f.manifest.commands[0].requires_confirmation = false;
+    expect(await f.run({ count: '007' })).toEqual({ count: '007' });
+    expect(f.manifest.commands[0].safety).toBe('write');
+    f.manifest.commands[0].requires_confirmation = true;
+    await expect(f.run({})).rejects.toThrow(/confirmation/);
+  });
   it('executes the pinned module without argument conversion and cleans up owned resources', async () => {
     const f = fixture();
     expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
