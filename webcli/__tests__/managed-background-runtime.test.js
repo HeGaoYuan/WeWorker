@@ -32,6 +32,24 @@ function fixture({ source, timeoutMs = 1000, failAttach = false, documents = [] 
 }
 
 describe('managed background execution lifecycle', () => {
+  it('uses package confirmation policy independently of write classification', async () => {
+    const f = fixture();
+    await expect(f.run({ requires_confirmation: false })).rejects.toThrow(/confirmation/);
+    f.manifest.commands[0].requires_confirmation = false;
+    expect(await f.run({ count: '007' })).toEqual({ count: '007', __confirmed: true });
+    expect(f.manifest.commands[0].safety).toBe('write');
+    f.manifest.commands[0].requires_confirmation = true;
+    await expect(f.run({})).rejects.toThrow(/confirmation/);
+  });
+  it('honors opt-out through the preserved runtime helper', async () => {
+    const f = fixture({ source: '__webcliRegisterCommand("run", args => { __webmcpWecliRuntime.requireConfirmation(args); return args.value; });' });
+    f.manifest.commands[0].requires_confirmation = false;
+    const args = Object.freeze({ value: 'requested' });
+    expect(await f.run(args)).toBe('requested');
+    expect(args).toEqual({ value: 'requested' });
+    f.manifest.commands[0].safety = 'read';
+    await expect(f.run({})).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+  });
   it('executes the pinned module without argument conversion and cleans up owned resources', async () => {
     const f = fixture();
     expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
@@ -96,6 +114,21 @@ describe('managed background execution lifecycle', () => {
     const legacy = fixture({ documents: [{ documentUrl: 'chrome-extension://test-extension/offscreen/direct-runner.html' }] });
     await legacy.run();
     expect(legacy.events).toEqual(['close','create','attach','detach','close']);
+  });
+  it('preserves a completed call when Chrome has already closed its offscreen document', async () => {
+    const f = fixture();
+    f.api.offscreen.closeDocument.mockRejectedValueOnce(new Error('No current offscreen document'));
+    expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
+    expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
+    expect(f.api.offscreen.createDocument).toHaveBeenCalledTimes(2);
+  });
+  it('tolerates a stale document context but preserves other close failures', async () => {
+    const stale = fixture({ documents: [{ documentUrl: 'chrome-extension://test-extension/offscreen/direct-runner.html' }] });
+    stale.api.offscreen.closeDocument.mockRejectedValueOnce(new Error('No current offscreen document'));
+    expect(await stale.run()).toEqual({ __confirmed: true, count: '007' });
+    const unexpected = fixture();
+    unexpected.api.offscreen.closeDocument.mockRejectedValueOnce(new Error('Offscreen cleanup failed'));
+    await expect(unexpected.run()).rejects.toThrow('Offscreen cleanup failed');
   });
   it('cleans up timeout and source failures and leaves the next call usable', async () => {
     const f = fixture({ source: '__webcliRegisterCommand("run", () => new Promise(() => {}));', timeoutMs: 20 });

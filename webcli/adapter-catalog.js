@@ -25,6 +25,7 @@ export function adapterPermissions(manifest) {
     ...manifest.commands.map((command) => 'runtime:' + command.runtime),
     ...manifest.commands.filter((command) => command.execution?.runtime === 'background').map(() => 'execution:background'),
     ...manifest.commands.filter((command) => command.safety === 'write').map((command) => 'write:' + command.id),
+    ...manifest.commands.filter((command) => command.safety === 'write' && command.requires_confirmation === false).map((command) => 'unconfirmed-write:' + command.id),
   ])].sort();
 }
 
@@ -94,6 +95,7 @@ export function buildAdapterCatalog(options = {}) {
       candidates.push({
         name, version: pkg.manifest.version, root: resolve(root), source,
         digest: pkg.digest, manifest: pkg.manifest, commands: pkg.commands,
+        guidance: pkg.files.get('guidance.md')?.toString('utf8') || '',
         permissions, origin: record?.origin || null,
       });
     } catch (error) {

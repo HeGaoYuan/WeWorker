@@ -49,6 +49,17 @@ function isRegularFile(path) {
   return !stat.isSymbolicLink() && stat.isFile();
 }
 
+export function validateAgentGuidance(bytes) {
+  let guidance;
+  try { guidance = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new Error('Adapter guidance must be UTF-8 text.'); }
+  if (bytes.length > 20_000 || !guidance.trim() || /^---\s*(?:\r?\n|$)/.test(guidance)
+    || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(guidance)) {
+    throw new Error('Adapter guidance must be non-empty Markdown without Skill frontmatter or control characters (20 KB max).');
+  }
+  return guidance;
+}
+
 /** adapter name 不做命名正则，仅要求跨平台目录名可用（spec §3）。 */
 function validAdapterName(name) {
   return (
@@ -84,6 +95,11 @@ export function validateV2Manifest(manifest, directoryName = "?") {
   }
   if (typeof manifest.description !== "string" || !manifest.description.trim()) {
     fail(adapterName, "description is required.");
+  }
+  if (manifest.discovery_terms !== undefined && (!Array.isArray(manifest.discovery_terms)
+    || manifest.discovery_terms.length > 16 || manifest.discovery_terms.some((term) =>
+      typeof term !== "string" || !term.trim() || term.length > 80 || /[\x00-\x1f\x7f]/.test(term)))) {
+    fail(adapterName, "discovery_terms must contain at most 16 non-empty short phrases.");
   }
   if (!Array.isArray(manifest.commands) || manifest.commands.length === 0) {
     fail(adapterName, "commands must be a non-empty array.");
@@ -158,6 +174,9 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command?.safety != null && !["read", "write"].includes(command.safety)) {
       fail(adapterName, `command "${id}": safety must be read|write.`);
     }
+    if (command?.requires_confirmation !== undefined && typeof command.requires_confirmation !== 'boolean') {
+      fail(adapterName, `command "${id}": requires_confirmation must be a boolean.`);
+    }
     const schema = command?.schema;
     if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
       fail(adapterName, `command "${id}": schema is required (JSON Schema object).`);
@@ -221,12 +240,18 @@ export function validateV2AdapterDir(adapterRoot) {
     if (/\.generated\.(js|py|md|txt)$/.test(base)) problems.push(`forbidden generated file: ${rel}`);
   }
   if (problems.length > 0) fail(name, problems.join("; "));
+  const guidancePath = join(adapterRoot, 'guidance.md');
+  if (existsSync(guidancePath)) {
+    if (!isRegularFile(guidancePath)) fail(name, 'guidance.md must be a regular file.');
+    try { validateAgentGuidance(readFileSync(guidancePath)); }
+    catch (error) { fail(name, error.message); }
+  }
 
-  // 封闭集合：根级仅 manifest.json + 存在命令的 runtime 目录；runtime 下仅 commands/ + internal/
+  // 封闭集合：根级仅 manifest.json、可选 guidance.md 与存在命令的 runtime 目录。
   const topEntries = readdirSync(adapterRoot, { withFileTypes: true }).map((e) => e.name);
   const runtimesWithCommands = new Set(commands.map((c) => c.runtime));
   for (const entry of topEntries) {
-    if (entry === "manifest.json") continue;
+    if (entry === "manifest.json" || entry === "guidance.md") continue;
     if (!runtimesWithCommands.has(entry)) {
       fail(name, `unexpected root entry "${entry}" (runtime dir without commands or unknown file).`);
     }

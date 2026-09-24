@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "mail.qq.com",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "QQ邮箱：搜索邮件、读取未读、打开邮件、下载附件、按关键词/月份批量下载发票",
   "match": [
     "mail.qq.com"
@@ -120,7 +120,8 @@
       },
       "aliases": [
         "download_attachment"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "get-current-page-info",
@@ -150,7 +151,8 @@
       },
       "aliases": [
         "cancel_download_invoices_by_invoice"
-      ]
+      ],
+      "requires_confirmation": false
     },
     {
       "id": "download-invoices-by-invoice",
@@ -178,7 +180,8 @@
       },
       "aliases": [
         "download_invoices_by_invoice"
-      ]
+      ],
+      "requires_confirmation": false
     }
   ],
   "homepage_url": "https://mail.qq.com/",

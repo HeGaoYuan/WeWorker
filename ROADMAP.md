@@ -1,5 +1,15 @@
 # WeWorker Roadmap
 
+- 2026-09-24：按已审阅策略更新 7 个公共 Adapter 的写操作确认配置，并同步 v2 bootstrap 的调用级旧确认兼容处理；read 命令不自动获得兼容标志，调用参数与共享运行时不被修改。聚焦 6 文件 76 项通过，公开 Profile 7 包 prepare 通过。 未执行真实业务写操作；客户端需重启、扩展需重载后验收。
+
+- 2026-09-24：命令确认策略与写操作分类分离：v2 manifest 支持布尔 `requires_confirmation`，未配置的写命令仍默认需确认；CLI、Bridge、Extension、bootstrap、帮助与派生 Skill 同步采用包内策略。关闭安装包写确认视为额外权限变更。两仓聚焦策略/路由/Skill 测试、Backend TypeScript 和 Profile prepare 通过；未执行真实写操作。配置说明见 `docs/adapter_confirmation_policy.md`。
+
+- 2026-09-24：修复后台调用被 Adapter 刷新中断的生命周期竞争：心跳握手仅确认连接，不重复发送初始目录快照；刷新关闭 offscreen 文档前等待公共执行队列。聚焦回归 31/31 通过。内部开发扩展重建、重载后真实只读查询成功返回，未执行写操作；运行中的 Bridge 心跳优化待客户端重启加载。
+
+- 2026-09-24：修复托管后台 Adapter 查询已完成却被 Chrome `No current offscreen document` 清理错误覆盖的问题；已消失文档的清理不会覆盖原始结果，下一次调用仍创建独立文档。`open_browser` 白名单同时纳入有效 v2 包网站，停用包不会获得许可。聚焦测试 25/25 通过。真实客户端与浏览器扩展仍需更新后复验。
+
+- 2026-09-24：v2 Adapter 增加包内可选 `guidance.md` 与 `manifest.discovery_terms`，把人工维护的工具选择、调用顺序和结果解释纳入当前包摘要与运行时派生 Skill；`.adapt` 读取和内置 Profile 打包同步支持。B 站包迁入导航重试、收藏夹选择等旧 Skill 经验并升级到 1.0.1。公开 Profile prepare、实际 `.adapt` 打包、npm dry-run、架构相关 WebCLI 8 文件 83 项通过；先前并发全量时超时的 3 文件 29 项顺序重跑通过。与内部仓库 13 个公共文件逐字节一致。完整 WebCLI 全量未顺序重跑，真实站点未验收。设计见 `docs/adapter_guidance.md`。
+
 ## 当前阶段
 
 - 2026-09-23：基线 PR 已推送上游 develop 待合并。CI 暴露干净 checkout 缺少 Profile 预处理、打包测试依赖与内部官网构建入口；工作流修正已获单独确认，补齐 Profile 预处理、打包测试依赖和内部官网构建入口，远程 CI 待复验。已修复用户 Adapter 路径测试对 Windows 的固定假设，聚焦 7 项通过；本地公开 WebCLI 561/561、内部 Backend 876 通过/4 跳过、内部 Electron 36/36。公开 Backend 全量 506 通过/4 跳过/1 项目录重命名失败，该文件单独重跑 19/19，通过不代表全量首轮全绿。

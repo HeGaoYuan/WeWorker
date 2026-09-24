@@ -147,7 +147,7 @@ webcli install --skills <name> --target <skills-directory>
 
 CLI 列表、详情、帮助和派生 Skill 使用同一有效目录；同名旧副本不会因停用、损坏或移除重新出现。旧格式兼容测试使用隔离的空 v2 目录；新版优先级由临时包集成测试独立验证，不能据旧格式测试通过宣称旧命令别名或后台 API 已完成迁移。
 
-派生 Skill 包含来源、Profile、版本、摘要、完整输入 Schema 和写命令确认要求。文件写在目标 Skill 目录，不写回包。刷新只更新归属与内容摘要均匹配的生成文件；保留用户手写/修改及其他 Profile 的内容，并报告保留项。手动改名为 SKILL.md.disabled 的文件保持停用；停用、卸载或损坏的受管 Skill 在刷新时改为不可调用说明，不删除目录。v2 的 --generated/--regenerate 只输出当前派生说明；knowledge 不回退到旧目录，历史知识与场景内容的归宿仍属资产迁移范围。
+派生 Skill 包含来源、Profile、版本、摘要、完整输入 Schema、写命令确认要求，以及有效包可选的 `guidance.md` 人工指导。`manifest.discovery_terms` 提供额外发现词；具体契约见 `docs/adapter_guidance.md`。文件写在目标 Skill 目录，不写回包。刷新只更新归属与内容摘要均匹配的生成文件；保留用户手写/修改及其他 Profile 的内容，并报告保留项。手动改名为 SKILL.md.disabled 的文件保持停用；停用、卸载或损坏的受管 Skill 在刷新时改为不可调用说明，不删除目录。v2 的 --generated/--regenerate 只输出当前派生说明；knowledge 不回退到旧目录，旧知识需逐条核对后迁入包指导或命令实现。
 
 刷新可由 install --skills 显式触发；桌面站点切换会等待刷新，模型每轮开始前也刷新托管 Skill。历史 Skill 回放同时验证文件内容摘要与当前包摘要；无归属标记的同名旧文件保留，但不作为当前托管包的自动索引或历史说明。CLI 安装变化的主动 UI 通知、其他正在运行的模型回合及生成任务仍需接通，不能认为安装后全部消费者已自动同步。
 
