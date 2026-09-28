@@ -16,6 +16,17 @@ function legacySettings(): Settings {
 }
 
 describe('multiple model configurations', () => {
+  it('does not combine a cleared per-configuration OpenAI URL with the legacy full URL mode', () => {
+    const legacy = { ...legacySettings(), openai_base_url_custom: 'https://example.com/inference/?version=1', openai_base_url_is_full_custom: true }
+    const first = createModelConfiguration(legacy, 'custom')
+    let state = { ...legacy, ...first.updates }
+    state = { ...state, ...updateModelConfiguration(state, first.id, {
+      api_key: 'fixture-key', openai_base_url: '', openai_base_url_is_full: false,
+    }) }
+    const second = createModelConfiguration(state, 'custom')
+    expect(second.updates.model_configurations[second.id]).toMatchObject({ openai_base_url: '', openai_base_url_is_full: false })
+  })
+
   it('saves and activates two models of the same provider independently', () => {
     const legacy = legacySettings()
     const first = createModelConfiguration(legacy, 'deepseek')

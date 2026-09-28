@@ -1,9 +1,10 @@
+import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 import React, { useState } from 'react'
 import { useStatusStore } from '../../store/status.js'
 import { useSettingsStore } from '../../store/settings.js'
 import ExtensionGuide from '../ExtensionGuide.jsx'
 import { getWebwrightPresentation } from '../../utils/webwright-status.js'
-import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
+import { getPortConflictHelp } from '../../utils/port-conflict-help.js'
 
 export default function StatusBar() {
   const { extension, extensionVersion, channels } = useStatusStore()
@@ -42,6 +43,7 @@ export default function StatusBar() {
   const backendPortInUse = backendStatus === 'port_in_use'
   const externalBackendRunning = backendStatus === 'external_running'
   const isWindows = navigator.userAgent.includes('Windows')
+  const bridgePortHelp = getPortConflictHelp(3711, isWindows)
   const webwright = getWebwrightPresentation(webwrightStatus)
   const webwrightColor = webwright.tone === 'success' ? 'var(--success)'
     : webwright.tone === 'warning' ? 'var(--warning)'
@@ -130,12 +132,12 @@ export default function StatusBar() {
       {/* Bridge port 3711 occupied by external process — workflows won't work reliably */}
       {bridgePortInUse && (
         <span
-          title="终端执行：kill $(lsof -ti tcp:3711) 后重启 WeWorker"
+          title={bridgePortHelp.title}
           style={{ fontSize: 10, color: 'var(--warning)', display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.3 }}
         >
           <span>⚠ 端口 3711 被其他进程占用</span>
           <code style={{ fontSize: 10, background: 'var(--bg-secondary, #f0f0f0)', padding: '1px 4px', borderRadius: 3, color: 'var(--text-secondary)', userSelect: 'all' }}>
-            kill $(lsof -ti tcp:3711)
+            {bridgePortHelp.command}
           </code>
         </span>
       )}

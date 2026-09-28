@@ -69,7 +69,7 @@ export default function ModelSelector({ disabled, onPendingChange }) {
 
   const provider = configuredProviders.find(item => item.id === activeProvider)
   const modelSource = catalog?.provider === activeProvider
-    ? catalog.models
+    ? catalog?.models
     : provider?.models
   const modelOptions = buildModelOptions(modelSource, model, { annotateCurrent: false })
   const unavailable = disabled || pending || !loaded

@@ -36,7 +36,7 @@ export function createModelConfiguration(settings: Settings, providerId: string)
     context_limit: DEFAULT_CONTEXT_LIMIT,
     base_url: active?.base_url || legacyBaseUrl,
     base_url_is_full: providerId === 'custom' && (active ? active.base_url_is_full === true : settings.base_url_is_full_custom === true),
-    openai_base_url: active?.openai_base_url || legacyOpenAiBaseUrl,
+    openai_base_url: active?.openai_base_url ?? legacyOpenAiBaseUrl,
     openai_base_url_is_full: providerId === 'custom' && (active ? active.openai_base_url_is_full === true : settings.openai_base_url_is_full_custom === true),
     auth_type: active?.auth_type || (providerId === 'custom' ? settings.custom_auth_type : 'api_key'),
   }

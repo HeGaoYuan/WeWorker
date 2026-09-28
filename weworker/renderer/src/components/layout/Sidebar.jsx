@@ -7,12 +7,13 @@ import Tooltip from '../Tooltip.jsx'
 import { useWorksStore } from '../../store/works.js'
 import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
+
 import { useCapabilitiesPanelStore } from '../../store/capabilities-panel.js'
 import { useUserFilesStore } from '../../store/user-files.js'
 import { useExplorationPageStore } from '../../store/exploration-page.js'
 import { useWebsiteExplorationStore, leaveWebsiteExploration } from '../../store/website-exploration.js'
 
-export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }) {
+export default function Sidebar({ section, onOpenSettings, collapsed, onCollapse, width }) {
   const createWork = useWorksStore((s) => s.createWork)
   const createTask = useScheduledTasksStore((s) => s.createTask)
   const loadTasks = useScheduledTasksStore((s) => s.loadTasks)
@@ -48,8 +49,8 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
 
   const handleCreateTask = async () => {
     if (!await leaveWebsiteExploration()) return
-    useToolPackagePageStore.getState().closePage()
     useExplorationPageStore.getState().closePage()
+    useToolPackagePageStore.getState().closePage()
     // If there's already an unconfigured task (empty prompt), just select it
     const tasks = useScheduledTasksStore.getState().tasks
     const unconfigured = tasks.find(t => !t.prompt_template && t.title === '新定时任务')
@@ -67,19 +68,9 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
 
   const handleCreateWork = async () => {
     if (!await leaveWebsiteExploration()) return
+    useExplorationPageStore.getState().closePage()
     useToolPackagePageStore.getState().closePage()
-    useExplorationPageStore.getState().closePage()
     createWork()
-  }
-
-  const handleOpenToolPackage = async () => {
-    if (!await leaveWebsiteExploration()) return
-    useExplorationPageStore.getState().closePage()
-    useWorksStore.setState({ activeWorkId: null })
-    useScheduledTasksStore.setState({ activeTaskId: null })
-    useUserFilesStore?.getState?.()?.closePanel?.()
-    useCapabilitiesPanelStore?.getState?.()?.closePanel?.()
-    openToolPackagePage()
   }
 
   const handleOpenExploration = async () => {
@@ -94,29 +85,28 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
 
   const handleOpenWorksSection = async () => {
     if (!await leaveWebsiteExploration()) return
-    useToolPackagePageStore.getState().closePage()
     useExplorationPageStore.getState().closePage()
+    useToolPackagePageStore.getState().closePage()
     useScheduledTasksStore.setState({ activeTaskId: null })
   }
 
   const handleOpenTasksSection = async () => {
     if (!await leaveWebsiteExploration()) return
-    useToolPackagePageStore.getState().closePage()
     useExplorationPageStore.getState().closePage()
+    useToolPackagePageStore.getState().closePage()
     useWorksStore.setState({ activeWorkId: null })
     const state = useScheduledTasksStore.getState()
     if (!state.activeTaskId && state.tasks[0]?.id) state.selectTask(state.tasks[0].id)
   }
 
-  const worksSectionActive = !websiteOpen && !toolPackageOpen && !explorationOpen && !activeTaskId
-  const tasksSectionActive = !websiteOpen && !toolPackageOpen && !explorationOpen && Boolean(activeTaskId)
+  const worksSectionActive = section === 'conversation' && !toolPackageOpen && !activeTaskId
+  const tasksSectionActive = section === 'tasks' && !toolPackageOpen
 
   return (
-    <div style={{
+    <div className="workspace-sidebar" style={{
       width: collapsed ? 0 : width,
       minWidth: collapsed ? 0 : width,
       background: 'var(--bg-secondary)',
-      borderRight: collapsed ? 'none' : '1px solid var(--border)',
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
@@ -124,25 +114,6 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
       overflow: 'hidden',
       transition: 'width 0.2s ease, min-width 0.2s ease',
     }}>
-      <div style={{
-        padding: '10px 12px 4px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        WebkitAppRegion: 'drag',
-      }}>
-        <button
-          type="button"
-          onClick={handleOpenToolPackage}
-          style={{
-            ...sidebarSectionButtonStyle,
-            color: toolPackageOpen ? 'var(--text-primary)' : 'var(--text-muted)',
-          }}
-        >
-          <ToolPackageNavIcon size={13} />
-          <span>SKILLS与场景</span>
-        </button>
-      </div>
       <div style={{ padding: '2px 12px 6px', WebkitAppRegion: 'no-drag' }}>
         <button
           type="button"
@@ -170,8 +141,8 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
           <ExplorationNavIcon size={13} /><span>网站探索agent{websiteActivity.running ? ' · 运行中' : ''}</span>
         </button>
       </div>
-      {/* 任务 section */}
-      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {section === 'conversation' && (
+      <div className="sidebar-task-section" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <div style={{
           padding: '10px 12px 4px',
           display: 'flex',
@@ -182,13 +153,14 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
           <button
             type="button"
             onClick={handleOpenWorksSection}
+            className="sidebar-section-heading"
             style={{
               ...sidebarSectionButtonStyle,
               color: worksSectionActive ? 'var(--text-primary)' : 'var(--text-muted)',
             }}
           >
             <WorksNavIcon size={13} />
-            <span>任务</span>
+            <span>对话</span>
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, WebkitAppRegion: 'no-drag' }}>
             {/* Label filter — only visible when there are labeled works or a filter is active */}
@@ -350,12 +322,10 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
           <WorksList searchQuery={searchQuery} />
         </div>
       </div>
+      )}
 
-      {/* Divider */}
-      <div style={{ borderTop: '1px solid var(--border)' }} />
-
-      {/* 定时任务 section */}
-      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {section === 'tasks' && (
+      <div className="sidebar-scheduled-section" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <div style={{
           padding: '8px 12px 4px',
           display: 'flex',
@@ -366,6 +336,7 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
           <button
             type="button"
             onClick={handleOpenTasksSection}
+            className="sidebar-section-heading"
             style={{
               ...sidebarSectionButtonStyle,
               color: tasksSectionActive ? 'var(--text-primary)' : 'var(--text-muted)',
@@ -395,13 +366,14 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
           </button>
           </Tooltip>
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', WebkitAppRegion: 'no-drag' }}>
+      <div style={{ flex: 1, overflowY: 'auto', WebkitAppRegion: 'no-drag' }}>
           <ScheduledTasksList />
         </div>
       </div>
+      )}
 
       {/* Bottom bar */}
-      <div style={{
+      <div className="sidebar-footer" style={{
         borderTop: '1px solid var(--border)',
         padding: '8px 12px',
         display: 'flex',
@@ -442,26 +414,6 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
   )
 }
 
-function ToolPackageNavIcon({ size = 15 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 7.5 12 3l8 4.5-8 4.5-8-4.5Z" />
-      <path d="M4 12.5 12 17l8-4.5" />
-      <path d="M4 17.5 12 22l8-4.5" />
-    </svg>
-  )
-}
-
-function ExplorationNavIcon({ size = 15 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-4-4" />
-      <path d="M8 11h6M11 8v6" />
-    </svg>
-  )
-}
-
 function WorksNavIcon({ size = 15 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -494,4 +446,14 @@ const sidebarSectionButtonStyle = {
   fontSize: 11,
   fontWeight: 600,
   textAlign: 'left',
+}
+
+function ExplorationNavIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+      <path d="M8 11h6M11 8v6" />
+    </svg>
+  )
 }

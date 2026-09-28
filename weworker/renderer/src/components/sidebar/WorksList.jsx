@@ -1,8 +1,8 @@
+import { leaveWebsiteExploration } from '../../store/website-exploration.js'
+import { useExplorationPageStore } from '../../store/exploration-page.js'
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useWorksStore } from '../../store/works.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
-import { useExplorationPageStore } from '../../store/exploration-page.js'
-import { leaveWebsiteExploration } from '../../store/website-exploration.js'
 
 const LABEL_COLORS = {
   red: '#ef4444',
@@ -24,6 +24,29 @@ const LABEL_OPTIONS = [
 
 export { LABEL_COLORS, LABEL_OPTIONS }
 
+function getWorkFolderName(work) {
+  const candidate = work?.folder_name
+    || work?.folderName
+    || work?.workspace_name
+    || work?.workspaceName
+    || work?.project_name
+    || work?.projectName
+    || work?.folder
+    || work?.workspace
+    || work?.project
+  return String(candidate || '默认工作区').trim() || '默认工作区'
+}
+
+function groupWorksByFolder(works) {
+  const groups = new Map()
+  for (const work of works) {
+    const name = getWorkFolderName(work)
+    if (!groups.has(name)) groups.set(name, [])
+    groups.get(name).push(work)
+  }
+  return [...groups.entries()].map(([name, items]) => ({ name, items }))
+}
+
 export default function WorksList({ searchQuery = '' }) {
   const works = useWorksStore((s) => Array.isArray(s.works) ? s.works : [])
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
@@ -32,6 +55,15 @@ export default function WorksList({ searchQuery = '' }) {
   const labelFilter = useWorksStore((s) => s.labelFilter)
   const closeToolPackagePage = useToolPackagePageStore((s) => s.closePage)
   const closeExplorationPage = useExplorationPageStore((s) => s.closePage)
+  const [collapsedFolders, setCollapsedFolders] = useState(() => {
+    if (typeof localStorage === 'undefined') return {}
+    try {
+      const saved = JSON.parse(localStorage.getItem('weworker.collapsed-work-folders') || '{}')
+      return saved && typeof saved === 'object' ? saved : {}
+    } catch {
+      return {}
+    }
+  })
 
   const filtered = works.filter((w) => {
     if (labelFilter && w.label !== labelFilter) return false
@@ -60,23 +92,75 @@ export default function WorksList({ searchQuery = '' }) {
     )
   }
 
+  const folderGroups = groupWorksByFolder(filtered)
+  const toggleFolder = (folderName) => {
+    setCollapsedFolders((current) => {
+      const next = { ...current, [folderName]: !current[folderName] }
+      try {
+        localStorage.setItem('weworker.collapsed-work-folders', JSON.stringify(next))
+      } catch {
+        // Local storage is only a visual preference; keep the toggle usable when unavailable.
+      }
+      return next
+    })
+  }
+
   return (
-    <div style={{ padding: '4px 0' }}>
-      {filtered.map((w) => (
-        <WorkItem
-          key={w.id}
-          work={w}
-          active={w.id === activeWorkId}
-          onSelect={async () => {
-            if (!await leaveWebsiteExploration()) return
-            closeToolPackagePage()
-            closeExplorationPage()
-            selectWork(w.id)
-          }}
-          onDelete={() => deleteWork(w.id)}
-        />
-      ))}
+    <div className="work-folder-list">
+      {folderGroups.map((group) => {
+        const collapsed = Boolean(collapsedFolders[group.name])
+        return (
+          <section className={`work-folder-group${collapsed ? ' is-collapsed' : ''}`} key={group.name}>
+            <button
+              type="button"
+              className="work-folder-heading"
+              aria-expanded={!collapsed}
+              onClick={() => toggleFolder(group.name)}
+            >
+              <ChevronIcon size={13} collapsed={collapsed} />
+              <FolderIcon size={15} />
+              <span className="work-folder-heading__name">{group.name}</span>
+              <span className="work-folder-heading__count">{group.items.length}</span>
+            </button>
+            {!collapsed && (
+              <div className="work-folder-items">
+                {group.items.map((w) => (
+                  <WorkItem
+                    key={w.id}
+                    work={w}
+                    active={w.id === activeWorkId}
+                    onSelect={async () => {
+                      if (!await leaveWebsiteExploration()) return
+                      closeExplorationPage()
+                      closeToolPackagePage()
+                      selectWork(w.id)
+                    }}
+                    onDelete={() => deleteWork(w.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
     </div>
+  )
+}
+
+function FolderIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2v-9.5a2 2 0 0 1 2-2Z" />
+      <path d="M2.5 9h18" />
+    </svg>
+  )
+}
+
+function ChevronIcon({ size = 13, collapsed }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true" className="work-folder-heading__chevron">
+      <path d="m6 3.5 4 4.5-4 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: collapsed ? 'none' : 'rotate(90deg)', transformOrigin: '8px 8px' }} />
+    </svg>
   )
 }
 
@@ -171,6 +255,7 @@ function WorkItem({ work, active, onSelect, onDelete }) {
           background: active ? 'var(--bg-active)' : hovered ? 'var(--bg-hover)' : 'transparent',
           borderRadius: 6,
           margin: '1px 6px',
+          marginLeft: 22,
           display: 'flex',
           alignItems: 'center',
           gap: 6,

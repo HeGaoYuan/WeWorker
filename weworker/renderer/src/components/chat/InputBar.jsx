@@ -760,7 +760,7 @@ export default function InputBar({
   )
 
   const toolbarEl = (
-    <div style={{
+    <div className="chat-input-toolbar" style={{
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
@@ -900,7 +900,7 @@ export default function InputBar({
   }
 
   return (
-    <div style={outerStyle}>
+    <div className="chat-input-composer" style={outerStyle}>
       <div
         data-chat-input-surface
         data-chat-command-mode={isCommandMode ? 'true' : 'false'}

@@ -14,9 +14,11 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
   flex-wrap: nowrap;
+  padding: 0 2px;
+  border-radius: 10px;
 }
 
 .chat-model-selector .app-dropdown-select {
@@ -27,19 +29,43 @@
 .chat-model-selector .app-dropdown-select__trigger {
   width: 100%;
   max-width: none;
-  height: 28px;
-  padding: 0 8px;
-  gap: 6px;
-  border-radius: 7px;
+  height: 30px;
+  padding: 0 7px;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 560;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.chat-model-selector .app-dropdown-select__trigger:hover:not(:disabled),
+.chat-model-selector .app-dropdown-select__trigger[aria-expanded='true'],
+.chat-model-selector .app-dropdown-select__trigger:focus-visible {
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  border-color: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
+  outline: none;
+}
+
+.chat-model-selector .app-dropdown-select__trigger:disabled {
+  opacity: 0.55;
+}
+
+.chat-model-selector .app-dropdown-select__caret {
+  font-size: 9px;
+  color: var(--text-muted);
 }
 
 .chat-model-selector__provider {
-  width: 104px;
+  width: 112px;
 }
 
 .chat-model-selector__model {
-  width: 184px;
+  width: 178px;
 }
 
 .chat-model-selector .app-dropdown-select__label {
@@ -48,9 +74,33 @@
 
 .chat-model-selector-menu .app-dropdown-menu-item {
   width: 100%;
+  min-height: 34px;
+  padding: 8px 10px;
+  border-radius: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-model-selector-menu {
+  min-width: 190px !important;
+  padding: 6px;
+  gap: 3px;
+  border-radius: 12px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.14);
+}
+
+.chat-model-selector-menu .app-dropdown-menu-item:hover,
+.chat-model-selector-menu .app-dropdown-menu-item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.chat-model-selector-menu .app-dropdown-menu-item[aria-selected='true'],
+.chat-model-selector-menu .app-dropdown-menu-item.is-selected {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 @media (max-width: 480px) {
@@ -63,10 +113,10 @@
   }
 
   .chat-model-selector__provider {
-    width: 96px;
+    width: 98px;
   }
 
   .chat-model-selector__model {
-    width: 128px;
+    width: 132px;
   }
 }

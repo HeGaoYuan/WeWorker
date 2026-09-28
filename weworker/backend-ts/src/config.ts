@@ -221,6 +221,7 @@ export interface Settings {
   openai_base_url_is_full_custom?: boolean
 
   exploration_base_url: string
+  exploration_base_url_is_full?: boolean
   exploration_api_key: string
   exploration_model: string
   exploration_use_main_key: boolean
@@ -355,6 +356,7 @@ const DEFAULTS: Settings = {
   openai_base_url_is_full_custom: false,
 
   exploration_base_url: '',
+  exploration_base_url_is_full: false,
   exploration_api_key: '',
   exploration_model: '',
   exploration_use_main_key: true,

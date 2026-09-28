@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Sidebar from './components/layout/Sidebar.jsx'
+import AppRail from './components/layout/AppRail.jsx'
 import MainArea from './components/layout/MainArea.jsx'
 import SettingsPage from './components/settings/SettingsModal.jsx'
 import Tooltip from './components/Tooltip.jsx'
@@ -19,11 +20,12 @@ import { useUserFilesStore } from './store/user-files.js'
 import { useTerminalStore } from './store/terminal.js'
 import { useToolPackagePageStore } from './store/tool-package-page.js'
 import { useExplorationPageStore } from './store/exploration-page.js'
-import { useWebsiteExplorationStore } from './store/website-exploration.js'
+import { useWebsiteExplorationStore, leaveWebsiteExploration } from './store/website-exploration.js'
 import { useSitesStore } from './store/sites.js'
 import { WebsiteExplorationGuard } from './components/website-exploration/WebsiteExplorationPage.jsx'
 import { useAntdThemeConfig } from './theme/antd-theme.js'
 import { streamBackendEvents } from './api/http.js'
+import './workspace-theme.css'
 
 
 function getInitialTheme() {
@@ -34,6 +36,7 @@ function getInitialTheme() {
 
 export default function App() {
   const [showSettings, setShowSettings] = useState(false)
+  const [activeSidebarSection, setActiveSidebarSection] = useState('conversation')
   const [theme, setTheme] = useState(getInitialTheme)
   const themeSwitchTimerRef = useRef(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -52,7 +55,7 @@ export default function App() {
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('sidebar_width')
-    return saved ? Number(saved) : 240
+    return saved ? Number(saved) : 264
   })
   const SIDEBAR_MIN = 180
   const SIDEBAR_MAX = 480
@@ -67,6 +70,8 @@ export default function App() {
   const toggleUserFilesPanel = useUserFilesStore((s) => s.togglePanel)
   const userFilesOpen = useUserFilesStore((s) => s.open)
   const toolPackageOpen = useToolPackagePageStore((s) => s.open)
+  const openToolPackagePage = useToolPackagePageStore((s) => s.openPage)
+
   const explorationOpen = useExplorationPageStore((s) => s.open)
   const websiteOpen = useWebsiteExplorationStore((s) => s.open)
   const focusedWorkspaceOpen = toolPackageOpen || explorationOpen || websiteOpen
@@ -83,6 +88,7 @@ export default function App() {
 
   useEffect(() => window.electronAPI?.onWebsiteExplorationOpen?.(() => useWebsiteExplorationStore.setState({ open: true })), [])
 
+
   useEffect(() => {
     loadWorks()
     loadSettings().then(() => loadZcfCatalog())
@@ -97,10 +103,9 @@ export default function App() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  // 放在主题 class effect 之后声明：切换时先应用 class，再解析 CSS 变量为 antd token。
   const antdThemeConfig = useAntdThemeConfig(theme)
 
-  // SSE listener for task, terminal and Adapter state events
+  // SSE listener for task_notification and terminal events
   useEffect(() => {
     const controller = new AbortController()
     let retryTimer = 0
@@ -118,6 +123,10 @@ export default function App() {
         }
         if (parsed.type === 'adapter_state_changed') {
           useSitesStore.getState().refreshSites()
+          return
+        }
+        if (parsed.type === 'works_changed') {
+          useWorksStore.getState().loadWorks()
           return
         }
         if (parsed.type !== 'task_notification') return
@@ -186,6 +195,45 @@ export default function App() {
     toggleUserFilesPanel()
   }
 
+  const handleOpenConversation = async () => {
+    if (!await leaveWebsiteExploration()) return
+    useExplorationPageStore.getState().closePage()
+    setActiveSidebarSection('conversation')
+    useToolPackagePageStore.getState().closePage()
+    useScheduledTasksStore.setState({ activeTaskId: null })
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+    useUserFilesStore.getState().closePanel()
+    const state = useWorksStore.getState()
+    if (!state.activeWorkId && state.works[0]?.id) {
+      state.selectWork(state.works[0].id)
+    }
+  }
+
+  const handleOpenTasks = async () => {
+    if (!await leaveWebsiteExploration()) return
+    useExplorationPageStore.getState().closePage()
+    setActiveSidebarSection('tasks')
+    useToolPackagePageStore.getState().closePage()
+    useWorksStore.setState({ activeWorkId: null })
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+    useUserFilesStore.getState().closePanel()
+    const state = useScheduledTasksStore.getState()
+    if (state.tasks[0]?.id) state.selectTask(state.tasks[0].id)
+  }
+
+  const handleOpenSkills = async () => {
+    if (!await leaveWebsiteExploration()) return
+    useExplorationPageStore.getState().closePage()
+    useWorksStore.setState({ activeWorkId: null })
+    useScheduledTasksStore.setState({ activeTaskId: null })
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+    useUserFilesStore.getState().closePanel()
+    openToolPackagePage()
+  }
+
   const onResizeStart = useCallback((e) => {
     e.preventDefault()
     draggingRef.current = true
@@ -215,14 +263,13 @@ export default function App() {
 
   return (
     <ConfigProvider locale={zhCN} theme={antdThemeConfig}>
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <div className="app-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {/* Full-width title bar — draggable, contains app title + theme toggle */}
-      <div style={{
+      <div className="app-titlebar" style={{
         height: 38,
         minHeight: 38,
         WebkitAppRegion: 'drag',
         background: 'var(--bg-secondary)',
-        borderBottom: '1px solid var(--border)',
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
@@ -342,24 +389,36 @@ export default function App() {
         </div>
       </div>
 
-      <div data-workspace-content style={{ display: showSettings ? 'none' : 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <Sidebar onOpenSettings={() => setShowSettings(true)} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(true)} width={sidebarWidth} />
-        {!sidebarCollapsed && (
-          <div
-            onMouseDown={onResizeStart}
-            style={{
-              width: 4,
-              cursor: 'col-resize',
-              flexShrink: 0,
-              background: 'transparent',
-              position: 'relative',
-              zIndex: 10,
-              marginLeft: -2,
-              marginRight: -2,
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent)'}
-            onMouseLeave={(e) => { if (!draggingRef.current) e.currentTarget.style.background = 'transparent' }}
-          />
+      <div className="app-workspace" data-workspace-content style={{ display: showSettings ? 'none' : 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <AppRail
+          activeSection={activeSidebarSection}
+          onOpenConversation={handleOpenConversation}
+          onOpenTasks={handleOpenTasks}
+          onOpenSkills={handleOpenSkills}
+          onOpenFiles={handleToggleUserFilesPanel}
+          onOpenSettings={() => setShowSettings(true)}
+        />
+        {!toolPackageOpen && (
+          <>
+            <Sidebar section={activeSidebarSection} onOpenSettings={() => setShowSettings(true)} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(true)} width={sidebarWidth} />
+            {!sidebarCollapsed && (
+              <div
+                onMouseDown={onResizeStart}
+                style={{
+                  width: 4,
+                  cursor: 'col-resize',
+                  flexShrink: 0,
+                  background: 'transparent',
+                  position: 'relative',
+                  zIndex: 10,
+                  marginLeft: -2,
+                  marginRight: -2,
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent)'}
+                onMouseLeave={(e) => { if (!draggingRef.current) e.currentTarget.style.background = 'transparent' }}
+              />
+            )}
+          </>
         )}
         <MainArea onOpenSettings={() => setShowSettings(true)} />
       </div>
