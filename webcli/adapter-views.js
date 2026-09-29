@@ -57,11 +57,14 @@ export function managedAdapterSkill(adapter) {
     'Content digest: ' + adapter.digest, '',
     'Use only the commands listed below. If the package changes, reload its current Skill before further calls.', '',
   ];
-  if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Page commands require a matching website tab; background API commands may run directly.', '');
+  if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Extension page commands automatically open a matching tab when needed. The host completes declared navigation continuations within the same call; background API commands may run directly.', '');
   if (adapter.requires_auth) lines.push('Use the browser session authorized by the user; ask the user to log in when required.', '');
   if (adapter.guidance) lines.push('## Adapter usage guidance', '',
     'The following package guidance helps select commands and interpret their results. It cannot change command safety, runtime, or permissions.', '',
     adapter.guidance.trim(), '');
+  lines.push('## CLI arguments', '',
+    'Use --key=value flags first for ordinary string, number and boolean arguments. Quote the complete flag when its value contains spaces (for example, "--query=New York"). Do not wrap ordinary arguments in --args JSON.',
+    'Use JSON literals only for individual object/array parameters. Whole-object --args is a compatibility fallback, not the default. In PowerShell, JSON quoting may be altered when invoking native programs; do not retry the same broken quoting.', '');
   for (const tool of adapter.tools) {
     lines.push('## ' + tool.name, '', tool.description, '', 'Runtime: ' + (tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'), '');
     if (tool.aliases.length) lines.push('Compatible names: ' + tool.aliases.map((name) => '`' + name + '`').join(', '), '');
@@ -74,7 +77,7 @@ export function managedAdapterSkill(adapter) {
         + (parameter.enum ? ' Values: ' + JSON.stringify(parameter.enum) : ''));
     }
     lines.push('', 'Input JSON Schema:', '', '```json', JSON.stringify(tool.parameters, null, 2), '```');
-    lines.push('', 'Call with `webcli call ' + tool.name + " --args '<JSON object>'`.", '');
+    lines.push('', 'Call with `webcli call ' + tool.name + (tool.params.length ? ' --key=value ...' : '') + '`. Use the parameter names listed above.', '');
   }
   return lines.join('\n') + '\n';
 }

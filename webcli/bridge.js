@@ -142,14 +142,17 @@ export async function handleBackendRuntimeFetch(payload = {}, traceID = null) {
     method,
     url,
     headers: sanitizeTraceValue(headers || {}),
-    body: summarizeTraceBody(requestOptions.body, requestOptions.bodyEncoding),
+    body: payload.redactBodyInTrace === true ? '[redacted]' : summarizeTraceBody(requestOptions.body, requestOptions.bodyEncoding),
   })}`);
   const replay = await performApiReplayRequest({
     url,
     method,
     headers,
     body: requestBody,
+    redirect: requestOptions.redirect,
     timeoutMs: requestOptions.timeoutMs,
+    responseEncoding: requestOptions.responseEncoding,
+    maxResponseBytes: requestOptions.maxResponseBytes,
   });
   if (!replay.ok || !replay.response) {
     const error = replay.error || 'backend fetch failed';
@@ -163,7 +166,7 @@ export async function handleBackendRuntimeFetch(payload = {}, traceID = null) {
     status: response.status,
     ok: response.status >= 200 && response.status < 300,
     headers: sanitizeTraceValue(responseHeaders),
-    body: summarizeTraceBody(responseBody, undefined, TRACE_RESPONSE_PREVIEW_LIMIT),
+    body: payload.redactBodyInTrace === true ? '[redacted]' : summarizeTraceBody(responseBody, response.bodyEncoding, TRACE_RESPONSE_PREVIEW_LIMIT),
     transport: response.replay?.transport || '',
   })}`);
   return {
@@ -171,6 +174,7 @@ export async function handleBackendRuntimeFetch(payload = {}, traceID = null) {
     ok: response.status >= 200 && response.status < 300,
     headers: responseHeaders,
     body: responseBody,
+    ...(response.bodyEncoding ? { bodyEncoding: response.bodyEncoding, size: response.size } : {}),
     url: response.url || url,
     redirected: Boolean(response.redirected),
     replay: response.replay,
@@ -290,7 +294,12 @@ function normalizeReplayRequest(request = {}) {
     throw new Error(`api replay body exceeds ${API_REPLAY_BODY_LIMIT} bytes`);
   }
 
+  const responseEncoding = request.responseEncoding ?? 'utf8';
+  if (!['utf8', 'base64'].includes(responseEncoding)) throw new Error('Unsupported responseEncoding');
+  const maxResponseBytes = request.maxResponseBytes ?? 8 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 50 * 1024 * 1024) throw new Error('maxResponseBytes must be an integer from 1 to 52428800');
   return {
+    responseEncoding, maxResponseBytes,
     url: url.toString(),
     method,
     headers: normalizeReplayHeaders(request.headers),
@@ -303,7 +312,7 @@ function normalizeReplayRequest(request = {}) {
 export async function performApiReplayRequest(request = {}, options = {}) {
   const normalized = normalizeReplayRequest(request);
   const fetchResult = await performApiReplayRequestViaFetch(normalized, options.fetchImpl || fetch);
-  if (fetchResult.ok) return fetchResult;
+  if (fetchResult.ok || fetchResult.retryable === false) return fetchResult;
 
   const curlResult = await performApiReplayRequestViaCurl(normalized, fetchResult.error);
   if (curlResult.ok) return curlResult;
@@ -330,7 +339,20 @@ async function performApiReplayRequestViaFetch(normalized, fetchImpl) {
       redirect: normalized.redirect,
       signal: controller.signal,
     });
-    const text = await response.text();
+    let binary;
+    if (normalized.responseEncoding === 'base64') {
+      const declared = Number(response.headers.get('content-length'));
+      const tooLarge = () => Object.assign(new Error('Binary response exceeds maxResponseBytes'), { code: 'RESPONSE_TOO_LARGE' });
+      if (declared > normalized.maxResponseBytes) { await response.body?.cancel(); throw tooLarge(); }
+      const chunks = []; let size = 0;
+      if (response.body) {
+        const reader = response.body.getReader();
+        try { while (true) { const {done,value} = await reader.read(); if(done)break; size += value.byteLength; if(size > normalized.maxResponseBytes){await reader.cancel();throw tooLarge();} chunks.push(Buffer.from(value)); } }
+        finally { reader.releaseLock(); }
+      }
+      binary = Buffer.concat(chunks);
+    }
+    const text = binary ? binary.toString('base64') : await response.text();
     return {
       ok: true,
       response: {
@@ -340,12 +362,14 @@ async function performApiReplayRequestViaFetch(normalized, fetchImpl) {
         redirected: Boolean(response.redirected),
         headers: Object.fromEntries(response.headers.entries()),
         body: text,
+        ...(binary ? { bodyEncoding: 'base64', size: binary.length } : {}),
         replay: { transport: 'node-fetch' },
       },
     };
   } catch (err) {
     return {
       ok: false,
+      ...(err?.code === 'RESPONSE_TOO_LARGE' ? { retryable: false } : {}),
       error: err?.name === 'AbortError'
         ? `api replay timeout after ${normalized.timeoutMs}ms`
         : formatReplayError(err),
@@ -376,8 +400,9 @@ async function performApiReplayRequestViaCurl(normalized, fetchError = '') {
     const configLines = [
       'silent',
       'show-error',
-      'location',
+      ...(normalized.redirect === 'follow' ? ['location'] : []),
       'ssl-no-revoke',
+      ...(normalized.responseEncoding === 'base64' ? [`max-filesize = ${normalized.maxResponseBytes}`] : []),
       `max-time = ${Math.ceil(normalized.timeoutMs / 1000)}`,
       `request = "${escapeCurlConfigValue(normalized.method)}"`,
       `url = "${escapeCurlConfigValue(normalized.url)}"`,
@@ -403,7 +428,10 @@ async function performApiReplayRequestViaCurl(normalized, fetchError = '') {
     const outputLines = String(stdout || '').trim().split(/\r?\n/);
     const status = Number(outputLines[outputLines.length - 2] || 0);
     const finalUrl = outputLines[outputLines.length - 1] || normalized.url;
-    const body = fs.existsSync(bodyOutPath) ? fs.readFileSync(bodyOutPath, 'utf8') : '';
+    const binaryMode = normalized.responseEncoding === 'base64';
+    if (binaryMode && fs.existsSync(bodyOutPath) && fs.statSync(bodyOutPath).size > normalized.maxResponseBytes) throw new Error('Binary response exceeds maxResponseBytes');
+    const responseBytes = fs.existsSync(bodyOutPath) ? fs.readFileSync(bodyOutPath) : Buffer.alloc(0);
+    const body = responseBytes.toString(binaryMode ? 'base64' : 'utf8');
     const rawHeaders = fs.existsSync(headerOutPath) ? fs.readFileSync(headerOutPath, 'utf8') : '';
     return {
       ok: true,
@@ -414,6 +442,7 @@ async function performApiReplayRequestViaCurl(normalized, fetchError = '') {
         redirected: finalUrl !== normalized.url,
         headers: parseCurlResponseHeaders(rawHeaders),
         body,
+        ...(binaryMode ? { bodyEncoding: 'base64', size: responseBytes.length } : {}),
         replay: {
           transport: 'curl',
           fetchError,

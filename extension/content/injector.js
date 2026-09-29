@@ -132,6 +132,18 @@ function summarizePrivilegedResult(action, result) {
   if (action === 'backend_file_read') {
     return sanitizeTraceValue({ ...result, content: result?.content ? `[content length=${String(result.content).length}]` : undefined });
   }
+  if (action === 'network_capture_read') {
+    return {
+      count: Array.isArray(result?.entries) ? result.entries.length : 0,
+      entries: (result?.entries || []).map((entry) => ({
+        url: entry.url,
+        method: entry.method,
+        responseStatus: entry.responseStatus,
+        responseBodyFullSize: entry.responseBodyFullSize,
+        responseBodyTruncated: entry.responseBodyTruncated,
+      })),
+    };
+  }
   return sanitizeTraceValue(result);
 }
 

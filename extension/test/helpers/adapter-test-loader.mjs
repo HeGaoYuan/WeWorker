@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import vm from 'node:vm'
 import { createHostAdapterClient } from '../../background/host-adapter-client.js'
-import { createHostAdapterRuntime } from '../../background/host-adapter-runtime.js'
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from '../../background/host-adapter-runtime.js'
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from '../../background/managed-background-runtime.js'
 import { buildV2Bootstrap, v2InjectionFiles } from '../../background/v2-loader.js'
 import { injectAdapterSources } from '../../background/adapter-script-loader.js'
@@ -158,6 +158,8 @@ export function runServiceWorkerInContext(context, options = {}) {
   context.scopedGenerationPreviewScripts = scopedGenerationPreviewScripts
   context.selectCompatibleCaptureBoundEntry = selectCompatibleCaptureBoundEntry
   context.createHostAdapterClient = createHostAdapterClient
+  context.navigateAdapterTab = navigateAdapterTab
+  context.assertAdapterNavigationUrl = assertAdapterNavigationUrl
   context.createHostAdapterRuntime = createHostAdapterRuntime
   context.createManagedBackgroundRuntime = createManagedBackgroundRuntime
   context.MANAGED_RUNNER_PATH = MANAGED_RUNNER_PATH

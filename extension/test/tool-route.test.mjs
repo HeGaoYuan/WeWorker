@@ -94,7 +94,7 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {},
     },
     tabs: {
       captureVisibleTab: async () => "data:image/png;base64,",
-      create: async ({ url }) => ({ id: 999, url }),
+      create: async ({ url }) => { const tab = { id: 999, url, status: "complete" }; tabs.push(tab); return tab; },
       get: async (id) => tabs.find((tab) => tab.id === id) ?? null,
       onRemoved: makeEvent(),
       onUpdated: makeEvent(),
@@ -262,6 +262,44 @@ test("managed write opt-out comes from the pinned package, not caller arguments"
   }
 });
 
+test("Ctrip suggestion and session-check commands run in the background with no site tab", async () => {
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'adapters/ctrip.com/manifest.json'), 'utf8'));
+  manifest._hostSnapshot = { profile: 'public', digest: 'fixture-digest' };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: [manifest.name], adapters: [manifest] } });
+  const calls = [];
+  worker.context.getManagedBackgroundRuntime = () => ({ execute: async (...args) => { calls.push(plain(args)); return 'fixture-result'; } });
+  for (const command of ['search', 'hotel-suggest', 'whoami']) {
+    const result = await worker.callNativeTool(`ctrip.com.${command}`, command === 'whoami' ? {} : { query: 'Example City' });
+    assert.equal(result.result, 'fixture-result');
+    assert.equal(calls.at(-1)[1].id, command);
+  }
+  assert.equal(worker.sentToTabs.length, 0);
+});
+
+test("background API fetch can return an authentication error without opening a tab", async () => {
+  const worker = loadServiceWorker();
+  worker.context.runRuntimeBridgeRequest = async () => ({ status: 403, ok: false, url: 'https://example.com/api', body: '' });
+  worker.context.runDirectBrowserFetch = async () => { throw new Error('unexpected browser fallback'); };
+  const result = await worker.context.runDirectBackendFetch({ url: 'https://example.com/api', browserFallback: false });
+  assert.equal(result.status, 403);
+});
+
+test("background Ctrip session check reads allowed cookies without opening a tab", async () => {
+  const worker = loadServiceWorker();
+  const queried = [];
+  worker.context.chrome.cookies = { getAll: async (options) => {
+    queried.push(options);
+    return [{ name: 'login_uid', value: 'fixture-only', domain: '.ctrip.com' }];
+  } };
+  vm.runInContext("directRuntimeContext = { routeDomain: 'www.ctrip.com', tabDomain: 'www.ctrip.com', declaredHosts: ['www.ctrip.com'], allowedHosts: ['www.ctrip.com'] }", worker.context);
+  const result = await worker.context.handleDirectRuntimeRequest('cookies_get', {
+    url: 'https://www.ctrip.com/', browserDebugger: false, names: ['login_uid', 'AHeadUserInfo'],
+  });
+  assert.equal(result.cookies.length, 1);
+  assert.deepEqual(plain(queried), [{ url: 'https://www.ctrip.com/' }]);
+  assert.equal(worker.sentToTabs.length, 0);
+});
+
 test("managed helper targets must remain in the current package's declared hosts", () => {
   const { context } = loadServiceWorker();
   const call = {declaredHosts:['app.example.com','*.api.example.org']};
@@ -277,7 +315,7 @@ test("managed command aliases dispatch the canonical handler with the same write
   const manifest = { name: 'fixture', match: ['example.com'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
     commands: [{ id: 'write-item', aliases: ['write_item'], runtime: 'extension', safety: 'write' }] };
-  const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/' }],
+  const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/', status: 'complete' }],
     managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
   const blocked = await worker.callNativeTool('fixture.write_item');
   assert.match(JSON.stringify(blocked), /confirmation/);
@@ -721,4 +759,18 @@ test("service worker smoke covers list_tools, missing tab, and login failure", a
   assert.equal(missingTab.type, "call_tool_error");
   // 自动打开站点后仍未就绪：提示可能需登录
   assert.match(missingTab.error, /已自动打开站点|未找到域名/)
+});
+
+test("managed page calls open the declared route without user setup and do not replay transport errors", async () => {
+  const manifest = { name: 'fixture', match: ['example.com'], _hostSnapshot: { profile: 'public', digest: 'fixture' },
+    commands: [{ id: 'list', runtime: 'extension', routeDomain: 'example.com', safety: 'read' }] };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+  const result = await worker.callNativeTool('fixture.list');
+  assert.equal(result.result.tabId, 999);
+  assert.equal((await worker.context.chrome.tabs.get(999)).url, 'https://example.com/');
+  let calls = 0;
+  worker.context.chrome.tabs.sendMessage = async () => { calls++; throw new Error('The message port closed before a response was received.'); };
+  const failed = await worker.callNativeTool('fixture.list');
+  assert.match(failed.error, /message port closed/);
+  assert.equal(calls, 1);
 });

@@ -115,6 +115,8 @@ describe('long-term memory retrieval', () => {
     })
 
     expect(result.sdk.system_prompt).toContain('用户默认使用中文回复')
+    expect(result.sdk.system_prompt).toContain('历史超时、环境故障和降级方案不能证明当前工具仍不可用')
+    expect(result.sdk.system_prompt).toContain('当前版本 Skill/命令定义与本轮实际结果优先')
     expect(result.sdk.system_prompt).toContain('id=memory-1')
     expect(result.snapshot.categories.find((item) => item.id === 'long_term_memory')?.estimated_tokens).toBeGreaterThan(0)
   })
@@ -194,3 +196,12 @@ describe('long-term memory retrieval', () => {
     }])
   })
 })
+
+it('does not recall an invalidated failure workaround in a new conversation', () => {
+  const store = createStore();
+  const memory = store.create({ type: 'task_execution', key: 'flight-round', content: '往返航班查询超时，直接跳过往返改查单程', facts: {}, scope: { user: 'fixture' }, confidence: 0.9, sourceEventId: 'failure-fixture' });
+  expect(retrieveMemories(store, { query: '往返航班', scope: { user: 'fixture' } }).map(item => item.id)).toContain(memory.id);
+  store.invalidate(memory.id);
+  expect(recallLongTermMemory({ store, query: '往返航班', scope: { user: 'fixture' } }).recalled).toBe('');
+  expect(store.get(memory.id)?.status).toBe('invalid');
+});

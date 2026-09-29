@@ -1,12 +1,21 @@
 {
   "adapters": [
+    "ctrip.com",
     "bilibili.com",
     "mail.qq.com",
     "mail.163.com",
     "jd.com",
     "juejin.cn",
     "xiaohongshu.com",
-    "nnfp.jss.com.cn"
+    "nnfp.jss.com.cn",
+    "12306.cn",
+    "51job.com",
+    "note.youdao.com",
+    "dianping.com",
+    "douyin.com",
+    "douban.com",
+    "zhihu.com",
+    "zhipin.com"
   ],
   "providers": [
     {

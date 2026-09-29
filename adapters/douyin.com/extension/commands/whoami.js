@@ -1,0 +1,3 @@
+/* Adapted from jackwener/OpenCLI 24136945847afbfad266c6c46a8cd335377f9112, Apache-2.0.
+ * Modified for WeWorker v2 registration, direct page extraction and bounded host navigation. */
+(function(){__webcliRegisterCommand('whoami',async()=>{const c=window.__douyin;if(location.hostname!=='creator.douyin.com')return c.navigate('https://creator.douyin.com/creator-micro/content/manage');const j=await c.browserFetch('GET','https://creator.douyin.com/web/api/media/user/info/?aid=1128');const u=j.user_info||j.user;if(!u?.uid)throw new c.AuthRequiredError('douyin','Server did not verify identity');return {logged_in:true,uid:String(u.uid),nickname:u.nickname??null};});})();

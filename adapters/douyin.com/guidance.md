@@ -1,0 +1,19 @@
+# 抖音使用指导
+
+search/user 查询公开内容；profile/videos/drafts/stats/collections 等读取当前创作者账号。公开视频列表与创作者作品不是同一权限范围。长 aweme_id/sec_user_id 必须保持字符串并来自当前结果，不猜 ID。
+
+hashtag 使用 action=search/suggest/hot；search 要 keyword，suggest 要已上传封面 URI cover，不能把本地封面路径或关键词传作 URI。location/activities/collections 用于取得发布关联实体，不能根据名称虚构 poi/活动/合集 ID。
+
+update/delete 是真实业务写操作，须明确作品 ID、变更字段和用户确认。delete 必须从具体 /video/<id> 链接核对卡片，不能按列表位置删除。reschedule 按用户时区给出含偏移的时间或 Unix 秒，约束为至少两小时后且不超过十四天。
+
+当前 draft（上传并保存）与 publish（完整上传、校验、定时发布）尚未接入，drafts 只是读草稿列表，不能冒充保存草稿。不能把打开上传页、更新已有作品或保存草稿说成发布成功。缺少播放量等统计为 null，不是 0。登录抖音首页不保证已获得 creator.douyin.com 创作者权限。
+
+## 调用与证据
+
+普通参数使用 --key=value；复杂结构才使用 JSON。只调用本 Skill 当前 manifest 列出的命令。用户说“第二个”“刚才那条”时保留上一轮实际 ID 和链接，不重新取列表位置代替实体。相对日期按当前日期和用户时区换算并写出实际日期；关键缺参先追问，不能从站点默认值猜用户选择。
+
+只读页面导航由宿主在一次调用中续执行。登录和验证码由用户在连接扩展的同一浏览器中完成；login 只打开官方页并结束，不会等待 timeout 秒或宣称已经登录。whoami 不等于完整登录验收。当前要求、当前 Skill 和本轮证据优先于历史失败记忆。临时失败不能变成永久跳过工具的规则。
+
+接口失败、验证页、字段缺失、页面空状态与真正无结果须区分。字段为 null 或空串表示未知，不补猜。返回列表不等于全站完整结果；limit 是上限。失败保留 trace，不重复相同参数盲目重试，不用降级查询宣称原命令通过。
+
+所有写命令遵守 manifest 的 safety/requires_confirmation；只有用户确认具体目标和内容后才提交。导航准备不等于业务操作完成，写操作不得自动重放。超时后先核查站点状态，不能直接重发。

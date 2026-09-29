@@ -62,6 +62,10 @@ describe('effective Adapter CLI views and generated Skills', () => {
     expect(output).toContain('webcli call demo.list');
     expect(output).toContain('__confirmed: true');
     expect(output).toContain('Input JSON Schema:');
+    expect(output).toContain('webcli call demo.list --key=value');
+    expect(output).not.toContain("--args '<JSON object>'");
+    expect(output).toContain('automatically open a matching tab');
+    expect(output).not.toContain('Page commands require a matching website tab');
     expect(output).toContain('"required": [');
     expect(output).not.toContain(root);
     expect(success(['demo', 'list', 'help'])).toContain('--count=<integer>');
@@ -248,4 +252,16 @@ describe('effective Adapter CLI views and generated Skills', () => {
     expect(run(['adapter', 'list', '--json']).status).toBe(1);
     expect(run(['adapter', 'skill', 'demo']).status).toBe(1);
   });
+});
+
+it('derives Ctrip entity mapping and workflows from the actual versioned package', () => {
+  const packageRoot = fileURLToPath(new URL('../../adapters/ctrip.com/', import.meta.url));
+  installAdapter({ files: readPackageDirectory(packageRoot).files, origin: { kind: 'local' } });
+  const view = managedAdapterView('ctrip.com');
+  const output = managedAdapterSkill(view);
+  expect(output).toContain('destination-search');
+  expect(output).toContain('destinationId=33、hotelCityId=38');
+  expect(output).toContain('webcli call ctrip.com.attraction');
+  expect(output).toContain('一次调用中完成');
+  expect(view.tools.find(tool => tool.id === 'attraction').params.find(param => param.name === 'city').description).toContain('destination-search.destinationId');
 });

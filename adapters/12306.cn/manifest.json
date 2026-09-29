@@ -1,0 +1,260 @@
+{
+  "schema_version": 2,
+  "name": "12306.cn",
+  "version": "0.1.1",
+  "description": "中国铁路12306车站、余票、经停、票价及账号只读查询",
+  "match": [
+    "kyfw.12306.cn"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "12306",
+    "铁路",
+    "车站",
+    "火车票"
+  ],
+  "commands": [
+    {
+      "id": "stations",
+      "runtime": "extension",
+      "module": "extension/commands/stations.js",
+      "routeDomain": "kyfw.12306.cn",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "description": "从12306官方车站表查询中文、拼音、简称或电报码；供铁路查询解析站点，不猜业务编码。",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "车站中文、拼音或电报码"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "trains",
+      "runtime": "extension",
+      "module": "extension/commands/trains.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "List trains between two 12306 stations on a given date (anonymous, no login required)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Origin station: Chinese name (北京), telecode (BJP), or pinyin (beijing)"
+          },
+          "to": {
+            "type": "string",
+            "description": "Destination station: same forms as <from>"
+          },
+          "date": {
+            "type": "string",
+            "description": "Departure date in YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "`Maximum rows (1-${MAX_LIMIT})`",
+            "default": 50
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "train",
+      "runtime": "extension",
+      "module": "extension/commands/train.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "List every station a 12306 train calls at, with arrival / departure / stopover time (anonymous, no login required)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "train-no": {
+            "type": "string",
+            "description": "Internal train_no from `12306 trains` (e.g. 24000000G10L), not the public code (G1)"
+          },
+          "from": {
+            "type": "string",
+            "description": "Origin station for the segment: Chinese name, telecode, or pinyin"
+          },
+          "to": {
+            "type": "string",
+            "description": "Destination station for the segment"
+          },
+          "date": {
+            "type": "string",
+            "description": "Departure date in YYYY-MM-DD"
+          }
+        },
+        "required": [
+          "train-no",
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "price",
+      "runtime": "extension",
+      "module": "extension/commands/price.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "Look up 12306 ticket prices by seat class for one train on a given date and segment (anonymous, no login required)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "train-no": {
+            "type": "string",
+            "description": "Internal train_no from `12306 trains` (e.g. 24000000G10L)"
+          },
+          "from": {
+            "type": "string",
+            "description": "Origin station (Chinese name, telecode, or pinyin) - must be a stop of this train"
+          },
+          "to": {
+            "type": "string",
+            "description": "Destination station - must be a stop of this train"
+          },
+          "date": {
+            "type": "string",
+            "description": "Departure date in YYYY-MM-DD"
+          },
+          "seat-types": {
+            "type": "string",
+            "description": "Seat-type letters to query (default covers the common classes). Examples: OM9 (二等/一等/商务), A1A3A4 (硬座/硬卧/软卧).",
+            "default": "OM9PA1A3A4FWZ"
+          }
+        },
+        "required": [
+          "train-no",
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "me",
+      "runtime": "extension",
+      "module": "extension/commands/me.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "Show the logged-in 12306 account summary. Sensitive fields (real name, email, mobile, birth date) are masked by default; pass --include-sensitive to opt in.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "include-sensitive": {
+            "type": "boolean",
+            "description": "Reveal unmasked real name / email / mobile / birth date. The 12306 ID-number mask is server-side and never decoded.",
+            "default": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "passengers",
+      "runtime": "extension",
+      "module": "extension/commands/passengers.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "List the logged-in user's saved 12306 passengers. Sensitive fields are masked by default; pass --include-sensitive to opt in.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "`Max passengers to return (1-${MAX_PAGE_SIZE})`",
+            "default": 20
+          },
+          "include-sensitive": {
+            "type": "boolean",
+            "description": "Reveal unmasked real names and birth dates. The 12306 ID-number / mobile masks are server-side and never decoded.",
+            "default": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "orders",
+      "runtime": "extension",
+      "module": "extension/commands/orders.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "查询官方未完成订单（queryMyOrderNoComplete）；不含未出行及历史订单全集",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "include-sensitive": {
+            "type": "boolean",
+            "description": "Reveal unmasked passenger names in order rows. Masked by default.",
+            "default": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "Verify current identity",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "kyfw.12306.cn",
+      "description": "打开官方登录页，人工完成后用 whoami 验证服务器身份；timeout仅兼容来源参数，不后台轮询或自动重放登录",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

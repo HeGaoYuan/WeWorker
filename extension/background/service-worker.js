@@ -2,7 +2,7 @@ import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
-import { createHostAdapterRuntime } from './host-adapter-runtime.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 
 /**
@@ -215,10 +215,13 @@ const adapterInjectionStatus = new Map();
 const cdpAttachedTabs = new Set();
 const cdpNetworkState = new Map();
 const cdpActionCaptureSessions = new Map();
+const adapterNetworkCaptureSessions = new Map();
 const cdpExecutionContexts = new Map();
 const CDP_NETWORK_ENTRY_LIMIT = 200;
 const CDP_RESPONSE_PREVIEW_LIMIT = 4000;
 const CDP_REQUEST_PREVIEW_LIMIT = 2000;
+const ADAPTER_RESPONSE_CAPTURE_LIMIT = 8 * 1024 * 1024;
+const ADAPTER_CAPTURE_ENTRY_LIMIT = 20;
 const ACTION_CAPTURE_VERSION = 'opencli-action-capture-v1';
 
 function ensureCdpState(tabId) {
@@ -451,6 +454,69 @@ async function clearCdpNetworkEntries(tabId) {
   state.entries = [];
   state.requests.clear();
   state.totalCaptured = 0;
+}
+
+function adapterCaptureAllowsUrl(session, url) {
+  try {
+    const targetHost = new URL(url).hostname;
+    return isRuntimeHelperHostAllowed(session.tabHost, targetHost, session.allowedHosts)
+      && matchesCapturePattern(url, session.patterns);
+  } catch {
+    return false;
+  }
+}
+
+async function startAdapterNetworkCapture(tab, payload, allowedHosts) {
+  const pattern = String(payload.pattern || '').trim();
+  if (!pattern || pattern.length > 256 || /[\x00-\x1f]/.test(pattern)) {
+    throw createRuntimeHelperError('INVALID_ARGS', 'network_capture_start requires a pattern of at most 256 characters');
+  }
+  const tabHost = new URL(tab.url).hostname;
+  const existing = adapterNetworkCaptureSessions.get(tab.id);
+  const wasAttached = cdpAttachedTabs.has(tab.id);
+  await ensureCdpAttached(tab.id);
+  await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable', {
+    maxTotalBufferSize: ADAPTER_RESPONSE_CAPTURE_LIMIT * 2,
+    maxResourceBufferSize: ADAPTER_RESPONSE_CAPTURE_LIMIT,
+    maxPostDataSize: 262144,
+  });
+  adapterNetworkCaptureSessions.set(tab.id, {
+    tabHost,
+    allowedHosts: normalizeRouteHosts(allowedHosts),
+    patterns: normalizeCapturePatterns(pattern),
+    entries: [],
+    requestIds: new Set(),
+    lastEventAt: Date.now(),
+    ownedAttachment: existing?.ownedAttachment ?? !wasAttached,
+  });
+  return { started: true, pattern };
+}
+
+async function finishAdapterNetworkCapture(tabId, session) {
+  adapterNetworkCaptureSessions.delete(tabId);
+  if (!session?.ownedAttachment || !cdpAttachedTabs.has(tabId)) return;
+  await clearCdpNetworkEntries(tabId);
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch { }
+  cdpAttachedTabs.delete(tabId);
+}
+
+async function readAdapterNetworkCapture(tab, payload) {
+  const session = adapterNetworkCaptureSessions.get(tab.id);
+  if (!session) throw createRuntimeHelperError('CAPTURE_NOT_STARTED', 'No Adapter network capture is active for this tab');
+  const waitMs = payload.waitMs === undefined ? 0 : Number(payload.waitMs);
+  if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 20000) {
+    throw createRuntimeHelperError('INVALID_ARGS', 'network_capture_read waitMs must be an integer between 0 and 20000');
+  }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (session.entries.length > 0 && session.requestIds.size === 0 && Date.now() - session.lastEventAt >= 300) break;
+    await delay(100);
+  }
+  const result = { entries: session.entries.slice() };
+  if (payload.finish !== false) await finishAdapterNetworkCapture(tab.id, session);
+  return result;
 }
 
 async function delay(ms) {
@@ -2207,6 +2273,11 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         requestBodyFullSize: rawPostData.length,
         requestBodyTruncated: rawPostData.length > CDP_REQUEST_PREVIEW_LIMIT,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession && adapterCaptureAllowsUrl(adapterSession, request.url || '')) {
+        adapterSession.requestIds.add(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       return;
     }
 
@@ -2227,10 +2298,16 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       if (!pending) return;
 
       let responsePreview = '';
+      let responseBody = '';
       try {
         const body = await chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: params.requestId });
-        const raw = body?.base64Encoded ? atob(body.body || '') : (body.body || '');
-        responsePreview = truncateText(raw, CDP_RESPONSE_PREVIEW_LIMIT);
+        if (body?.base64Encoded) {
+          const binary = atob(body.body || '');
+          responseBody = new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)));
+        } else {
+          responseBody = body?.body || '';
+        }
+        responsePreview = truncateText(responseBody, CDP_RESPONSE_PREVIEW_LIMIT);
       } catch { }
 
       pushCdpNetworkEntry(tabId, {
@@ -2249,6 +2326,29 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         responsePreview,
         encodedDataLength: params.encodedDataLength || 0,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession?.requestIds.has(params.requestId)) {
+        const encodedBody = new TextEncoder().encode(responseBody);
+        const truncated = encodedBody.byteLength > ADAPTER_RESPONSE_CAPTURE_LIMIT;
+        adapterSession.entries.push({
+          kind: 'cdp',
+          url: pending.url,
+          method: pending.method,
+          timestamp: pending.timestamp,
+          responseStatus: pending.status,
+          responseContentType: pending.responseContentType || pending.mimeType || '',
+          responsePreview: truncated
+            ? new TextDecoder().decode(encodedBody.subarray(0, ADAPTER_RESPONSE_CAPTURE_LIMIT))
+            : responseBody,
+          responseBodyFullSize: encodedBody.byteLength,
+          responseBodyTruncated: truncated,
+        });
+        if (adapterSession.entries.length > ADAPTER_CAPTURE_ENTRY_LIMIT) {
+          adapterSession.entries.splice(0, adapterSession.entries.length - ADAPTER_CAPTURE_ENTRY_LIMIT);
+        }
+        adapterSession.requestIds.delete(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       requests.delete(params.requestId);
       return;
     }
@@ -2268,6 +2368,19 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         errorText: params.errorText || 'loading failed',
         canceled: !!params.canceled,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession?.requestIds.has(params.requestId)) {
+        adapterSession.entries.push({
+          kind: 'cdp',
+          url: pending.url,
+          method: pending.method,
+          timestamp: pending.timestamp,
+          responseStatus: pending.status,
+          errorText: params.errorText || 'loading failed',
+        });
+        adapterSession.requestIds.delete(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       requests.delete(params.requestId);
     }
   } catch (err) {
@@ -2280,6 +2393,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   if (!tabId) return;
   cdpAttachedTabs.delete(tabId);
   cdpExecutionContexts.delete(tabId);
+  adapterNetworkCaptureSessions.delete(tabId);
   const state = cdpNetworkState.get(tabId);
   if (state) state.lastError = reason || 'detached';
 });
@@ -2555,12 +2669,18 @@ async function handleNativeMessage(msg) {
           return;
         }
         const tabs = await chrome.tabs.query({});
-        const tab = tabs.find((entry) => {
+        const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        let tab = tabs.find(entry => {
+          try { return new URL(entry.url).hostname === route; } catch { return false; }
+        }) || tabs.find(entry => {
           try { return adapterMatchesHostname(selected.manifest, new URL(entry.url).hostname); } catch { return false; }
         });
-        if (!tab?.id) throw new Error('Open a matching website tab before calling this Adapter command.');
+        if (!tab?.id) {
+          const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
+          tab = await chrome.tabs.create({ url: startUrl, active: false });
+        }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
-          () => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID));
+          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command);
         sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
         return;
       }
@@ -4299,7 +4419,7 @@ async function runDirectBrowserFetch(payload = {}, traceID = null) {
 
 async function runDirectBackendFetch(payload = {}, traceID = null) {
   const response = await runRuntimeBridgeRequest("wecli_backend_fetch", payload, traceID);
-  if (!isDirectAuthenticationResponse(response)) return response;
+  if (payload.browserFallback === false || !isDirectAuthenticationResponse(response)) return response;
   traceLog(traceID, `[ServiceWorkerRuntime] backend_fetch authentication response, retrying in browser context ${String(payload.url || "")}`);
   return runDirectBrowserFetch(payload, traceID);
 }
@@ -4352,7 +4472,7 @@ async function handleDirectRuntimeRequest(action, payload = {}) {
     case "cookies_get":
       traceLog(traceID, `[ServiceWorkerRuntime] direct cookies_get ${String(payload.domain || payload.domains || payload.url || directRuntimeContext?.routeDomain || "")}`);
       {
-        const debuggerResult = await getDirectRuntimeCookiesViaDebugger(payload, traceID);
+        const debuggerResult = payload.browserDebugger === false ? null : await getDirectRuntimeCookiesViaDebugger(payload, traceID);
         const result = debuggerResult || await getRuntimeCookies(createDirectContextTab(), payload);
         const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
         traceLog(traceID, `[ServiceWorkerRuntime] direct cookies_get result ${JSON.stringify({
@@ -4747,7 +4867,7 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
  * 当 sendMessage 因 bfcache 失败时，我们主动激活标签页将其从 bfcache 中唤醒，
  * 等待页面恢复后重试。
  */
-async function callToolInTab(tabId, toolName, args, traceID = null) {
+async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
 
@@ -4761,7 +4881,7 @@ async function callToolInTab(tabId, toolName, args, traceID = null) {
   };
 
   let lastError;
-  const maxRetries = 2;
+  const maxRetries = allowTransportRetry ? 2 : 0;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
@@ -4770,7 +4890,11 @@ async function callToolInTab(tabId, toolName, args, traceID = null) {
     }
 
     try {
-      const response = await chrome.tabs.sendMessage(tabId, message);
+      let timer;
+      const response = await Promise.race([
+        chrome.tabs.sendMessage(tabId, message),
+        ...(Number.isFinite(timeoutMs) ? [new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter command timed out; execution was not replayed.')), timeoutMs); })] : []),
+      ]).finally(() => clearTimeout(timer));
       // 成功 —— 继续处理响应
       if (response?.error) throw createAdapterError(response.error);
 
@@ -6715,6 +6839,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     actionCaptureSession.errors.push('TARGET_TAB_NOT_FOUND');
     actionCaptureSession.requestStop('target_tab_closed');
   }
+  adapterNetworkCaptureSessions.delete(tabId);
   clearTabInjectedAdapters(tabId);
   const domain = tabDomainMap.get(tabId);
   if (domain) {
@@ -6801,6 +6926,19 @@ async function callManagedBackgroundTool(manifest, command, args, traceID) {
   return runtime.execute(manifest, command, args, context);
 }
 
+async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let stableUrl = null;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab) throw new Error('Adapter tab was closed.');
+    if (tab.status === 'complete' && stableUrl === tab.url) return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    stableUrl = tab.status === 'complete' ? tab.url : null;
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  throw new Error('Adapter page navigation timed out.');
+}
+
 function getHostAdapterRuntime() {
   return hostAdapterRuntime ||= createHostAdapterRuntime({
     bundle: (manifest) => getHostAdapterClient().bundle(manifest),
@@ -6811,6 +6949,8 @@ function getHostAdapterRuntime() {
       tabInjectedAdapters.delete(tabId);
     },
     inject: injectV2AdapterWithCode,
+    ready: (tabId, manifest, timeoutMs) => waitForManagedPageReady(tabId, manifest, true, timeoutMs),
+    navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
   });
 }
 
@@ -7916,6 +8056,12 @@ async function handleWecliRuntimeRequest(msg, sender) {
     case 'main_world_eval':
       traceLog(traceID, `[ServiceWorkerRuntime] main_world_eval`);
       return runRuntimeMainWorldEval(tab, payload);
+    case 'network_capture_start':
+      traceLog(traceID, `[ServiceWorkerRuntime] network_capture_start pattern=${String(payload.pattern || '')}`);
+      return startAdapterNetworkCapture(tab, payload, allowedHosts);
+    case 'network_capture_read':
+      traceLog(traceID, '[ServiceWorkerRuntime] network_capture_read');
+      return readAdapterNetworkCapture(tab, payload);
     case 'download':
       traceLog(traceID, `[ServiceWorkerRuntime] download ${String(payload.url || payload.filename || '')}`);
       return runRuntimeDownload(tab, payload, allowedHosts);
@@ -7970,7 +8116,7 @@ async function runRuntimeBridgeRequest(type, payload, traceID = null) {
       ok: result?.result?.ok,
       url: result?.result?.url,
       replay: result?.result?.replay,
-      body: summarizeDirectTraceBody(result?.result?.body, 800),
+      body: payload?.redactBodyInTrace === true ? '[redacted]' : summarizeDirectTraceBody(result?.result?.body, 800),
     })}`);
   } else {
     traceLog(traceID, `[ServiceWorkerRuntime] ${label} <- bridge ok`);

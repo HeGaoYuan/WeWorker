@@ -1,0 +1,495 @@
+{
+  "schema_version": 2,
+  "name": "ctrip.com",
+  "version": "0.3.6",
+  "description": "携程：目的地、酒店、交通、景点、邮轮、旅游产品及浏览器登录能力",
+  "match": [
+    "m.ctrip.com",
+    "www.ctrip.com",
+    "hotels.ctrip.com",
+    "trains.ctrip.com",
+    "bus.ctrip.com",
+    "ship.ctrip.com",
+    "cruise.ctrip.com",
+    "vacations.ctrip.com",
+    "you.ctrip.com",
+    "flights.ctrip.com"
+  ],
+  "requires_auth": false,
+  "commands": [
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "m.ctrip.com",
+      "description": "查询酒店业务城市、车站及地标联想；cityId 用于酒店，不能用于 attraction，景点目的地请用 destination-search。",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "结果上限，1-50",
+            "default": 15
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "destination-search",
+      "runtime": "extension",
+      "module": "extension/commands/destination-search.js",
+      "routeDomain": "m.ctrip.com",
+      "description": "查景点站目的地：返回 destinationId 供 attraction.city 使用，hotelCityId 仅供酒店查询；按名称和 region 消歧，不能混用两类编号。",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "结果上限，1-50",
+            "default": 15
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hotel-suggest",
+      "runtime": "extension",
+      "module": "extension/commands/hotel-suggest.js",
+      "routeDomain": "m.ctrip.com",
+      "description": "搜索酒店相关城市、商圈和酒店联想；最多返回 50 条，不提供后续分页。",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "城市、商圈或酒店关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "结果上限，1-50",
+            "default": 15
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "www.ctrip.com",
+      "description": "检查当前携程浏览器会话并返回最小化账号信息；不会返回 Cookie 或登录标识值。",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "www.ctrip.com",
+      "description": "打开携程官方登录页；会改变浏览器登录状态，必须显式确认。完成人工登录后使用 whoami 验证。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hotel-search",
+      "runtime": "extension",
+      "module": "extension/commands/hotel-search.js",
+      "routeDomain": "hotels.ctrip.com",
+      "description": "按城市 ID 和入住日期搜索酒店；读取 SSR 首屏，通常约 13 条，最多返回 30 条。宿主自动完成页面准备后返回结果。仅城市和日期筛选；报价未指定人数、房间配置，不保证是全站最低价。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "integer",
+            "description": "携程酒店城市 ID：先用 hotel-suggest 搜索城市，从匹配的 City 条目读取 cityId。"
+          },
+          "checkin": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "checkout": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 10
+          }
+        },
+        "required": [
+          "city",
+          "checkin",
+          "checkout"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hotel",
+      "runtime": "extension",
+      "module": "extension/commands/hotel.js",
+      "routeDomain": "hotels.ctrip.com",
+      "description": "按酒店 ID 读取酒店详情、评分、设施、入住政策和位置。宿主自动完成页面准备后返回结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "从 hotel-suggest 的 Hotel 条目 id、hotel-search 的 hotelId 或用户提供的携程酒店详情链接中取得。"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "train",
+      "runtime": "extension",
+      "module": "extension/commands/train.js",
+      "routeDomain": "trains.ctrip.com",
+      "description": "按出发站、到达站和日期搜索火车票；通过滚动加载最多返回 50 条。宿主自动完成页面准备后返回结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "出发城市或具体火车站名称；城市查询可能包含多个车站。"
+          },
+          "to": {
+            "type": "string",
+            "description": "到达城市或具体火车站名称；城市查询可能包含多个车站。"
+          },
+          "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "bus",
+      "runtime": "extension",
+      "module": "extension/commands/bus.js",
+      "routeDomain": "bus.ctrip.com",
+      "description": "按出发城市、到达城市和日期搜索汽车票；通过滚动加载最多返回 50 条。宿主自动完成页面准备后返回结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "出发城市名称；结果中查看实际车站或港口。"
+          },
+          "to": {
+            "type": "string",
+            "description": "到达城市名称；结果中查看实际车站或港口。"
+          },
+          "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "ferry",
+      "runtime": "extension",
+      "module": "extension/commands/ferry.js",
+      "routeDomain": "ship.ctrip.com",
+      "description": "按出发城市、到达城市和日期搜索船票；通过滚动加载最多返回 50 条。宿主自动完成页面准备后返回结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "出发城市名称；结果中查看实际车站或港口。"
+          },
+          "to": {
+            "type": "string",
+            "description": "到达城市名称；结果中查看实际车站或港口。"
+          },
+          "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "flight",
+      "runtime": "extension",
+      "module": "extension/commands/flight.js",
+      "routeDomain": "flights.ctrip.com",
+      "description": "按 IATA 三字码和日期搜索单程航班；结果来自页面自然产生的结构化航班响应。宿主自动完成页面准备后返回结果。当前按 1 名成人、无儿童/婴儿、全舱位查询；不支持乘客人数筛选。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "出发城市或机场 IATA 三字码；保留用户指定的机场范围，不能把城市代码当作唯一机场。"
+          },
+          "to": {
+            "type": "string",
+            "description": "到达城市或机场 IATA 三字码；保留用户指定的机场范围，不能把城市代码当作唯一机场。"
+          },
+          "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "date"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "flight-round",
+      "runtime": "extension",
+      "module": "extension/commands/flight-round.js",
+      "routeDomain": "flights.ctrip.com",
+      "description": "查询往返航班真实组合报价，返回 outbound 去程和 return 返程的完整日期时间、实际机场及经停信息；priceScope=round_trip_one_adult 表示 1 成人往返报价，税费是否包含未知；宿主自动导航与捕获，最多返回 limit 条。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "出发城市或机场 IATA 三字码；保留用户指定的机场范围，不能把城市代码当作唯一机场。"
+          },
+          "to": {
+            "type": "string",
+            "description": "到达城市或机场 IATA 三字码；保留用户指定的机场范围，不能把城市代码当作唯一机场。"
+          },
+          "depart": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "return": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "depart",
+          "return"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "attraction",
+      "runtime": "extension",
+      "module": "extension/commands/attraction.js",
+      "routeDomain": "you.ctrip.com",
+      "description": "按携程城市 ID 列出热门景点、评分和点评数；最多返回 50 条。宿主自动完成页面准备后返回结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "integer",
+            "description": "景点目的地 ID，来自 destination-search.destinationId；不是酒店 cityId（例如贵阳分别为 33 和 38）"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cruise",
+      "runtime": "extension",
+      "module": "extension/commands/cruise.js",
+      "routeDomain": "cruise.ctrip.com",
+      "description": "按出发港名称搜索邮轮线路；解析港口代码可能需要两次页面导航。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "string",
+            "description": "出发港名称，不是邮轮目的地；代码由命令查询港口索引取得。"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "port"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "tour",
+      "runtime": "extension",
+      "module": "extension/commands/tour.js",
+      "routeDomain": "vacations.ctrip.com",
+      "description": "按目的地搜索旅游线路；最多返回 50 条当前列表结果。宿主自动完成页面准备后返回结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "destination": {
+            "type": "string",
+            "description": "目的地名称关键词；当前不支持按出发地、日期或人数报价。"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "destination"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "package",
+      "runtime": "extension",
+      "module": "extension/commands/package.js",
+      "routeDomain": "vacations.ctrip.com",
+      "description": "查询自由行套餐，按卡片 productType 明确标注“自由行”或“目的地自由行”筛选，排除私家团等混排推荐；仅当前页，limit 是上限，不足不补齐。返回展示价、已有评分及站点出发地上下文，不保证包含机票或酒店，不是指定日期人数的确定报价。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "destination": {
+            "type": "string",
+            "description": "目的地名称关键词；当前不支持按出发地、日期或人数报价。"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "destination"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "runtime_allowed_hosts": [
+    "passport.ctrip.com"
+  ],
+  "discovery_terms": [
+    "携程",
+    "机票",
+    "航班",
+    "火车票",
+    "汽车票",
+    "船票",
+    "酒店",
+    "景点",
+    "邮轮",
+    "跟团游",
+    "自由行"
+  ]
+}

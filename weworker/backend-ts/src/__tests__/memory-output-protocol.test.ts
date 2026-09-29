@@ -23,7 +23,7 @@ function expectedMemoryOutputProtocol(options: {
     '判断规则：',
     '- 所有候选（用户偏好、成功经验、失败经验、恢复经验、网站流程和工具限制）是否值得保存，都由你根据完整用户目标、对话上下文、已有记忆和本回合结果判断；不要依赖“记住”“以后”等关键词，也不要把“成功”或“失败”自动等同于值得保存。',
     '- 使用“可复用决策反事实”判断：假设下次遇到相同或相近目标，这条信息是否会让你明确改变回答或执行行为？必须能指出具体改变，例如更换工具或入口、调整步骤顺序、修正参数格式、先做环境检查、避免重复失败、环境恢复后重试，或遵守稳定用户偏好。若只能复述本次答案、临时结果、当前状态或原始工具输出，无法指出具体行为变化，则 should_remember=false。',
-    '- 失败经验也只有在能改变下一次决策时才保存。若能判断失败原因，可直接补充 failure_kind：environmental（网络、扩展、页面加载等暂态环境）、procedural（步骤顺序、参数格式或调用方式）、capability（工具或 Adapter 不支持该能力）、mixed（多种原因）或 unknown（暂时无法归类）；可用 retryable 标注是否应在环境恢复后重试。',
+    '- 失败经验也只有在能改变下一次决策时才保存。归因必须有具体证据，不能仅凭“导航超限”或多次超时就断言暂态环境故障；原因未查明时保留 unknown，不把推测或“稍后自然恢复”写成事实。若能判断失败原因，可直接补充 failure_kind：environmental（网络、扩展、页面加载等暂态环境）、procedural（步骤顺序、参数格式或调用方式）、capability（工具或 Adapter 不支持该能力）、mixed（多种原因）或 unknown（暂时无法归类）；可用 retryable 标注是否应在环境恢复后重试。',
     '- 本回合若已真实执行本地 PowerShell／Bash 或 webcli 站点工具，必须追加隐藏块，不得省略。隐藏块内要么写出可复用经验，要么返回 `{"should_remember":false}`；禁止静默缺块。',
     '- user_usage 只保存用户稳定习惯和偏好；task_execution 统一保存可复用的任务步骤、网站操作、成功、失败、恢复和工具能力限制。',
     '- 临时要求、一次性业务数据、当前查询结果、猜测、密钥、令牌、账号、文件路径和工具原始结果都不得写入 content；本地命令任务经验只概括可复用方法，不抄录原始输出。',
@@ -42,6 +42,8 @@ function expectedMemoryOutputProtocol(options: {
     `${MEMORY_BLOCK_OPEN}{"should_remember":true,"memory_type":"task_execution","content":"执行同类任务时先检查登录状态，再进入目标页面。"}${MEMORY_BLOCK_CLOSE}`,
     '保存失败经验：',
     `${MEMORY_BLOCK_OPEN}{"should_remember":true,"memory_type":"task_execution","content":"页面暂时无法加载时等待环境恢复后重试。","failure_kind":"environmental","retryable":true}${MEMORY_BLOCK_CLOSE}`,
+    '',
+    '工具超时、页面加载失败等临时故障不得总结为永久能力限制或“以后直接跳过该工具”的固定流程。已有失败经验与当前 Skill 或本轮成功结果冲突时，以当前证据为准，不继续强化旧降级路径。',
   ].join('\n')
 }
 

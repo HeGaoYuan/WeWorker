@@ -109,6 +109,10 @@
       {
         "from": "build/builtin-adapters/",
         "to": "adapters"
+      },
+      {
+        "from": "../docs/third_party/OpenCLI-LICENSE.txt",
+        "to": "licenses/OpenCLI-LICENSE.txt"
       }
     ],
     "mac": {

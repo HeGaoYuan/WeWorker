@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "name": "note.youdao.com",
+  "version": "0.1.0",
+  "description": "有道云笔记公开分享全文与摘要读取",
+  "match": [
+    "share.note.youdao.com",
+    "note.youdao.com",
+    "share.note.youdao.cn",
+    "note.youdao.cn"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "有道云笔记",
+    "有道笔记",
+    "youdao"
+  ],
+  "commands": [
+    {
+      "id": "note",
+      "runtime": "extension",
+      "module": "extension/commands/note.js",
+      "routeDomain": "share.note.youdao.com",
+      "description": "Read a public shared Youdao Note",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Full share URL of the Youdao Note"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

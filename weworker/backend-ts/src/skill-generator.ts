@@ -154,9 +154,10 @@ export function generateSkillContent(adapter: ParsedAdapter): string {
   // How to Use
   lines.push('## How to Use')
   lines.push('')
-  lines.push('Call tools using `webcli call <tool_name> --args \'<json>\'`:')
+  lines.push('Call tools using `webcli call <tool_name> --key=value ...`:')
   lines.push('- `tool_name`: The exact public tool name (e.g., `' + (adapter.tools[0]?.name ?? `${primaryDomain}.example_tool`) + '`)')
-  lines.push('- `args`: A JSON object matching the parameter schema above')
+  lines.push('- Pass ordinary strings, numbers and booleans as --key=value; quote the complete flag if it contains spaces.')
+  lines.push('- Use JSON literals only for individual object/array parameters. Whole-object --args is a compatibility fallback, not the default; avoid it for ordinary arguments, especially in PowerShell.')
   lines.push('')
 
   // Examples
@@ -287,8 +288,11 @@ function generateExample(tool: StaticToolDef): string {
       exampleArgs[p.name] = getExampleValue(p)
     }
   }
-  const argsStr = JSON.stringify(exampleArgs)
-  return `webcli call ${shellQuote(tool.name)} --args ${shellQuote(argsStr)}`
+  const flags = Object.entries(exampleArgs).map(([key, value]) => {
+    const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+    return shellQuote('--' + key + '=' + text)
+  })
+  return [`webcli call ${shellQuote(tool.name)}`, ...flags].join(' ')
 }
 
 function shellQuote(value: string): string {
