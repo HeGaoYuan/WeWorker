@@ -1,6 +1,6 @@
 /* Adapted from jackwener/OpenCLI 24136945847afbfad266c6c46a8cd335377f9112, Apache-2.0.
  * Modified for WeWorker v2 registration, direct page extraction and bounded host navigation. */
-(function(){const {ArgumentError,CommandExecutionError,EmptyResultError,assertOk,readPositiveInteger,verbose,same,navigate,guard}=window.__boss;const CITY_CODES = {
+(function(){const {ArgumentError,CommandExecutionError,EmptyResultError,assertOk,readPositiveInteger,verbose,same,navigate,guard,bossFetch}=window.__boss;const CITY_CODES = {
     '全国': '100010000', '北京': '101010100', '上海': '101020100',
     '广州': '101280100', '深圳': '101280600', '杭州': '101210100',
     '成都': '101270100', '南京': '101190100', '武汉': '101200100',
@@ -98,7 +98,8 @@ __webcliRegisterCommand("search",async (kwargs={}) => { try {
         const jobTypeVal = resolveJobType(kwargs.jobType);
         const limit = readPositiveInteger(kwargs.limit, 'limit', 15, 100);
         let currentPage = readPositiveInteger(kwargs.page, 'page', 1);
-        const cacheKey='__weworker_boss_search';const key=JSON.stringify({query,cityCode,expVal,degreeVal,salaryVal,industryVal,jobTypeVal,limit,start:currentPage});let previous;try{previous=JSON.parse(sessionStorage.getItem(cacheKey)||'null')}catch{}if(!previous||previous.key!==key||Date.now()-previous.time>90000)previous={key,time:Date.now(),jobs:[],page:currentPage};let allJobs=previous.jobs;currentPage=previous.page;
+        const allJobs = [];
+        const deadline = Date.now() + 75000;
         const seenIds = new Set(allJobs.map(j=>j.security_id));
         while (allJobs.length < limit) {
             if (allJobs.length > 0) {
@@ -121,7 +122,14 @@ __webcliRegisterCommand("search",async (kwargs={}) => { try {
                 qs.set('jobType', jobTypeVal);
             const targetUrl = `https://www.zhipin.com/web/geek/jobs?${qs.toString()}`;
             verbose(`Capturing page ${currentPage}... (current jobs: ${allJobs.length})`);
-            const runtime=window.__webmcpWecliRuntime;if(!same(targetUrl)){await runtime.requestPrivileged('network_capture_start',{pattern:'/wapi/zpgeek/search/joblist.json'});sessionStorage.setItem(cacheKey,JSON.stringify({...previous,jobs:allJobs,page:currentPage}));return navigate(targetUrl);}let capture;try{guard();capture=await runtime.requestPrivileged('network_capture_read',{waitMs:10000,finish:true});}catch(e){if(e.code!=='CAPTURE_NOT_STARTED')throw e;await runtime.requestPrivileged('network_capture_start',{pattern:'/wapi/zpgeek/search/joblist.json'});return navigate(targetUrl);}const entries=(capture.entries||[]).filter(e=>{const u=new URL(e.url);return u.origin==='https://www.zhipin.com'&&u.pathname==='/wapi/zpgeek/search/joblist.json'&&[...qs].every(([k,v])=>u.searchParams.get(k)===v)});if(!entries.length)throw new CommandExecutionError('BOSS search response not captured; observed query keys: '+(capture.entries||[]).map(e=>{try{return [...new URL(e.url).searchParams.keys()].join(',')}catch{return 'invalid-url'}}).join(';'));let data;for(const entry of entries){if(entry.responseBodyTruncated)throw new CommandExecutionError('BOSS capture truncated');if(entry.responseStatus!==200)throw new CommandExecutionError('BOSS search HTTP '+entry.responseStatus);if(entry.errorText)throw new CommandExecutionError('BOSS captured request failed: '+entry.errorText);const raw=entry.responsePreview;if(typeof raw!=='string'||!raw.trim())throw new CommandExecutionError('BOSS captured response body unavailable; result unknown');let j;try{j=JSON.parse(raw)}catch{throw new CommandExecutionError('BOSS captured response is not complete JSON; result unknown')}assertOk(j,'BOSS search');if(Array.isArray(j.zpData?.jobList))data=j;}if(!data)throw new CommandExecutionError('BOSS jobList missing');
+            // Establish the search page once. Subsequent pages are explicit read requests,
+            // not URL navigation (the site's route can ignore a page query parameter).
+            if (allJobs.length === 0 && !same(targetUrl)) return navigate(targetUrl);
+            guard();
+            if (Date.now() > deadline) throw new CommandExecutionError('BOSS search exceeded its request budget; retry with a smaller limit and explicit page');
+            qs.set('pageSize', '15');
+            const data = await bossFetch('https://www.zhipin.com/wapi/zpgeek/search/joblist.json?' + qs.toString());
+            if (!Array.isArray(data.zpData?.jobList)) throw new CommandExecutionError('BOSS jobList missing; result unknown');
             const zpData = data.zpData || {};
             const batch = zpData.jobList || [];
             if (batch.length === 0)
@@ -155,10 +163,9 @@ __webcliRegisterCommand("search",async (kwargs={}) => { try {
             if (!zpData.hasMore)
                 break;
             currentPage++;
-            if(currentPage-Number(kwargs.page||1)>=3) throw new CommandExecutionError('BOSS requested limit exceeds verified navigation window; retry with explicit page and smaller limit');
         }
         if (allJobs.length === 0) {
             throw new EmptyResultError('boss search', query ? `No BOSS jobs found for "${query}"` : 'BOSS returned no recommended jobs');
         }
-        sessionStorage.removeItem(cacheKey);return allJobs;
-    } catch(error) { sessionStorage.removeItem('__weworker_boss_search'); throw error; } });})();
+        return allJobs;
+    } catch(error) { throw error; } });})();

@@ -4,7 +4,7 @@
 
 示例：webcli call 12306.cn.stations --keyword=上海 --limit=5；webcli call 12306.cn.trains --from=北京南 --to=上海虹桥 --date=2026-09-29 --limit=3。日期只是示例，不能沿用到未来请求。
 
-stations/trains/train/price 是公开查询。me/passengers/orders 使用本人已登录会话，默认遮蔽姓名、邮箱、手机、生日等；不要擅自打开 include-sensitive。服务器掩码不尝试还原。orders 仅当前未完成订单范围，不是历史订单全集。余票的“有/无/数字”保持原义，空字段不是无票。price 为 CNY 对应席别价格，不是锁价、出票或多人总价。此包没有抢票、购票、支付、退改签功能。
+stations/trains/train/price 是公开查询。me/passengers/orders 使用本人已登录会话，默认遮蔽姓名、邮箱、手机、生日等；不要擅自打开 include-sensitive。服务器掩码不尝试还原。orders 对应官方“未完成订单”页及 queryMyOrderNoComplete 接口，不等于“未出行订单”或历史订单全集；返回无未完成订单时，不得推断用户没有已支付车票。旧登录标签页不证明会话失效，应以当前服务器会话核验为准。页面空文案也可能来自请求失败，只有会话、成功响应与可见空状态同时符合已核验契约时才说明为空；缺字段或接口异常仍报告未知。余票的“有/无/数字”保持原义，空字段不是无票。price 为 CNY 对应席别价格，不是锁价、出票或多人总价。此包没有抢票、购票、支付、退改签功能。
 
 ## 调用与证据
 

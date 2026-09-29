@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "12306.cn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "中国铁路12306车站、余票、经停、票价及账号只读查询",
   "match": [
     "kyfw.12306.cn"
@@ -208,7 +208,7 @@
       "runtime": "extension",
       "module": "extension/commands/orders.js",
       "routeDomain": "kyfw.12306.cn",
-      "description": "List in-progress 12306 orders (not yet ridden, refunded, or completed) for the logged-in user",
+      "description": "查询官方未完成订单（queryMyOrderNoComplete）；不含未出行及历史订单全集",
       "safety": "read",
       "schema": {
         "type": "object",

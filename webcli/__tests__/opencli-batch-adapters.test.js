@@ -17,7 +17,7 @@ function setup(site, { url, payload = {}, bodyText = '', one = {}, all = {}, pri
     setTimeout, clearTimeout, console, location,
     sessionStorage: { getItem: k => store.get(k), setItem: (k,v) => store.set(k,v), removeItem: k => store.delete(k) },
     document: { body: { innerText: bodyText }, title: '', cookie: '', querySelector: s => one[s] || null, querySelectorAll: s => all[s] || [] },
-    fetch: async (url, options) => { requests.push({ url, options }); return { ok:true, status:200, url:String(url), text:async()=>JSON.stringify(payload), json:async()=>payload }; },
+    fetch: async (url, options) => { requests.push({ url, options }); return { ok:true, status:200, url:String(url), text:async()=>JSON.stringify(typeof payload==='function'?payload(String(url)):payload), json:async()=>typeof payload==='function'?payload(String(url)):payload }; },
     XMLHttpRequest: class {
       open(method,url) { this.url=url; this.method=method; }
       setRequestHeader() {}
@@ -77,11 +77,32 @@ describe('OpenCLI batch v2 contracts', () => {
 });
 
 describe('12306 business boundaries',()=>{
+  const sessionPayload={status:true,data:{user_name:'fixture-user'}};
+  const orderPage='https://kyfw.12306.cn/otn/view/train_order.html';
+  const envelope={status:true,httpstatus:200,messages:[],validateMessages:{}};
+  const orderSetup=(order,options={})=>setup('12306.cn',{url:orderPage,payload:url=>url.includes('initMy12306Api')?sessionPayload:order,...options});
+  const emptyPanel={innerText:'您没有未完成的订单哦～',getClientRects:()=>[{}],querySelector:()=>null};
+  it('orders reports server login failure before navigating or requesting orders',async()=>{
+    const s=setup('12306.cn',{url:'https://kyfw.12306.cn/otn/resources/login.html',payload:{status:false,messages:['请登录']}});await expect(s.run('orders')).rejects.toMatchObject({code:'AUTH_REQUIRED'});expect(s.requests).toHaveLength(1);expect(s.requests[0].url).toContain('initMy12306Api');
+  });
+  it.each(['/otn/resources/login.html','/otn/leftTicket/init'])('orders reuses a verified session from stale page %s',async pathname=>{
+    const s=setup('12306.cn',{url:'https://kyfw.12306.cn'+pathname,payload:sessionPayload});expect(await s.run('orders')).toMatchObject({__webcli_navigation:{url:orderPage,resume:true}});expect(s.requests).toHaveLength(1);
+  });
   it('recognizes explicit no-order messages without treating missing data as empty',async()=>{
-    const explicit=setup('12306.cn',{url:'https://kyfw.12306.cn/otn/view/index.html',payload:{status:true,messages:['您没有未完成的订单！']}});
-    await expect(explicit.run('orders')).rejects.toMatchObject({code:'EMPTY_RESULT'});
-    const unknown=setup('12306.cn',{url:'https://kyfw.12306.cn/otn/view/index.html',payload:{status:true,data:null,messages:[]}});
-    await expect(unknown.run('orders')).rejects.toThrow(/missing order list array/);
+    await expect(orderSetup({status:true,messages:['您没有未完成的订单！']}).run('orders')).rejects.toMatchObject({code:'EMPTY_RESULT'});
+    await expect(orderSetup({status:true,data:null,messages:[]}).run('orders')).rejects.toThrow(/missing order list array/);
+  });
+  it('recognizes the official successful no-data envelope only with visible matching empty state',async()=>{
+    const s=orderSetup(envelope,{one:{'#not_complete':emptyPanel}});await expect(s.run('orders')).rejects.toMatchObject({code:'EMPTY_RESULT',message:expect.stringContaining('不代表未出行或历史订单为空')});expect(s.requests).toHaveLength(2);
+  });
+  it.each([
+    {status:false,httpstatus:200,messages:[],validateMessages:{}},
+    {...envelope,data:{}}, {...envelope,httpstatus:500}, {...envelope,messages:['请求失败']}, {...envelope,validateMessages:{query:'invalid'}}
+  ])('does not interpret API failure or malformed payload as empty despite empty DOM',async response=>{
+    await expect(orderSetup(response,{one:{'#not_complete':emptyPanel}}).run('orders')).rejects.not.toMatchObject({code:'EMPTY_RESULT'});
+  });
+  it.each([undefined,{...emptyPanel,getClientRects:()=>[]},{...emptyPanel,querySelector:()=>({})}])('keeps no-data response unknown if the visible empty state is absent or contradicted',async panel=>{
+    const s=orderSetup(envelope,{one:{'#not_complete':panel}});s.context.setTimeout=fn=>{fn();return 0};await expect(s.run('orders')).rejects.toThrow(/missing order list array/);
   });
   const bundle="var station_names='@bjn|北京南|VNP|beijingnan|bjn|0|0|北京@shhq|上海虹桥|AOH|shanghaihongqiao|shhq|1|1|上海';";
   it.each(['上海','shanghai','AOH','shhq'])('resolves %s from the official bundle',async keyword=>{
@@ -126,14 +147,24 @@ describe('API and page extraction regressions',()=>{
   });
   const target='https://www.zhipin.com/web/geek/jobs?query=Python&city=101020100&page=1';
   const api='https://www.zhipin.com/wapi/zpgeek/search/joblist.json?query=Python&city=101020100&page=1';
-  it('BOSS ignores captured responses for another city',async()=>{
-    const s=setup('zhipin.com',{url:target,privileged:()=>({entries:[{url:api.replace('101020100','101010100'),responseStatus:200,responsePreview:'{}'}]})});await expect(s.run('search',{query:'Python',city:'上海',limit:'3'})).rejects.toThrow(/not captured/);
+  it('BOSS sends all explicit filters through a page-owned request',async()=>{
+    const args={query:'Python',city:'上海',limit:'3',experience:'3-5年',degree:'本科',salary:'20-30K',industry:'互联网',jobType:'全职'};
+    const url=target+'&experience=105&degree=203&salary=406&industry=100020&jobType=1901';
+    const s=setup('zhipin.com',{url,payload:{code:0,zpData:{jobList:[{encryptJobId:'fixture',jobName:'Python',cityName:'上海'}],hasMore:false}}});
+    expect(await s.run('search',args)).toMatchObject([{name:'Python',area:'上海',security_id:'fixture'}]);
+    const u=new URL(s.requests[0].url);for(const [key,value] of new URL(url).searchParams)expect(u.searchParams.get(key)).toBe(value);
+    expect(u.searchParams.get('pageSize')).toBe('15');expect(s.calls[0].action).toBe('main_world_eval');
   });
-  it('BOSS empty capture body is not a business empty result',async()=>{
-    const s=setup('zhipin.com',{url:target,privileged:()=>({entries:[{url:api,responseStatus:200,responsePreview:''}]})});await expect(s.run('search',{query:'Python',city:'上海',limit:'3'})).rejects.toThrow(/body unavailable/);
+  it('BOSS malformed response is not a business empty result',async()=>{
+    const s=setup('zhipin.com',{url:target,payload:{code:0,zpData:{}}});await expect(s.run('search',{query:'Python',city:'上海',limit:'3'})).rejects.toThrow(/jobList missing/);
   });
-  it('BOSS matching capture returns actual jobs',async()=>{
-    const s=setup('zhipin.com',{url:target,privileged:()=>({entries:[{url:api,responseStatus:200,responsePreview:JSON.stringify({code:0,zpData:{jobList:[{encryptJobId:'fixture',jobName:'Python',cityName:'上海'}],hasMore:false}})}]})});expect(await s.run('search',{query:'Python',city:'上海',limit:'3'})).toMatchObject([{name:'Python',area:'上海',security_id:'fixture'}]);
+  it('BOSS distinguishes explicit empty lists and API failures',async()=>{
+    const empty=setup('zhipin.com',{url:target,payload:{code:0,zpData:{jobList:[],hasMore:false}}});await expect(empty.run('search',{query:'Python',city:'上海'})).rejects.toMatchObject({code:'EMPTY_RESULT'});
+    const failed=setup('zhipin.com',{url:target,payload:{code:99,message:'fixture failure'}});await expect(failed.run('search',{query:'Python',city:'上海'})).rejects.not.toMatchObject({code:'EMPTY_RESULT'});
+  });
+  it('BOSS pagination sends explicit page numbers and deduplicates jobs',async()=>{
+    const s=setup('zhipin.com',{url:target.replace('page=1','page=2'),payload:url=>({code:0,zpData:{jobList:new URL(url).searchParams.get('page')==='2'?[{encryptJobId:'a'}]:[{encryptJobId:'a'},{encryptJobId:'b'}],hasMore:true}})});
+    const rows=await s.run('search',{query:'Python',city:'上海',page:'2',limit:'2'});expect(rows.map(r=>r.security_id)).toEqual(['a','b']);expect(s.requests.map(r=>new URL(r.url).searchParams.get('page'))).toEqual(['2','3']);
   });
   it.each(['search','hot','suggest'])('Douyin hashtag %s rejects absent lists',async action=>{
     const s=setup('douyin.com',{url:'https://creator.douyin.com/creator-micro/content/manage',payload:{status_code:0}});await expect(s.run('hashtag',{action,keyword:'fixture',cover:'fixture-cover-uri'})).rejects.toThrow(/missing/);
@@ -189,8 +220,8 @@ describe('API and page extraction regressions',()=>{
   it('Dianping preserves aliases and missing price/review values',()=>{
     const s=setup('dianping.com');expect(s.pkg.commands.find(c=>c.id==='shop').aliases).toContain('detail');expect(s.context.__dianping.parsePrice('')).toBeNull();expect(s.context.__dianping.parseReviewCount('1.2万')).toBe(12000);
   });
-  it('BOSS search begins bounded network capture before navigation',async()=>{
-    const s=setup('zhipin.com');expect(await s.run('search',{query:'Python',city:'北京',limit:'3'})).toMatchObject({__webcli_navigation:{resume:true}});expect(s.calls[0]).toMatchObject({action:'network_capture_start',payload:{pattern:'/wapi/zpgeek/search/joblist.json'}});
+  it('BOSS establishes the requested page before sending its read query',async()=>{
+    const s=setup('zhipin.com');expect(await s.run('search',{query:'Python',city:'北京',limit:'3'})).toMatchObject({__webcli_navigation:{resume:true,url:'https://www.zhipin.com/web/geek/jobs?query=Python&city=101010100&page=1'}});expect(s.calls).toHaveLength(0);
   });
   it('BOSS chat pagination accepts CLI page and rejects invalid side',async()=>{
     const s=setup('zhipin.com',{url:'https://www.zhipin.com/'});expect(await s.run('chatlist',{page:'2',limit:'5'})).toMatchObject({__webcli_navigation:{resume:true}});

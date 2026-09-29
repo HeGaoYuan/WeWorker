@@ -151,3 +151,19 @@ List trains between two 12306 stations on a given date (anonymous, no login requ
 - price：通过，同路线日期，分席别 CNY 报价。trace：`11e89322cde6`。
 
 包加载、确认门、参数和部分解析边界采用 fixture 测试，不能当站点验收。登录、账号数据、自然语言和所有写入未验收。详见 [批次验收步骤](opencli_batch_migration.md)。
+
+## 订单会话诊断（2026-09-29，0.1.1）
+
+本轮请求先出现网络失败；进一步打开官方个人中心后，网站自动跳到 /otn/resources/login.html，确认当前会话已失效。这不能解释上一轮已登录时缺订单数组的根因。orders 改为先建立个人中心页面上下文，并显式识别登录页返回 AUTH_REQUIRED，避免反复导航或把登录失效当作无订单。真实错误 trace `fa17be8b0ef1`。等待用户重新登录后继续检查订单响应，当前不宣称订单查询完成。
+
+## 重新登录后订单空状态复验（2026-09-29）
+
+发现旧登录标签页仍被命令选中，而另一标签页已成功登录；仅凭 login 路径拒绝调用会误报失效。现先调用官方 initMy12306Api 核验当前会话，不返回账号字段，再导航到 train_order.html。显式未登录响应仍返回 AUTH_REQUIRED，缺少可验证身份时保持未知，不自动反复导航。
+
+成功订单响应的实际结构为 HTTP 200、status=true、httpstatus=200、messages=[]、validateMessages={}，省略 data。官方订单页同时显示“您没有未完成的订单哦～”。核查官方页面所引用的 [main_v30108.js](https://kyfw.12306.cn/otn/personalJS/dist/train_order/main_v30108.js)，无 data 成功分支显示空状态，而 AJAX 错误分支也使用同一空模板，因此不能只看页面文案。适配器要求有效服务器会话、完整成功信封、无 data/null，以及可见的 #not_complete 空状态且无订单表同时成立。普通缺字段、data={}、错误消息、隐藏或矛盾 DOM 均不当作空订单。
+
+正式打包 CLI → Bridge → 扩展返回准确的 EMPTY_RESULT 说明，trace `3225174f6409`。这是无未完成订单的真实路径通过，不代表有订单时字段提取通过；未创建、取消或支付订单。沿用项目 EmptyResultError 返回形式，CLI 显示 error/非零退出码不代表本次查询发生网络故障。
+
+业务范围修正：来源描述把 noComplete 与“尚未出行”混同，但官方页面将“未完成订单”和“未出行订单”分为不同标签/接口。保留来源 queryMyOrderNoComplete 能力，修正 manifest 与 guidance，避免无未完成订单被解释为没有已支付车票。来源原文仍保留在来源清单中供审计。
+
+两站及宿主导航聚焦116项通过；账号信息、会话数据和真实订单内容未写入源码、fixture或文档。有订单数据提取、排队中订单形态与完整客户端自然语言验收仍未覆盖。
