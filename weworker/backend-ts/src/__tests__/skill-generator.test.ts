@@ -233,6 +233,9 @@ describe('Property 4: Skill content completeness', () => {
         for (const tool of adapter.tools) {
           // Each tool should have an example using its exact public name.
           expect(content).toContain(`webcli call '${tool.name}'`)
+          expect(content).not.toMatch(/webcli call [^\n]* --args/)
+          const required = (tool.parameters.required ?? []) as string[]
+          for (const name of required) expect(content).toContain('--' + name + '=')
         }
       }),
       { numRuns: 100 },

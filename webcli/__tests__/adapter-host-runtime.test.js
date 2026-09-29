@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vm from 'node:vm';
-import { createHostAdapterRuntime } from '../../extension/background/host-adapter-runtime.js';
+import { createHostAdapterRuntime, navigateAdapterTab } from '../../extension/background/host-adapter-runtime.js';
 import { buildV2Bootstrap } from '../../extension/background/v2-loader.js';
 
 const manifest = (digest) => ({ name: 'demo', _hostSnapshot: { profile: 'public', digest } });
@@ -107,5 +107,95 @@ describe('legacy confirmation compatibility', () => {
     expect(() => guarded.handler({ requires_confirmation: false })).toThrow('confirmation');
     const results = await Promise.allSettled([write.handler(args), read.handler(args)]);
     expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+  });
+});
+
+
+describe('host-owned page navigation', () => {
+  const command = { id: 'list', safety: 'read' };
+  const pkg = { name: 'demo', match: ['example.com'], runtime_allowed_hosts: ['login.example.org'], commands: [command] };
+  const next = (url = 'https://example.com/results', resume = true) => ({ __webcli_navigation: { version: 1, url, resume } });
+  function setup(options = {}) {
+    const events = [];
+    const runtime = createHostAdapterRuntime({ bundle: async () => { events.push('bundle'); return {}; },
+      prepare: async () => {}, clear: async () => {}, inject: async () => { events.push('inject'); },
+      navigate: async (_id, url) => { events.push(url); runtime.invalidate(7); return url; }, ...options });
+    return { runtime, events };
+  }
+  it('keeps two navigations and reads in one serialized invocation', async () => {
+    const { runtime, events } = setup(); let count = 0;
+    const operation = async () => ++count <= 2 ? next('https://example.com/step' + count) : ['final'];
+    expect(await runtime.execute(7, pkg, 'https://example.com/', operation, command)).toEqual(['final']);
+    expect(events.filter(x => x === 'bundle')).toHaveLength(3);
+    expect(events.filter(x => x === 'inject')).toHaveLength(3);
+  });
+  it('holds the tab queue throughout navigation and recovers injection before executing a handler', async () => {
+    const entered = deferred(), finish = deferred(); let injections = 0, calls = 0;
+    const { runtime, events } = setup({
+      ready: async () => 'https://example.com/current',
+      inject: async () => { if (++injections === 1) throw new Error('Adapter target changed'); },
+      navigate: async (_id, url) => { entered.resolve(); await finish.promise; return url; },
+    });
+    const first = runtime.execute(7, pkg, 'https://example.com/stale', () => ++calls === 1 ? next() : 'final', command);
+    await entered.promise;
+    const second = runtime.execute(7, pkg, 'https://example.com/stale', () => { events.push('second'); return 'second'; }, command);
+    await Promise.resolve(); expect(events).not.toContain('second');
+    finish.resolve(); expect(await first).toBe('final'); expect(await second).toBe('second');
+    expect(calls).toBe(2); expect(injections).toBe(3);
+  });
+  it('bounds document recovery and never invokes the business handler while injection fails', async () => {
+    let injections = 0, calls = 0;
+    const { runtime } = setup({ ready: async () => 'https://example.com/', inject: async () => { injections++; throw new Error('Adapter document changed'); } });
+    await expect(runtime.execute(7, pkg, 'https://example.com/', () => { calls++; }, command)).rejects.toThrow('Adapter document changed');
+    expect(injections).toBe(3); expect(calls).toBe(0);
+  });
+  it('does not infer continuation from ordinary business status or repeat errors', async () => {
+    const { runtime } = setup(); let calls = 0;
+    expect(await runtime.execute(7, pkg, 'https://example.com/', () => ({ status: 'navigating' }), command)).toEqual({ status: 'navigating' });
+    await expect(runtime.execute(7, pkg, 'https://example.com/', () => { calls++; throw new Error('disconnected'); }, command)).rejects.toThrow('disconnected');
+    expect(calls).toBe(1);
+  });
+  it('rejects undeclared targets, credentials and redirects before reinjection', async () => {
+    for (const url of ['https://other.example.org/', 'javascript:void(0)', 'https://user:placeholder@example.com/', 'https://login.example.org/']) {
+      const { runtime, events } = setup();
+      await expect(runtime.execute(7, pkg, 'https://example.com/', () => next(url), command)).rejects.toThrow(/not allowed/);
+      expect(events.filter(x => x.startsWith('https'))).toHaveLength(0);
+    }
+    const { runtime, events } = setup({ navigate: async () => 'https://other.example.org/' });
+    await expect(runtime.execute(7, pkg, 'https://example.com/', () => next(), command)).rejects.toThrow(/not allowed/);
+    expect(events.filter(x => x === 'inject')).toHaveLength(1);
+  });
+  it('uses the pinned write policy and permits terminal login navigation without replay', async () => {
+    const writePkg = { ...pkg, commands: [{ id: 'list', safety: 'write', requires_confirmation: false }] };
+    const { runtime } = setup(); let calls = 0;
+    await expect(runtime.execute(7, writePkg, 'https://example.com/', () => { calls++; return next(); }, command)).rejects.toThrow(/cannot be replayed/);
+    expect(calls).toBe(1);
+    expect(await runtime.execute(7, writePkg, 'https://example.com/', () => next('https://login.example.org/', false), command)).toMatchObject({ status: 'navigation_complete' });
+  });
+  it('bounds navigation loops and detects changed packages before continuation', async () => {
+    const { runtime } = setup({ maxNavigations: 2 }); let calls = 0;
+    await expect(runtime.execute(7, pkg, 'https://example.com/', () => { calls++; return next(); }, command)).rejects.toThrow(/limit/);
+    expect(calls).toBe(3);
+    let bundles = 0, operations = 0;
+    const changed = setup({ bundle: async () => { if (++bundles > 1) throw new Error('package changed'); return {}; } });
+    await expect(changed.runtime.execute(7, pkg, 'https://example.com/', () => { operations++; return next(); }, command)).rejects.toThrow('package changed');
+    expect(operations).toBe(1);
+  });
+  it('stops after navigation consumes the overall deadline', async () => {
+    let clock = 0, calls = 0;
+    const { runtime } = setup({ now: () => clock, timeoutMs: 50, navigate: async (_id, url) => { clock = 51; return url; } });
+    await expect(runtime.execute(7, pkg, 'https://example.com/', () => { calls++; return next(); }, command)).rejects.toThrow(/timed out/);
+    expect(calls).toBe(1);
+  });
+  it('waits for a same-URL reload event and removes its listener on failures', async () => {
+    let listener, reads = 0, removed = 0;
+    const api = { tabs: { onUpdated: { addListener: fn => { listener = fn; }, removeListener: () => { removed++; } },
+      get: async () => { if (++reads === 3) listener(7, { status: 'complete' }); return { status: 'complete', url: 'https://example.com/' }; },
+      reload: async () => {}, update: async () => {} } };
+    expect(await navigateAdapterTab(api, 7, 'https://example.com/', pkg, true, 1000)).toBe('https://example.com/');
+    expect(reads).toBeGreaterThanOrEqual(3); expect(removed).toBe(1);
+    api.tabs.get = async () => { throw new Error('tab closed'); };
+    await expect(navigateAdapterTab(api, 7, 'https://example.com/', pkg, true, 1000)).rejects.toThrow('tab closed');
+    expect(removed).toBe(2);
   });
 });

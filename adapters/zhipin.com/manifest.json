@@ -1,0 +1,475 @@
+{
+  "schema_version": 2,
+  "name": "zhipin.com",
+  "version": "0.1.0",
+  "description": "BOSS直聘职位、候选人、聊天和招聘业务",
+  "match": [
+    "www.zhipin.com"
+  ],
+  "runtime_allowed_hosts": [
+    "login.zhipin.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "boss",
+    "BOSS直聘",
+    "直聘",
+    "招聘",
+    "候选人"
+  ],
+  "commands": [
+    {
+      "id": "recommend",
+      "runtime": "extension",
+      "module": "extension/commands/recommend.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘查看推荐候选人（新招呼列表）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Number of results to return",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "joblist",
+      "runtime": "extension",
+      "module": "extension/commands/joblist.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘查看我发布的职位列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "chatlist",
+      "runtime": "extension",
+      "module": "extension/commands/chatlist.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘查看聊天列表（招聘端/求职端）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "Page number",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 20
+          },
+          "job-id": {
+            "type": "string",
+            "description": "Filter by job ID (0=all, boss side only)",
+            "default": "0"
+          },
+          "side": {
+            "type": "string",
+            "description": "Identity side: auto (default), boss (recruiter), or geek (job-seeker)",
+            "default": "auto",
+            "enum": [
+              "auto",
+              "boss",
+              "geek"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "chatmsg",
+      "runtime": "extension",
+      "module": "extension/commands/chatmsg.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘查看聊天消息历史（招聘端/求职端）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID (from chatlist)"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number",
+            "default": 1
+          },
+          "side": {
+            "type": "string",
+            "description": "Identity side: auto (default), boss (recruiter), or geek (job-seeker)",
+            "default": "auto",
+            "enum": [
+              "auto",
+              "boss",
+              "geek"
+            ]
+          }
+        },
+        "required": [
+          "uid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resume",
+      "runtime": "extension",
+      "module": "extension/commands/resume.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘查看候选人简历（招聘端）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID of the candidate (from chatlist)"
+          }
+        },
+        "required": [
+          "uid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "stats",
+      "runtime": "extension",
+      "module": "extension/commands/stats.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘职位数据统计",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "job-id": {
+            "type": "string",
+            "description": "Encrypted job ID (show all if empty)",
+            "default": ""
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "mark",
+      "runtime": "extension",
+      "module": "extension/commands/mark.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘给候选人添加标签",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID of the candidate"
+          },
+          "label": {
+            "type": "string",
+            "description": "Label name (新招呼/沟通中/已约面/已获取简历/已交换电话/已交换微信/不合适/收藏) or label ID"
+          },
+          "remove": {
+            "type": "boolean",
+            "description": "Remove the label instead of adding",
+            "default": false
+          }
+        },
+        "required": [
+          "uid",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "exchange",
+      "runtime": "extension",
+      "module": "extension/commands/exchange.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘交换联系方式（请求手机/微信）",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID of the candidate"
+          },
+          "type": {
+            "type": "string",
+            "description": "Exchange type: phone or wechat",
+            "default": "phone",
+            "enum": [
+              "phone",
+              "wechat"
+            ]
+          }
+        },
+        "required": [
+          "uid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "invite",
+      "runtime": "extension",
+      "module": "extension/commands/invite.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘发送面试邀请",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID of the candidate"
+          },
+          "time": {
+            "type": "string",
+            "description": "Interview time (e.g. 2025-04-01 14:00)"
+          },
+          "address": {
+            "type": "string",
+            "description": "Interview address (uses saved address if empty)",
+            "default": ""
+          },
+          "contact": {
+            "type": "string",
+            "description": "Contact person name (uses saved contact if empty)",
+            "default": ""
+          }
+        },
+        "required": [
+          "uid",
+          "time"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "greet",
+      "runtime": "extension",
+      "module": "extension/commands/greet.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘向新候选人发送招呼（开始聊天）",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID of the candidate (from recommend)"
+          },
+          "security-id": {
+            "type": "string",
+            "description": "Security ID of the candidate"
+          },
+          "job-id": {
+            "type": "string",
+            "description": "Encrypted job ID"
+          },
+          "text": {
+            "type": "string",
+            "description": "Custom greeting message (uses default template if empty)",
+            "default": ""
+          }
+        },
+        "required": [
+          "uid",
+          "security-id",
+          "job-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "batchgreet",
+      "runtime": "extension",
+      "module": "extension/commands/batchgreet.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘批量向推荐候选人发送招呼",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "job-id": {
+            "type": "string",
+            "description": "Filter by encrypted job ID (greet all jobs if empty)",
+            "default": ""
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max candidates to greet",
+            "default": 5
+          },
+          "text": {
+            "type": "string",
+            "description": "Custom greeting message (uses default if empty)",
+            "default": ""
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "send",
+      "runtime": "extension",
+      "module": "extension/commands/send.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘发送聊天消息",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Encrypted UID of the candidate (from chatlist)"
+          },
+          "text": {
+            "type": "string",
+            "description": "Message text to send"
+          }
+        },
+        "required": [
+          "uid",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "detail",
+      "runtime": "extension",
+      "module": "extension/commands/detail.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘查看职位详情",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "security-id": {
+            "type": "string",
+            "description": "Security ID from search results (security_id field)"
+          }
+        },
+        "required": [
+          "security-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "Verify current identity",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "Open official login; manual interaction",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.zhipin.com",
+      "description": "BOSS直聘搜索职位（不带关键词时返回为你推荐职位）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keyword (optional, empty = recommended jobs)"
+          },
+          "city": {
+            "type": "string",
+            "description": "City name or code (e.g. 杭州, 上海, 101010100)",
+            "default": "北京"
+          },
+          "experience": {
+            "type": "string",
+            "description": "Experience: 在校生(实习)/应届生(校招)/经验不限/1年以内/1-3年/3-5年/5-10年/10年以上",
+            "default": ""
+          },
+          "degree": {
+            "type": "string",
+            "description": "Degree: 大专/本科/硕士/博士",
+            "default": ""
+          },
+          "salary": {
+            "type": "string",
+            "description": "Salary: 3K以下/3-5K/5-10K/10-15K/15-20K/20-30K/30-50K/50K以上",
+            "default": ""
+          },
+          "industry": {
+            "type": "string",
+            "description": "Industry code or name (e.g. 100020, 互联网)",
+            "default": ""
+          },
+          "jobType": {
+            "type": "string",
+            "description": "Job type: 全职/兼职/实习（不传=不限，混合校招与实习）",
+            "default": ""
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 15
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

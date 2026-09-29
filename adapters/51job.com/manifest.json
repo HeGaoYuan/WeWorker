@@ -1,0 +1,167 @@
+{
+  "schema_version": 2,
+  "name": "51job.com",
+  "version": "0.1.0",
+  "description": "前程无忧职位搜索、推荐、详情与公司",
+  "match": [
+    "we.51job.com",
+    "jobs.51job.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "51job",
+    "前程无忧",
+    "招聘",
+    "职位"
+  ],
+  "commands": [
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "we.51job.com",
+      "description": "51job 前程无忧关键词职位搜索",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "搜索关键词（岗位名 / 技能 / 公司）"
+          },
+          "area": {
+            "type": "string",
+            "description": "城市名或 6 位城市码（如 \"杭州\" / \"080200\" / \"全国\"）",
+            "default": "全国"
+          },
+          "salary": {
+            "type": "string",
+            "description": "薪资区间（如 \"10-15k\" / \"1-1.5万\" / \"20-30k\"）",
+            "default": ""
+          },
+          "experience": {
+            "type": "string",
+            "description": "工作年限（如 \"应届\" / \"1-3年\" / \"3-5年\" / \"5-7年\"）",
+            "default": ""
+          },
+          "degree": {
+            "type": "string",
+            "description": "学历要求（如 \"本科\" / \"大专\" / \"硕士\"）",
+            "default": ""
+          },
+          "companyType": {
+            "type": "string",
+            "description": "公司性质（如 \"外资\" / \"国企\" / \"民营\"）",
+            "default": ""
+          },
+          "companySize": {
+            "type": "string",
+            "description": "公司规模（如 \"50-150\" / \"1000-5000\"）",
+            "default": ""
+          },
+          "sort": {
+            "type": "string",
+            "description": "排序：综合 / 最新 / 薪资 / 距离",
+            "default": "综合"
+          },
+          "page": {
+            "type": "integer",
+            "description": "页码（1-based）",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数（1-50）",
+            "default": 20
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hot",
+      "runtime": "extension",
+      "module": "extension/commands/hot.js",
+      "routeDomain": "we.51job.com",
+      "description": "51job 推荐职位（按城市/行业/排序浏览）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "type": "string",
+            "description": "城市名或 6 位城市码（默认 \"全国\"）",
+            "default": "全国"
+          },
+          "sort": {
+            "type": "string",
+            "description": "排序：综合 / 最新 / 薪资 / 距离",
+            "default": "综合"
+          },
+          "page": {
+            "type": "integer",
+            "description": "页码（1-based）",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数（1-50）",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "detail",
+      "runtime": "extension",
+      "module": "extension/commands/detail.js",
+      "routeDomain": "jobs.51job.com",
+      "description": "51job 职位详情（按 jobId）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "职位 ID（search 返回的 jobId）"
+          }
+        },
+        "required": [
+          "jobId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "company",
+      "runtime": "extension",
+      "module": "extension/commands/company.js",
+      "routeDomain": "jobs.51job.com",
+      "description": "51job 公司简介 + 在招职位（按 encCoId）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "encCoId": {
+            "type": "string",
+            "description": "加密公司 ID（search 返回的 encCoId）"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回职位数（1-50）",
+            "default": 20
+          }
+        },
+        "required": [
+          "encCoId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

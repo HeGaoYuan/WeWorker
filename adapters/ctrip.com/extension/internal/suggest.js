@@ -16,8 +16,7 @@
     const id = item.id ? encodeURIComponent(String(item.id)) : "";
     const cityId = item.cityId ? encodeURIComponent(String(item.cityId)) : "";
     const cityName = item.cityName ? encodeURIComponent(String(item.cityName)) : "";
-    if (item.type === "City" && cityId) return "https://you.ctrip.com/place/" + cityName + cityId + ".html";
-    if (item.type === "Markland" && id && cityId) return "https://you.ctrip.com/sight/" + cityName + cityId + "/" + id + ".html";
+    if (item.type === "City" && cityId) return "https://hotels.ctrip.com/hotels/list?city=" + cityId;
     if (item.type === "Hotel" && id) return "https://hotels.ctrip.com/hotels/detail/?hotelid=" + id;
     if ((item.type === "BusinessArea" || item.type === "Zone") && cityId && id) return "https://hotels.ctrip.com/hotels/list?city=" + cityId + "&zone=" + id;
     if (item.type === "RailwayStation" && id) return "https://trains.ctrip.com/trainstation/" + id + ".html";
@@ -25,42 +24,47 @@
   }
 
   window.__ctrip_com_suggest = async function (params, searchType) {
-    if (location.hostname !== "m.ctrip.com") fail("INVALID_CONTEXT", "Open m.ctrip.com before calling this command");
     const query = typeof params?.query === "string" ? params.query.trim() : "";
     if (!query) fail("INVALID_ARGS", "query must be a non-empty string");
-    const limit = params?.limit === undefined ? 15 : params.limit;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 50) fail("INVALID_ARGS", "limit must be an integer between 1 and 50");
+    const limit = window.__ctrip_com_common.integer("limit", params?.limit, 15, 1, 50);
     let response;
     try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        credentials: "omit",
-        redirect: "error",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          keyword: query,
-          searchType,
-          platform: "online",
-          pageID: "102001",
-          head: {
-            Locale: "zh-CN",
-            LocaleController: "zh_cn",
-            Currency: "CNY",
-            PageId: "102001",
-            clientID: "weworker-ctrip",
-            group: "ctrip",
-            Frontend: { sessionID: 1, pvid: 1 },
-            HotelExtension: { group: "CTRIP", WebpSupport: false }
-          }
-        })
+      response = await window.__webmcpWecliRuntime.requestPrivileged("backend_fetch", {
+        url: endpoint,
+        browserFallback: false,
+        redactBodyInTrace: true,
+        options: {
+          method: "POST",
+          redirect: "manual",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            keyword: query,
+            searchType,
+            platform: "online",
+            pageID: "102001",
+            head: {
+              Locale: "zh-CN",
+              LocaleController: "zh_cn",
+              Currency: "CNY",
+              PageId: "102001",
+              clientID: "weworker-ctrip",
+              group: "ctrip",
+              Frontend: { sessionID: 1, pvid: 1 },
+              HotelExtension: { group: "CTRIP", WebpSupport: false }
+            }
+          })
+        }
       });
     } catch {
       fail("FETCH_ERROR", "Ctrip suggest request failed; check connectivity and retry");
     }
+    if (response?.redirected || response?.url !== endpoint || (response?.status >= 300 && response?.status < 400)) {
+      fail("HTTP_ERROR", "Ctrip suggest redirected unexpectedly");
+    }
     if (!response.ok) fail("HTTP_ERROR", "Ctrip suggest returned HTTP " + response.status);
     let payload;
     try {
-      payload = await response.json();
+      payload = JSON.parse(response.body);
     } catch {
       fail("COMMAND_EXEC", "Ctrip suggest returned invalid JSON");
     }

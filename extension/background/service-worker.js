@@ -2,7 +2,7 @@ import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
-import { createHostAdapterRuntime } from './host-adapter-runtime.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 
 /**
@@ -2669,12 +2669,18 @@ async function handleNativeMessage(msg) {
           return;
         }
         const tabs = await chrome.tabs.query({});
-        const tab = tabs.find((entry) => {
+        const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        let tab = tabs.find(entry => {
+          try { return new URL(entry.url).hostname === route; } catch { return false; }
+        }) || tabs.find(entry => {
           try { return adapterMatchesHostname(selected.manifest, new URL(entry.url).hostname); } catch { return false; }
         });
-        if (!tab?.id) throw new Error('Open a matching website tab before calling this Adapter command.');
+        if (!tab?.id) {
+          const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
+          tab = await chrome.tabs.create({ url: startUrl, active: false });
+        }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
-          () => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID));
+          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command);
         sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
         return;
       }
@@ -4413,7 +4419,7 @@ async function runDirectBrowserFetch(payload = {}, traceID = null) {
 
 async function runDirectBackendFetch(payload = {}, traceID = null) {
   const response = await runRuntimeBridgeRequest("wecli_backend_fetch", payload, traceID);
-  if (!isDirectAuthenticationResponse(response)) return response;
+  if (payload.browserFallback === false || !isDirectAuthenticationResponse(response)) return response;
   traceLog(traceID, `[ServiceWorkerRuntime] backend_fetch authentication response, retrying in browser context ${String(payload.url || "")}`);
   return runDirectBrowserFetch(payload, traceID);
 }
@@ -4466,7 +4472,7 @@ async function handleDirectRuntimeRequest(action, payload = {}) {
     case "cookies_get":
       traceLog(traceID, `[ServiceWorkerRuntime] direct cookies_get ${String(payload.domain || payload.domains || payload.url || directRuntimeContext?.routeDomain || "")}`);
       {
-        const debuggerResult = await getDirectRuntimeCookiesViaDebugger(payload, traceID);
+        const debuggerResult = payload.browserDebugger === false ? null : await getDirectRuntimeCookiesViaDebugger(payload, traceID);
         const result = debuggerResult || await getRuntimeCookies(createDirectContextTab(), payload);
         const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
         traceLog(traceID, `[ServiceWorkerRuntime] direct cookies_get result ${JSON.stringify({
@@ -4861,7 +4867,7 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
  * 当 sendMessage 因 bfcache 失败时，我们主动激活标签页将其从 bfcache 中唤醒，
  * 等待页面恢复后重试。
  */
-async function callToolInTab(tabId, toolName, args, traceID = null) {
+async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
 
@@ -4875,7 +4881,7 @@ async function callToolInTab(tabId, toolName, args, traceID = null) {
   };
 
   let lastError;
-  const maxRetries = 2;
+  const maxRetries = allowTransportRetry ? 2 : 0;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
@@ -4884,7 +4890,11 @@ async function callToolInTab(tabId, toolName, args, traceID = null) {
     }
 
     try {
-      const response = await chrome.tabs.sendMessage(tabId, message);
+      let timer;
+      const response = await Promise.race([
+        chrome.tabs.sendMessage(tabId, message),
+        ...(Number.isFinite(timeoutMs) ? [new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter command timed out; execution was not replayed.')), timeoutMs); })] : []),
+      ]).finally(() => clearTimeout(timer));
       // 成功 —— 继续处理响应
       if (response?.error) throw createAdapterError(response.error);
 
@@ -6916,6 +6926,19 @@ async function callManagedBackgroundTool(manifest, command, args, traceID) {
   return runtime.execute(manifest, command, args, context);
 }
 
+async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let stableUrl = null;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab) throw new Error('Adapter tab was closed.');
+    if (tab.status === 'complete' && stableUrl === tab.url) return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    stableUrl = tab.status === 'complete' ? tab.url : null;
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  throw new Error('Adapter page navigation timed out.');
+}
+
 function getHostAdapterRuntime() {
   return hostAdapterRuntime ||= createHostAdapterRuntime({
     bundle: (manifest) => getHostAdapterClient().bundle(manifest),
@@ -6926,6 +6949,8 @@ function getHostAdapterRuntime() {
       tabInjectedAdapters.delete(tabId);
     },
     inject: injectV2AdapterWithCode,
+    ready: (tabId, manifest, timeoutMs) => waitForManagedPageReady(tabId, manifest, true, timeoutMs),
+    navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
   });
 }
 
@@ -8091,7 +8116,7 @@ async function runRuntimeBridgeRequest(type, payload, traceID = null) {
       ok: result?.result?.ok,
       url: result?.result?.url,
       replay: result?.result?.replay,
-      body: summarizeDirectTraceBody(result?.result?.body, 800),
+      body: payload?.redactBodyInTrace === true ? '[redacted]' : summarizeDirectTraceBody(result?.result?.body, 800),
     })}`);
   } else {
     traceLog(traceID, `[ServiceWorkerRuntime] ${label} <- bridge ok`);

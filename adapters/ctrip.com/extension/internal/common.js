@@ -7,8 +7,10 @@
   }
 
   function integer(name, value, fallback, minimum, maximum) {
-    const candidate = value === undefined ? fallback : value;
-    if (!Number.isInteger(candidate) || candidate < minimum || candidate > maximum) {
+    const raw = value === undefined ? fallback : value;
+    // CLI scalar flags remain strings; normalize only this Adapter numeric field.
+    const candidate = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : raw;
+    if (!Number.isSafeInteger(candidate) || candidate < minimum || candidate > maximum) {
       fail("INVALID_ARGS", `${name} must be an integer between ${minimum} and ${maximum}`);
     }
     return candidate;
@@ -60,9 +62,9 @@
     return current.origin === target.origin && current.pathname.replace(/\/$/, "") === target.pathname.replace(/\/$/, "") && current.search === target.search;
   }
 
-  function navigate(targetUrl, message) {
-    setTimeout(() => location.assign(targetUrl), 50);
-    return { status: "navigating", url: targetUrl, message: message || "页面正在导航；加载完成后使用相同参数再次调用。" };
+  function navigate(targetUrl, message, resume = true) {
+    return { __webcli_navigation: { version: 1, url: targetUrl, resume,
+      ...(resume ? {} : { result: { status: "login_required", message, url: targetUrl } }) } };
   }
 
   function waitFor(detect, timeoutMs) {

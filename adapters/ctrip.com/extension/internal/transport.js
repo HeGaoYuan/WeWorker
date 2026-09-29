@@ -85,7 +85,15 @@
     const payload = JSON.stringify({ fromCityName: values.from, toCityName: values.to, date: values.date });
     const target = `https://ship.ctrip.com/ship/list?param=${encodeURIComponent(payload)}`;
     if (!common.sameUrl(target)) return common.navigate(target);
-    const state = await waitForRows(".list-item-parent", 12000);
+    const state = await common.waitFor(() => {
+      if (common.hasCaptcha()) return "captcha";
+      if (document.querySelector(".list-item-parent")) return "content";
+      if (document.querySelector(".list-no-data-parent")) return "no-information";
+      return null;
+    }, 12000);
+    // The site uses the same empty view for empty responses and request failures.
+    // Do not infer that the route has no sailings, or report a rendering timeout.
+    if (state === "no-information") common.fail("COMMAND_EXEC", "Ctrip ferry page reports no sailing information for the requested route/date. This page state can also result from an upstream request failure; it does not prove that no sailings exist. Do not retry unchanged arguments automatically.");
     assertReady(state, "ferry");
     const rendered = await common.scrollUntil(".list-item-parent", values.limit, 8);
     const rows = Array.from(document.querySelectorAll(".list-item-parent")).map((card) => {
@@ -122,77 +130,46 @@
     return { from, to, limit, depart, returning };
   }
 
-  function textChunks(card) {
-    const chunks = [];
-    const visit = (node) => {
-      for (const child of node.childNodes || []) {
-        if (child.nodeType === 3) {
-          const value = common.clean(child.textContent);
-          if (value) chunks.push(value);
-        } else if (child.nodeType === 1) visit(child);
-      }
-    };
-    visit(card);
-    return chunks;
-  }
-
-  function extractFlightCards() {
-    const isTime = (value) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(value);
-    const isFlightNo = (value) => /^[A-Z0-9]{2}\d{3,4}[A-Z]?$/.test(value);
-    return Array.from(document.querySelectorAll(".flight-item")).map((card) => {
-      const chunks = textChunks(card);
-      if (chunks.length < 8) return null;
-      const firstTime = chunks.findIndex(isTime);
-      if (firstTime < 1) return null;
-      const airline = chunks[0];
-      if (!airline || isTime(airline)) return null;
-      const secondTime = chunks.findIndex((value, index) => index > firstTime && isTime(value));
-      if (secondTime < 0 || !chunks[firstTime + 1] || !chunks[secondTime + 1]) return null;
-      let flightNo = null;
-      let aircraft = null;
-      for (let index = 1; index < firstTime; index += 1) {
-        if (!flightNo && isFlightNo(chunks[index])) flightNo = chunks[index];
-        else if (!aircraft && !isFlightNo(chunks[index])) aircraft = chunks[index];
-      }
-      let price = null;
-      let currency = null;
-      for (let index = 0; index < chunks.length - 1; index += 1) {
-        if (/^[¥$€£]$/.test(chunks[index]) && /^\d+(?:[.,]\d+)?$/.test(chunks[index + 1])) {
-          currency = chunks[index];
-          price = Number(chunks[index + 1].replace(",", ""));
-          break;
-        }
-      }
-      return {
-        airline,
-        flightNo,
-        aircraft,
-        departureTime: chunks[firstTime],
-        departureAirport: chunks[firstTime + 1],
-        arrivalTime: chunks[secondTime],
-        arrivalAirport: chunks[secondTime + 1],
-        terminal: /^T\d$/.test(chunks[secondTime + 2] || "") ? chunks[secondTime + 2] : null,
-        price,
-        currency,
-        cabin: [...chunks].reverse().find((value) => /舱$/.test(value)) || null
-      };
-    }).filter(Boolean);
-  }
-
   async function flightRound(params) {
     const values = flightRoute(params, true);
     const target = `https://flights.ctrip.com/online/list/round-${values.from.toLowerCase()}-${values.to.toLowerCase()}?depdate=${values.depart}_${values.returning}&cabin=Y_S_C_F&adult=1&child=0&infant=0`;
-    if (!common.sameUrl(target)) return common.navigate(target);
-    const state = await common.waitFor(() => {
-      if (common.hasCaptcha()) return "captcha";
-      const cards = Array.from(document.querySelectorAll(".flight-item"));
-      return cards.some((card) => /\d{1,2}:\d{2}/.test(card.textContent || "") && /[¥$€£]/.test(card.textContent || "")) ? "content" : null;
-    }, 18000);
-    assertReady(state, "round-trip flight");
-    const rendered = await common.scrollUntil(".flight-item", values.limit, 8);
-    const rows = extractFlightCards().filter((row) => row.airline && row.departureTime && row.departureAirport && row.arrivalTime && row.arrivalAirport);
-    if (!rows.length) common.fail(rendered > 0 ? "COMMAND_EXEC" : "EMPTY_RESULT", rendered > 0 ? "Ctrip flight cards were missing required fields" : "No matching round-trip flights");
-    return rows.slice(0, values.limit).map((row, index) => ({ rank: index + 1, ...row, url: target }));
+    if (!common.sameUrl(target)) {
+      await runtime.requestPrivileged("network_capture_start", { pattern: "/international/search/api/search/batchSearch" });
+      return common.navigate(target);
+    }
+    let capture;
+    try {
+      if (common.hasCaptcha()) assertReady("captcha", "round-trip flight");
+      capture = await runtime.requestPrivileged("network_capture_read", { waitMs: 12000, finish: true });
+      if (common.hasCaptcha()) assertReady("captcha", "round-trip flight");
+    }
+    catch (error) {
+      if (error.code !== "CAPTURE_NOT_STARTED") throw error;
+      await runtime.requestPrivileged("network_capture_start", { pattern: "/international/search/api/search/batchSearch" });
+      return common.navigate(target);
+    }
+    const entries = capture?.entries || [];
+    if (!entries.length) {
+      await runtime.requestPrivileged("network_capture_start", { pattern: "/international/search/api/search/batchSearch" });
+      return common.navigate(target);
+    }
+    const itineraries = parseFlightCaptures(entries);
+    if (!itineraries.length) common.fail("EMPTY_RESULT", "No matching round-trip flights");
+    return itineraries.map((item, index) => {
+      const segments = item.flightSegments;
+      if (!Array.isArray(segments) || segments.length !== 2 || segments[0].segmentNo !== 1 || segments[1].segmentNo !== 2) common.fail("COMMAND_EXEC", "Round-trip response must contain both outbound and return segments");
+      const route = (segment, from, to, date) => {
+        const legs = segment.flightList || []; const first = legs[0], last = legs[legs.length - 1];
+        if (!first || !last || ![first.departureCityCode, first.departureAirportCode].includes(from) || ![last.arrivalCityCode, last.arrivalAirportCode].includes(to) || !String(first.departureDateTime).startsWith(date + ' ')) common.fail("COMMAND_EXEC", "Round-trip response route or date does not match the request");
+        const { price, currency, cabin, url, ...leg } = mapItinerary({ ...item, flightSegments: [segment] }, target, index).row;
+        return leg;
+      };
+      const outbound = route(segments[0], values.from, values.to, values.depart);
+      const returning = route(segments[1], values.to, values.from, values.returning);
+      const price = Number(item.priceList?.[0]?.sortPrice ?? item.priceList?.[0]?.adultPrice);
+      if (!Number.isFinite(price) || price < 0) common.fail("COMMAND_EXEC", "Round-trip response price is invalid");
+      return { outbound, return: returning, price, currency: "CNY", priceScope: "round_trip_one_adult", cabin: cabinLabel(item.priceList[0].cabin), taxesIncluded: null, url: target };
+    }).sort((a, b) => a.price - b.price || a.outbound.departureDateTime.localeCompare(b.outbound.departureDateTime)).slice(0, values.limit).map((row, index) => ({ rank: index + 1, ...row }));
   }
 
   function timePart(value) {
@@ -250,7 +227,15 @@
       departureTime: timePart(first?.departureDateTime),
       departureAirport: common.clean(first?.departureAirportName),
       arrivalTime: timePart(last?.arrivalDateTime),
+      departureDateTime: common.clean(first?.departureDateTime),
+      arrivalDateTime: common.clean(last?.arrivalDateTime),
+      connecting: legs.length > 1 || segments.some(segment => Number(segment?.transferCount || 0) > 0),
+      stopCount: segments.every(segment => Number.isInteger(segment.stopCount) && segment.stopCount >= 0) ? segments.reduce((total, segment) => total + segment.stopCount, 0) : null,
+      stops: legs.flatMap(leg => Array.isArray(leg.stopList) ? leg.stopList.map(stop => ({ city: common.clean(stop.cityName), airport: common.clean(stop.airportName), durationMinutes: Number.isFinite(stop.duration) ? stop.duration : null })) : []),
+      segments: legs.map(leg => ({ flightNo: common.clean(leg.flightNo), departureAirport: common.clean(leg.departureAirportName), departureTerminal: common.clean(leg.departureTerminal) || null, arrivalAirport: common.clean(leg.arrivalAirportName), arrivalTerminal: common.clean(leg.arrivalTerminal) || null, departureDateTime: common.clean(leg.departureDateTime), arrivalDateTime: common.clean(leg.arrivalDateTime) })),
       arrivalAirport: common.clean(last?.arrivalAirportName),
+      departureTerminal: common.clean(first?.departureTerminal) || null,
+      arrivalTerminal: common.clean(last?.arrivalTerminal) || null,
       terminal: common.clean(last?.arrivalTerminal) || null,
       price,
       currency: "¥",
@@ -268,16 +253,24 @@
     const target = `https://flights.ctrip.com/online/list/oneway-${values.from.toLowerCase()}-${values.to.toLowerCase()}?depdate=${values.date}&cabin=Y_S_C_F&adult=1&child=0&infant=0`;
     if (!common.sameUrl(target)) {
       await runtime.requestPrivileged("network_capture_start", { pattern: "/international/search/api/search/batchSearch" });
-      return common.navigate(target, "已启动航班响应捕获；页面加载完成后使用相同参数再次调用。");
+      return common.navigate(target, "已启动航班响应捕获；由宿主等待加载并继续查询。");
     }
     let capture;
     try {
-      await common.waitFor(() => common.hasCaptcha() ? "captcha" : document.querySelector(".flight-item") ? "content" : null, 12000).then((state) => assertReady(state, "flight"));
+      if (common.hasCaptcha()) assertReady("captcha", "flight");
       capture = await runtime.requestPrivileged("network_capture_read", { waitMs: 12000, finish: true });
+      if (common.hasCaptcha()) assertReady("captcha", "flight");
     } catch (error) {
       if (error.code !== "CAPTURE_NOT_STARTED") throw error;
       await runtime.requestPrivileged("network_capture_start", { pattern: "/international/search/api/search/batchSearch" });
-      return common.navigate(target, "当前页面早于捕获启动；正在重新加载，完成后使用相同参数再次调用。");
+      return common.navigate(target, "当前页面早于捕获启动；正在重新加载，由宿主继续查询。");
+    }
+    // An existing capture session can be empty after an earlier page load.
+    // Recover before returning to the Agent; the host bounds these read-only
+    // continuations by navigation count and the overall execution deadline.
+    if (Array.isArray(capture?.entries) && !capture.entries.some(entry => String(entry?.url || "").includes("/international/search/api/search/batchSearch"))) {
+      await runtime.requestPrivileged("network_capture_start", { pattern: "/international/search/api/search/batchSearch" });
+      return common.navigate(target, "未捕获到航班响应；重新捕获并由宿主继续查询。");
     }
     const itineraries = parseFlightCaptures(capture?.entries);
     if (!itineraries.length) common.fail("EMPTY_RESULT", `No flights for ${values.from} to ${values.to} on ${values.date}`);

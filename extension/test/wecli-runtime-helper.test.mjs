@@ -427,35 +427,35 @@ test('service worker allows ProjectDemo runtime helpers to read SDL sibling-doma
 })
 
 test('service worker captures only matching same-host Adapter responses and releases its debugger', async () => {
-  const payload = JSON.stringify({ status: 0, data: { context: { finished: true }, flightItineraryList: [] } })
+  const payload = JSON.stringify({ status: 0, data: { context: { finished: true }, items: [] } })
   const worker = loadServiceWorker({
-    tab: { id: 7, url: 'https://flights.ctrip.com/online/list', windowId: 1 },
+    tab: { id: 7, url: 'https://api.example.com/online/list', windowId: 1 },
     networkResponseBody: payload,
     networkResponseBase64: true,
   })
   const started = await worker.request('network_capture_start', {
-    pattern: '/international/search/api/search/batchSearch',
+    pattern: '/api/query',
   })
   assert.equal(started.ok, true)
   const emitDebuggerEvent = worker.context.chrome.debugger.onEvent.listeners[0]
   await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
     requestId: 'ignored',
-    request: { url: 'https://evil.example/international/search/api/search/batchSearch', method: 'POST' },
+    request: { url: 'https://evil.example/api/query', method: 'POST' },
   })
   await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
-    requestId: 'flight',
-    request: { url: 'https://flights.ctrip.com/international/search/api/search/batchSearch', method: 'POST' },
+    requestId: 'response',
+    request: { url: 'https://api.example.com/api/query', method: 'POST' },
   })
   await emitDebuggerEvent({ tabId: 7 }, 'Network.responseReceived', {
-    requestId: 'flight',
+    requestId: 'response',
     response: { status: 200, mimeType: 'application/json', headers: { 'content-type': 'application/json' } },
   })
-  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'flight', encodedDataLength: payload.length })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'response', encodedDataLength: payload.length })
   const captured = await worker.request('network_capture_read', { waitMs: 0, finish: true })
   assert.equal(captured.ok, true)
   assert.deepEqual(plain(captured.result.entries), [{
     kind: 'cdp',
-    url: 'https://flights.ctrip.com/international/search/api/search/batchSearch',
+    url: 'https://api.example.com/api/query',
     method: 'POST',
     timestamp: captured.result.entries[0].timestamp,
     responseStatus: 200,
@@ -472,22 +472,22 @@ test('service worker captures only matching same-host Adapter responses and rele
 test('Adapter response capture enforces its body limit and keeps a borrowed debugger attached', async () => {
   const payload = 'x'.repeat(8 * 1024 * 1024 + 1)
   const worker = loadServiceWorker({
-    tab: { id: 7, url: 'https://flights.ctrip.com/online/list', windowId: 1 },
+    tab: { id: 7, url: 'https://api.example.com/online/list', windowId: 1 },
     networkResponseBody: payload,
   })
   await worker.context.ensureCdpAttached(7)
-  const started = await worker.request('network_capture_start', { pattern: 'batchSearch' })
+  const started = await worker.request('network_capture_start', { pattern: 'query' })
   assert.equal(started.ok, true)
   const emitDebuggerEvent = worker.context.chrome.debugger.onEvent.listeners[0]
   await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
-    requestId: 'large-flight',
-    request: { url: 'https://flights.ctrip.com/api/batchSearch', method: 'POST' },
+    requestId: 'large-response',
+    request: { url: 'https://api.example.com/api/query', method: 'POST' },
   })
   await emitDebuggerEvent({ tabId: 7 }, 'Network.responseReceived', {
-    requestId: 'large-flight',
+    requestId: 'large-response',
     response: { status: 200, mimeType: 'application/json', headers: {} },
   })
-  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'large-flight' })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'large-response' })
   const captured = await worker.request('network_capture_read', { finish: true })
   assert.equal(captured.ok, true)
   assert.equal(captured.result.entries[0].responseBodyFullSize, payload.length)

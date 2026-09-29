@@ -5,11 +5,18 @@
   async function identity() {
     const result = await runtime.requestPrivileged("cookies_get", {
       url: "https://www.ctrip.com/",
-      names: ["login_uid", "AHeadUserInfo"]
+      browserDebugger: false,
+      names: ["login_uid", "AHeadUserInfo", "cticket", "DUID", "IsNonUser"]
     });
     const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
-    const loginCookie = cookies.find((cookie) => cookie.name === "login_uid" && cookie.value);
-    if (!loginCookie) common.fail("AUTH_REQUIRED", "Ctrip browser session is not logged in");
+    const value = name => cookies.find(cookie => cookie.name === name && cookie.value)?.value || "";
+    const guest = value("IsNonUser") === "T";
+    // Current web sessions can leave login_uid empty. Require both session and
+    // identity cookies plus the explicit non-guest marker for that newer shape.
+    const modernSession = value("cticket") && value("DUID") && value("IsNonUser") === "F";
+    if (guest || (!value("login_uid") && !modernSession)) {
+      common.fail("AUTH_REQUIRED", "No supported Ctrip login state was detected in the connected browser");
+    }
     const profileCookie = cookies.find((cookie) => cookie.name === "AHeadUserInfo");
     const profile = new URLSearchParams(profileCookie?.value || "");
     const rawName = profile.get("UserName") || "";
@@ -39,7 +46,7 @@
     }
     return common.navigate(
       "https://passport.ctrip.com/user/login",
-      "请在浏览器中完成人工登录或验证码；完成后调用 ctrip.com.whoami 验证登录状态。"
+      "请在浏览器中完成人工登录或验证码；完成后调用 ctrip.com.whoami 验证登录状态。", false
     );
   }
 

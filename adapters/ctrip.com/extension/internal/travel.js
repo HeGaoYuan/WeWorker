@@ -110,7 +110,14 @@
     const destination = common.place("destination", params.destination);
     const resultLimit = limit(params);
     const target = `https://vacations.ctrip.com/list/${section}/sc.html?${new URLSearchParams({ sv: destination }).toString()}`;
-    if (!common.sameUrl(target)) return common.navigate(target);
+    const current = new URL(location.href);
+    const expected = new URL(target);
+    // The site appends its selected departure city during canonicalization.
+    // Retain it as result context; do not navigate back just to remove it.
+    const matches = current.origin === expected.origin && current.pathname === expected.pathname
+      && current.searchParams.getAll("sv").length === 1 && current.searchParams.get("sv") === destination
+      && [...current.searchParams.keys()].every(key => ["sv", "startcity"].includes(key));
+    if (!matches) return common.navigate(target);
     const state = await common.waitFor(() => {
       if (common.hasCaptcha()) return "captcha";
       const items = document.querySelectorAll(".list_product_item").length;
@@ -127,6 +134,8 @@
       if (!title) return null;
       return {
         title,
+        productType: common.text(card.querySelector(".list_product_name")) || null,
+        departureCity: common.text(card.querySelector(".list_product_place")) || null,
         subtitle: common.text(card.querySelector(".list_product_subtitle")) || null,
         tags: Array.from(card.querySelectorAll(".list_label_blue")).map(common.text).filter(Boolean).join(" / ") || null,
         score: numberText(common.text(card.querySelector(".list_product_score"))),
@@ -136,7 +145,14 @@
       };
     }).filter(Boolean);
     if (!rows.length) common.fail("COMMAND_EXEC", `Ctrip ${label} cards were missing titles`);
-    return rows.slice(0, resultLimit).map((row, index) => ({ rank: index + 1, ...row, url: target }));
+    // The free-travel page can mix private-group recommendations into its list.
+    // Use the displayed type, not the page category or words in a product title.
+    const matching = section === "freetravel" ? rows.filter(row => row.productType === "自由行" || row.productType === "目的地自由行") : rows;
+    if (!matching.length) {
+      if (!rows.some(row => row.productType)) common.fail("COMMAND_EXEC", "Ctrip package cards have no product type labels; cannot verify independent travel");
+      common.fail("EMPTY_RESULT", "No explicitly labeled independent-travel packages on the current result page");
+    }
+    return matching.slice(0, resultLimit).map((row, index) => ({ rank: index + 1, ...row, departureCityId: current.searchParams.get("startcity"), url: current.href }));
   }
 
   window.__ctrip_com_travel = {
