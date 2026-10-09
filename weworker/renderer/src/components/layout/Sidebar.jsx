@@ -1,29 +1,19 @@
 import React, { useEffect, useState, useRef } from 'react'
 import WorksList, { LABEL_COLORS, LABEL_OPTIONS } from '../sidebar/WorksList.jsx'
 import ScheduledTasksList from '../sidebar/ScheduledTasksList.jsx'
-import StatusBar from '../sidebar/StatusBar.jsx'
-import UpdatePrompt from '../sidebar/UpdatePrompt.jsx'
 import Tooltip from '../Tooltip.jsx'
 import { useWorksStore } from '../../store/works.js'
 import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
-
-import { useCapabilitiesPanelStore } from '../../store/capabilities-panel.js'
-import { useUserFilesStore } from '../../store/user-files.js'
 import { useExplorationPageStore } from '../../store/exploration-page.js'
-import { useWebsiteExplorationStore, leaveWebsiteExploration } from '../../store/website-exploration.js'
+import { leaveWebsiteExploration } from '../../store/website-exploration.js'
 
-export default function Sidebar({ section, onOpenSettings, collapsed, onCollapse, width }) {
+export default function Sidebar({ section, collapsed, onCollapse, width }) {
   const createWork = useWorksStore((s) => s.createWork)
   const createTask = useScheduledTasksStore((s) => s.createTask)
   const loadTasks = useScheduledTasksStore((s) => s.loadTasks)
   const activeTaskId = useScheduledTasksStore((s) => s.activeTaskId)
   const toolPackageOpen = useToolPackagePageStore((s) => s.open)
-  const explorationOpen = useExplorationPageStore((s) => s.open)
-  const websiteOpen = useWebsiteExplorationStore((s) => s.open)
-  const websiteActivity = useWebsiteExplorationStore((s) => s.activity)
-  const openToolPackagePage = useToolPackagePageStore((s) => s.openPage)
-  const openExplorationPage = useExplorationPageStore((s) => s.openPage)
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [showLabelFilter, setShowLabelFilter] = useState(false)
@@ -73,16 +63,6 @@ export default function Sidebar({ section, onOpenSettings, collapsed, onCollapse
     createWork()
   }
 
-  const handleOpenExploration = async () => {
-    if (!await leaveWebsiteExploration()) return
-    useToolPackagePageStore.getState().closePage()
-    useWorksStore.setState({ activeWorkId: null })
-    useScheduledTasksStore.setState({ activeTaskId: null })
-    useUserFilesStore?.getState?.()?.closePanel?.()
-    useCapabilitiesPanelStore?.getState?.()?.closePanel?.()
-    openExplorationPage()
-  }
-
   const handleOpenWorksSection = async () => {
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
@@ -114,33 +94,6 @@ export default function Sidebar({ section, onOpenSettings, collapsed, onCollapse
       overflow: 'hidden',
       transition: 'width 0.2s ease, min-width 0.2s ease',
     }}>
-      <div style={{ padding: '2px 12px 6px', WebkitAppRegion: 'no-drag' }}>
-        <button
-          type="button"
-          onClick={handleOpenExploration}
-          style={{
-            ...sidebarSectionButtonStyle,
-            width: '100%',
-            color: explorationOpen ? 'var(--text-primary)' : 'var(--text-muted)',
-          }}
-        >
-          <ExplorationNavIcon size={13} />
-          <span>API 探索</span>
-        </button>
-      </div>
-      <div style={{ padding: '2px 12px 6px', WebkitAppRegion: 'no-drag' }}>
-        <button type="button" onClick={() => {
-          useToolPackagePageStore.getState().closePage()
-          useExplorationPageStore.getState().closePage()
-          useWorksStore.setState({ activeWorkId: null })
-          useScheduledTasksStore.setState({ activeTaskId: null })
-          useUserFilesStore.getState().closePanel?.()
-          useCapabilitiesPanelStore.getState().closePanel?.()
-          useWebsiteExplorationStore.setState({ open: true })
-        }} style={{ ...sidebarSectionButtonStyle, width: '100%', color: websiteOpen ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-          <ExplorationNavIcon size={13} /><span>网站探索agent{websiteActivity.running ? ' · 运行中' : ''}</span>
-        </button>
-      </div>
       {section === 'conversation' && (
       <div className="sidebar-task-section" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <div style={{
@@ -371,45 +324,6 @@ export default function Sidebar({ section, onOpenSettings, collapsed, onCollapse
         </div>
       </div>
       )}
-
-      {/* Bottom bar */}
-      <div className="sidebar-footer" style={{
-        borderTop: '1px solid var(--border)',
-        padding: '8px 12px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        WebkitAppRegion: 'no-drag',
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <StatusBar />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <UpdatePrompt />
-          <Tooltip text="设置">
-            <button
-              onClick={onOpenSettings}
-              aria-label="设置"
-              style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '4px',
-              display: 'flex',
-              alignItems: 'center',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
-            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </button>
-          </Tooltip>
-        </div>
-      </div>
     </div>
   )
 }
@@ -446,14 +360,4 @@ const sidebarSectionButtonStyle = {
   fontSize: 11,
   fontWeight: 600,
   textAlign: 'left',
-}
-
-function ExplorationNavIcon({ size = 15 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-4-4" />
-      <path d="M8 11h6M11 8v6" />
-    </svg>
-  )
 }

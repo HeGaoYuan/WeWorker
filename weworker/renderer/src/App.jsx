@@ -23,6 +23,8 @@ import { useExplorationPageStore } from './store/exploration-page.js'
 import { useWebsiteExplorationStore, leaveWebsiteExploration } from './store/website-exploration.js'
 import { useSitesStore } from './store/sites.js'
 import { WebsiteExplorationGuard } from './components/website-exploration/WebsiteExplorationPage.jsx'
+import ExtensionGuide from './components/ExtensionGuide.jsx'
+import UpdatePrompt from './components/sidebar/UpdatePrompt.jsx'
 import { useAntdThemeConfig } from './theme/antd-theme.js'
 import { streamBackendEvents } from './api/http.js'
 import './workspace-theme.css'
@@ -41,6 +43,7 @@ export default function App() {
   const themeSwitchTimerRef = useRef(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [appVersion, setAppVersion] = useState('')
+  const [showExtensionGuide, setShowExtensionGuide] = useState(false)
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(v => setAppVersion(v || ''))
@@ -84,6 +87,7 @@ export default function App() {
     useScheduledTasksStore.setState({ activeTaskId: null })
     useUserFilesStore.getState().closePanel?.()
     useCapabilitiesPanelStore.getState().closePanel?.()
+    useTerminalStore.getState().closePanel()
   }, [websiteOpen])
 
   useEffect(() => window.electronAPI?.onWebsiteExplorationOpen?.(() => useWebsiteExplorationStore.setState({ open: true })), [])
@@ -234,6 +238,30 @@ export default function App() {
     openToolPackagePage()
   }
 
+  const handleOpenExploration = async () => {
+    if (!await leaveWebsiteExploration()) return
+    useToolPackagePageStore.getState().closePage()
+    useWorksStore.setState({ activeWorkId: null })
+    useScheduledTasksStore.setState({ activeTaskId: null })
+    useUserFilesStore.getState().closePanel()
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+    useExplorationPageStore.getState().openPage()
+  }
+
+  const handleOpenWebsiteExploration = async () => {
+    if (websiteOpen) return
+    if (!await leaveWebsiteExploration()) return
+    useToolPackagePageStore.getState().closePage()
+    useExplorationPageStore.getState().closePage()
+    useWorksStore.setState({ activeWorkId: null })
+    useScheduledTasksStore.setState({ activeTaskId: null })
+    useUserFilesStore.getState().closePanel()
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+    useWebsiteExplorationStore.setState({ open: true })
+  }
+
   const onResizeStart = useCallback((e) => {
     e.preventDefault()
     draggingRef.current = true
@@ -278,7 +306,7 @@ export default function App() {
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', userSelect: 'none', gap: 8 }}>
-          {sidebarCollapsed && !showSettings && (
+          {sidebarCollapsed && !showSettings && !focusedWorkspaceOpen && (
             <>
               <Tooltip text="展开侧边栏">
                 <button
@@ -386,6 +414,7 @@ export default function App() {
           </button>
         </Tooltip>
         {!focusedWorkspaceOpen && !showSettings && <CapabilitiesToggleButton variant="titlebar" />}
+        <UpdatePrompt />
         </div>
       </div>
 
@@ -395,12 +424,15 @@ export default function App() {
           onOpenConversation={handleOpenConversation}
           onOpenTasks={handleOpenTasks}
           onOpenSkills={handleOpenSkills}
+          onOpenExploration={handleOpenExploration}
+          onOpenWebsiteExploration={handleOpenWebsiteExploration}
+          onOpenExtension={() => setShowExtensionGuide(true)}
           onOpenFiles={handleToggleUserFilesPanel}
           onOpenSettings={() => setShowSettings(true)}
         />
-        {!toolPackageOpen && (
+        {!focusedWorkspaceOpen && (
           <>
-            <Sidebar section={activeSidebarSection} onOpenSettings={() => setShowSettings(true)} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(true)} width={sidebarWidth} />
+            <Sidebar section={activeSidebarSection} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(true)} width={sidebarWidth} />
             {!sidebarCollapsed && (
               <div
                 onMouseDown={onResizeStart}
@@ -423,6 +455,7 @@ export default function App() {
         <MainArea onOpenSettings={() => setShowSettings(true)} />
       </div>
       {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
+      {showExtensionGuide && <ExtensionGuide onClose={() => setShowExtensionGuide(false)} />}
       <GlobalFileDropLayer />
       <WebsiteExplorationGuard />
       <NativeTitleTooltipLayer />

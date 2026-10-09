@@ -171,11 +171,6 @@
   color: var(--text-muted);
 }
 
-.sidebar-footer {
-  border-top-color: var(--border);
-  background: var(--bg-secondary);
-}
-
 .work-list-item {
   border-radius: 7px;
 }
