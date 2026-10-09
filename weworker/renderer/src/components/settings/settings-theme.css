@@ -1124,32 +1124,11 @@
   padding: 0;
 }
 
-.model-settings-add__icon {
-  position: relative;
+.model-settings-add > svg {
   display: block;
-  width: 12px;
-  height: 12px;
-}
-
-.model-settings-add__icon::before,
-.model-settings-add__icon::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 12px;
-  height: 2px;
-  border-radius: 1px;
-  background: currentColor;
-  content: '';
-  transform: translate(-50%, -50%);
-}
-
-.model-settings-add__icon::after {
-  transform: translate(-50%, -50%) rotate(90deg);
-}
-
-.model-settings-add__icon.is-open::after {
-  display: none;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
 }
 
 .model-settings-provider-list {

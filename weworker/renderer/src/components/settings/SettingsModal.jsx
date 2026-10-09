@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { MinusOutlined, PlusOutlined } from '@ant-design/icons'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import { isBuiltinProvider } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
@@ -1487,7 +1488,7 @@ function ModelTab() {
                 aria-label={addPickerOpen ? '收起添加模型' : '添加模型'}
                 title={addPickerOpen ? '收起' : '添加模型'}
               >
-                <span className={`model-settings-add__icon${addPickerOpen ? ' is-open' : ''}`} aria-hidden="true" />
+                {addPickerOpen ? <MinusOutlined aria-hidden="true" /> : <PlusOutlined aria-hidden="true" />}
               </button>
             )}
           </div>
