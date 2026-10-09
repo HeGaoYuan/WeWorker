@@ -67,6 +67,8 @@ function settingsPatch(data, fallback = {}) {
 const BUILD_PROVIDERS = typeof __BUILD_PROVIDERS__ !== 'undefined'
   ? __BUILD_PROVIDERS__
   : [
+      { id: 'builtin', name: '内置模型', models: ['ark-code-latest'], defaultModel: 'ark-code-latest' },
+      { id: 'builtin_dev', name: '内置模型（开发）', models: ['deepseek-v4-flash'], defaultModel: 'deepseek-v4-flash' },
       { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], defaultModel: 'claude-sonnet-4-6' },
       { id: 'glm', name: '智谱 coding plan', models: ['glm-5.2', 'glm-4.7'], defaultModel: 'glm-5.2' },
       { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], defaultModel: 'deepseek-v4-flash' },
@@ -111,6 +113,8 @@ export const useSettingsStore = create((set, get) => ({
   zcfPackageVersion: '',
   zcfSync: null,
   providers: {
+    builtin:   { has_key: false, model: 'ark-code-latest', context_limit: 1000000, readonly: true, added: true, visible: true },
+    builtin_dev: { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, readonly: true, added: true, visible: true },
     anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000, added: true, visible: true },
     glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000, added: false, visible: false },
     deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, added: false, visible: false },

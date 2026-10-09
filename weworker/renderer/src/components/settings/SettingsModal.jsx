@@ -1561,16 +1561,18 @@ function ModelTab() {
             return (
             <div key={p.id} className={`settings-card settings-card-builtin model-settings-detail-card${builtinActive ? ' is-active' : ''}`}>
                 <div className="settings-card-header">
-                  <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id]}</span>
+                  <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id] || LOGOS.builtin}</span>
                   <div style={{ flex: 1 }}>
                     <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
                       {p.name}{builtinActive && <span className="settings-badge-active">使用中</span>}
-                      <span className="settings-card-inline-subtitle">{p.id === 'builtin_dev' ? (' · 内网开发网关 · ' + (builtinActive ? `当前使用 ${p.defaultModel || 'deepseek-v4-flash'}` : '无需配置，内网可用')) : (' · 火山方舟 Coding Plan · ' + (builtinActive ? '当前使用 ark-code-latest' : '无需配置，下载即可使用'))}</span>
+                      <span className="settings-card-inline-subtitle"> · {p.defaultModel} · {stored.has_key
+                        ? (builtinActive ? '当前使用' : '服务已配置，可直接使用')
+                        : '服务尚未配置，请联系应用提供方或使用其他模型'}</span>
                     </div>
                   </div>
                   <div className="settings-btn-group">
-                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
-                    <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">{testing === p.id ? '检测中…' : '测试连通性'}</button>
+                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating || !stored.has_key} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
+                    <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing || !stored.has_key} className="settings-btn settings-btn-secondary">{testing === p.id ? '检测中…' : '测试连通性'}</button>
                   </div>
                 </div>
                 {probeResults[p.id] && <div className="settings-builtin-probe">{probeResults[p.id].map((result) => <div key={`${result.target}-${result.protocol}`} className={result.ok ? 'is-success' : 'is-error'}>{result.ok ? '✓' : '✗'} {result.label}：{result.message}</div>)}</div>}

@@ -1,3 +1,5 @@
+import { resolveBuiltinSettings } from './builtin-provider.js'
+import { PROVIDERS } from './provider-registry.js'
 import fs from 'node:fs'
 
 import path from 'node:path'
@@ -671,22 +673,17 @@ export function resetSettingsStateForTests(): void {
 
 
 export function getSettings(): Settings {
-
-  if (_settings) return _settings
-
-  _settings = loadSettingsFromRaw(readRawSettingsFile())
-
-  return _settings
-
+  if (!_settings) _settings = loadSettingsFromRaw(readRawSettingsFile())
+  return resolveBuiltinSettings(_settings, PROVIDERS)
 }
 
 
 
 export function updateSettings(updates: Partial<Settings>): Settings {
 
-  const current = getSettings()
-
-  _settings = deepMerge(current, updates) as Settings
+  getSettings() // Ensure the persisted settings have been loaded.
+  // Merge the stored state, not the runtime projection containing deployment credentials.
+  _settings = deepMerge(_settings!, updates) as Settings
 
   _settings.max_chat_attachments = normalizeMaxChatAttachments(_settings.max_chat_attachments)
   _settings.context_limit = normalizeContextLimit(_settings.context_limit)
@@ -717,7 +714,7 @@ export function updateSettings(updates: Partial<Settings>): Settings {
 
   _settingsInitialized = true
 
-  return _settings
+  return getSettings()
 
 }
 

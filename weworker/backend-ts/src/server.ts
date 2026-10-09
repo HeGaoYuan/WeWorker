@@ -50,6 +50,7 @@ import { normalizeLlmUrlInput, resolveAnthropicEndpoint } from './llm-egress.js'
 import {
   ALLOWED_PROVIDER_IDS,
   PROVIDER_BASE_URLS,
+  PROVIDERS,
   getProvider,
 } from './provider-registry.js'
 import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
@@ -57,6 +58,7 @@ import { registerExplorationModelRoutes } from './exploration-model-settings.js'
 import { isProviderVisible, type ProviderLegacyConfig } from './provider-visibility.js'
 import { createModelConfiguration, getModelConfiguration, activateModelConfiguration, updateModelConfiguration, publicModelConfigurations } from './model-configurations.js'
 import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
+import { activateBuiltinProvider, builtinProviderAccess, isBuiltinProvider, publicBuiltinProviders } from './builtin-provider.js'
 import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
@@ -378,6 +380,7 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     context_limit: s.context_limit,
     has_api_key: !!s.api_key,
     providers: {
+      ...publicBuiltinProviders(PROVIDERS),
       anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic, added: s.added_providers.includes('anthropic'), visible: visible('anthropic') },
       glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm, added: s.added_providers.includes('glm'), visible: visible('glm') },
       deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek, added: s.added_providers.includes('deepseek'), visible: visible('deepseek') },
@@ -565,6 +568,10 @@ app.post('/settings/provider', (req, res) => {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
     return
   }
+  if (isBuiltinProvider(provider)) {
+    res.status(403).json({ detail: '内置模型由应用提供方管理，不支持修改' })
+    return
+  }
   let allowedBaseUrl: string | undefined
   let allowedOpenAiBaseUrl: string | undefined
   if (provider === 'custom' && base_url_is_full !== undefined && typeof base_url_is_full !== 'boolean') {
@@ -659,6 +666,15 @@ app.post('/settings/provider/activate', (req, res) => {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
     return
   }
+  const builtin = getProvider(provider)
+  if (builtin && isBuiltinProvider(provider)) {
+    try {
+      res.json(buildSettingsResponse(updateSettings(activateBuiltinProvider(builtin))))
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+    }
+    return
+  }
   const current = getSettings()
   const key =
     provider === 'anthropic' ? current.api_key_anthropic :
@@ -713,6 +729,7 @@ function resolveProviderAccess(body: ProviderRequestBody) {
   const configuration = getModelConfiguration(getSettings(), body.provider)
   const provider = getProvider(configuration?.provider_id || body.provider || '')
   if (!provider) throw new Error(`Provider '${body.provider || ''}' is not allowed in this build`)
+  if (isBuiltinProvider(provider.id)) return builtinProviderAccess(provider)
   const settings = getSettings()
   const savedApiKey =
     configuration?.api_key ?? (provider.id === 'anthropic' ? settings.api_key_anthropic :
@@ -749,6 +766,7 @@ function resolveProviderAccess(body: ProviderRequestBody) {
 
 function resolveProviderRequest(body: ProviderRequestBody) {
   const access = resolveProviderAccess(body)
+  if (isBuiltinProvider(access.provider.id)) return { ...access, model: access.provider.defaultModel }
   const settings = getSettings()
   const savedModel =
     getModelConfiguration(settings, body.provider)?.model ?? (
