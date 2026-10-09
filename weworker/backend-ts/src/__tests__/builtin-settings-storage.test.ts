@@ -20,6 +20,7 @@ it('keeps deployment keys out of settings during activation, unrelated saves and
   config.resetSettingsStateForTests()
   expect(config.getSettings().api_key).toBe('fixture-runtime-only-key')
   vi.stubEnv('WEWORKER_BUILTIN_API_KEY', '')
-  expect(config.getSettings().api_key).toBe('')
+  expect(config.getSettings().api_key).not.toBe('')
+  expect(JSON.parse(fs.readFileSync(path.join(root, '.weworker', 'settings.json'), 'utf8')).api_key).toBe('')
   expect(config.updateSettings({ active_provider: 'anthropic', api_key: '' }).api_key).toBe('')
 })

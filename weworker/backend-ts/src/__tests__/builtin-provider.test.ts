@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Settings } from '../config.js'
-import { BUILTIN_DEV_PROVIDER, BUILTIN_PROVIDER, activateBuiltinProvider, builtinProviderAccess, publicBuiltinProviders, resolveBuiltinSettings } from '../builtin-provider.js'
+import { BUILTIN_DEV_PROVIDER, BUILTIN_PROVIDER, activateBuiltinProvider, builtinProviderAccess, getBuiltinApiKey, publicBuiltinProviders, resolveBuiltinSettings } from '../builtin-provider.js'
 import { getProvider, PROVIDERS } from '../provider-registry.js'
 import { buildAnthropicAuthHeaders } from '../anthropic-auth.js'
 import { probeMainConnection, probeProviderProtocol } from '../provider-model-services.js'
@@ -25,9 +25,9 @@ describe('managed built-in models', () => {
     expect(JSON.stringify(PROVIDERS)).not.toContain(env.WEWORKER_BUILTIN_DEV_BASE_URL)
   })
 
-  it('reports availability without exposing either credential', () => {
+  it('reports embedded-provider availability without exposing either credential', () => {
     const providers = [BUILTIN_PROVIDER, BUILTIN_DEV_PROVIDER]
-    expect(publicBuiltinProviders(providers, {})).toMatchObject({ builtin: { has_key: false, readonly: true }, builtin_dev: { has_key: false } })
+    expect(publicBuiltinProviders(providers, {})).toMatchObject({ builtin: { has_key: true, readonly: true }, builtin_dev: { has_key: true } })
     const ready = publicBuiltinProviders(providers, env)
     expect(ready.builtin.has_key).toBe(true)
     expect(ready.builtin_dev.has_key).toBe(true)
@@ -35,10 +35,12 @@ describe('managed built-in models', () => {
     expect(publicBuiltinProviders([], env)).toEqual({})
   })
 
-  it('rejects unconfigured activation without a key from another provider', () => {
-    expect(() => activateBuiltinProvider(BUILTIN_PROVIDER, {})).toThrow('内置模型服务尚未配置')
-    expect(() => builtinProviderAccess(BUILTIN_DEV_PROVIDER, { WEWORKER_BUILTIN_API_KEY: 'fixture-other-key' })).toThrow('内置模型服务尚未配置')
-    expect(() => builtinProviderAccess(BUILTIN_DEV_PROVIDER, { WEWORKER_BUILTIN_DEV_API_KEY: 'fixture-dev-key' })).toThrow('内置模型服务尚未配置')
+  it('uses embedded credentials by default and accepts deployment overrides', () => {
+    expect(getBuiltinApiKey('builtin', {})).not.toBe('')
+    expect(getBuiltinApiKey('builtin_dev', {})).not.toBe('')
+    expect(getBuiltinApiKey('builtin', env)).toBe(env.WEWORKER_BUILTIN_API_KEY)
+    expect(builtinProviderAccess(BUILTIN_DEV_PROVIDER, { WEWORKER_BUILTIN_API_KEY: 'fixture-other-key' }).apiKey).not.toBe('')
+    expect(builtinProviderAccess(BUILTIN_DEV_PROVIDER, { WEWORKER_BUILTIN_DEV_API_KEY: 'fixture-dev-key' }).apiKey).toBe('fixture-dev-key')
   })
 
   it('persists only the selection and resolves the fixed runtime values separately', () => {
@@ -57,12 +59,12 @@ describe('managed built-in models', () => {
     expect(buildAnthropicAuthHeaders(runtime.api_key, 'builtin', 'api_key')).toEqual({ authorization: 'Bearer fixture-builtin-key' })
   })
 
-  it('isolates deployment model keys and fails closed if the profile removes a provider', () => {
+  it('isolates deployment model keys and keeps profile exclusions closed', () => {
     const saved = { active_provider: 'builtin_dev', api_key: 'fixture-stale-key', base_url: 'https://example.org/stale' } as Settings
     expect(resolveBuiltinSettings(saved, [BUILTIN_DEV_PROVIDER], env)).toMatchObject({ api_key: 'fixture-dev-key', base_url: 'https://example.com/managed' })
     expect(resolveBuiltinSettings(saved, PROVIDERS, env)).toMatchObject({ api_key: 'fixture-dev-key', base_url: 'https://example.com/managed' })
     expect(resolveBuiltinSettings(saved, [BUILTIN_PROVIDER], env)).toMatchObject({ api_key: '', base_url: '', model: '' })
-    expect(resolveBuiltinSettings({ ...saved, active_provider: 'builtin' }, PROVIDERS, {})).toMatchObject({ api_key: '' })
+    expect(resolveBuiltinSettings({ ...saved, active_provider: 'builtin' }, PROVIDERS, {}).api_key).not.toBe('')
   })
 
   it('preserves custom settings and independent exploration settings', () => {
