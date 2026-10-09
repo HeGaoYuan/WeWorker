@@ -1487,7 +1487,7 @@ function ModelTab() {
                 aria-label={addPickerOpen ? '收起添加模型' : '添加模型'}
                 title={addPickerOpen ? '收起' : '添加模型'}
               >
-                {addPickerOpen ? '−' : '+'}
+                <span className={`model-settings-add__icon${addPickerOpen ? ' is-open' : ''}`} aria-hidden="true" />
               </button>
             )}
           </div>

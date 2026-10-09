@@ -1116,12 +1116,40 @@
 }
 
 .model-settings-add {
+  display: inline-grid;
+  place-items: center;
   width: 30px;
   height: 30px;
   min-height: 30px;
   padding: 0;
-  font-size: 20px;
-  line-height: 1;
+}
+
+.model-settings-add__icon {
+  position: relative;
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+.model-settings-add__icon::before,
+.model-settings-add__icon::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  content: '';
+  transform: translate(-50%, -50%);
+}
+
+.model-settings-add__icon::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.model-settings-add__icon.is-open::after {
+  display: none;
 }
 
 .model-settings-provider-list {
