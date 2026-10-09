@@ -63,17 +63,37 @@ function settingsPatch(data, fallback = {}) {
   }
 }
 
-// Build PROVIDERS from injected constants (dev mode fallback when not defined)
-const BUILD_PROVIDERS = typeof __BUILD_PROVIDERS__ !== 'undefined'
+const DEVELOPMENT_BUILTIN_PROVIDERS = [
+  { id: 'builtin', name: '内置模型', models: ['ark-code-latest'], defaultModel: 'ark-code-latest' },
+  { id: 'builtin_dev', name: '内置模型（开发）', models: ['deepseek-v4-flash'], defaultModel: 'deepseek-v4-flash' },
+]
+
+export function mergeDevelopmentBuiltinProviders(providers, isDevelopment) {
+  const configuredProviders = Array.isArray(providers) ? providers : []
+  if (!isDevelopment) return configuredProviders
+  const configuredIds = new Set(configuredProviders.map((provider) => provider?.id))
+  return [
+    ...DEVELOPMENT_BUILTIN_PROVIDERS.filter((provider) => !configuredIds.has(provider.id)),
+    ...configuredProviders,
+  ]
+}
+
+// Production strictly follows its build profile. In development, preserve the
+// built-in choices when a stale ignored build definition is present.
+const INJECTED_BUILD_PROVIDERS = typeof __BUILD_PROVIDERS__ !== 'undefined'
   ? __BUILD_PROVIDERS__
   : [
-      { id: 'builtin', name: '内置模型', models: ['ark-code-latest'], defaultModel: 'ark-code-latest' },
-      { id: 'builtin_dev', name: '内置模型（开发）', models: ['deepseek-v4-flash'], defaultModel: 'deepseek-v4-flash' },
+      ...DEVELOPMENT_BUILTIN_PROVIDERS,
       { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], defaultModel: 'claude-sonnet-4-6' },
       { id: 'glm', name: '智谱 coding plan', models: ['glm-5.2', 'glm-4.7'], defaultModel: 'glm-5.2' },
       { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], defaultModel: 'deepseek-v4-flash' },
       { id: 'custom', name: '自定义', models: [], defaultModel: '' },
     ]
+
+const BUILD_PROVIDERS = mergeDevelopmentBuiltinProviders(
+  INJECTED_BUILD_PROVIDERS,
+  import.meta.env?.DEV === true,
+)
 
 const BUILD_DEFAULT_PROVIDER = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
   ? __BUILD_DEFAULT_PROVIDER__

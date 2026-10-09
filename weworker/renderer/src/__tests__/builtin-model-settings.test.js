@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { PROVIDERS, useSettingsStore } from '../store/settings.js'
+import { mergeDevelopmentBuiltinProviders, PROVIDERS, useSettingsStore } from '../store/settings.js'
 
 const initialState = useSettingsStore.getState()
 const previousFetch = globalThis.fetch
@@ -13,8 +13,17 @@ afterEach(() => {
 
 test('built-in metadata is visible before configuration without claiming a key exists', () => {
   assert.ok(PROVIDERS.some(provider => provider.id === 'builtin'))
+  assert.ok(PROVIDERS.some(provider => provider.id === 'builtin_dev'))
   assert.equal(initialState.providers.builtin.has_key, false)
   assert.equal(initialState.providers.builtin.readonly, true)
+})
+
+test('development restores built-ins missing from a stale injected provider list', () => {
+  const oldProfile = [{ id: 'anthropic', name: 'Anthropic', models: [], defaultModel: '' }]
+  const providers = mergeDevelopmentBuiltinProviders(oldProfile, true)
+
+  assert.deepEqual(providers.map((provider) => provider.id), ['builtin', 'builtin_dev', 'anthropic'])
+  assert.deepEqual(mergeDevelopmentBuiltinProviders(oldProfile, false), oldProfile)
 })
 
 test('unavailable built-in activation preserves the previous selection', async () => {
