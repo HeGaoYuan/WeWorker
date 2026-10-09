@@ -52,6 +52,20 @@ describe('main model onboarding', () => {
     expect(options.redirect).toBe('error')
   })
 
+  it('retries without tools when a thinking model rejects tool_choice', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('tool_choice is not supported in thinking mode', { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ content: [{ type: 'text', text: '{"ok":true}' }] }))
+
+    expect(await probeMainConnection(mainInput(), fetchMock)).toMatchObject({ ok: true, auth_type: 'auth_token' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+    const retryBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string)
+    expect(firstBody.tool_choice).toEqual({ type: 'tool', name: 'connection_check' })
+    expect(retryBody).not.toHaveProperty('tools')
+    expect(retryBody).not.toHaveProperty('tool_choice')
+  })
+
   it('retries the other auth header only after an authentication failure', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('invalid key', { status: 401 })).mockResolvedValueOnce(toolResponse())
     expect(await probeMainConnection(mainInput(), fetchMock)).toMatchObject({ ok: true, auth_type: 'api_key' })

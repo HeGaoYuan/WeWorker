@@ -168,12 +168,13 @@ export async function probeProviderProtocol(
     ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
-  const body = isAnthropic
+  const requiresToolCall = isAnthropic && input.target === 'weworker' && input.verifyResponse === true
+  const body = (useToolCall: boolean) => isAnthropic
     ? {
         model: input.model,
         max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
-        ...(input.verifyResponse && input.target === 'weworker' ? {
+        ...(useToolCall ? {
           tools: [{ name: 'connection_check', description: 'Confirm the connection without performing any action.', input_schema: schema }],
           tool_choice: { type: 'tool', name: 'connection_check' },
         } : {}),
@@ -185,12 +186,14 @@ export async function probeProviderProtocol(
         messages: [{ role: 'user', content: 'Return JSON: {"ok":true}.' }],
         response_format: { type: 'json_object' },
       }
+  const isThinkingToolChoiceConflict = (status: number, detail: string) => status === 400
+    && /tool_choice/i.test(detail) && /thinking/i.test(detail)
 
-  try {
+  const execute = async (useToolCall: boolean): Promise<ProtocolProbeResult> => {
     const response = await fetchImpl(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: JSON.stringify(body(useToolCall)),
       signal: AbortSignal.timeout(15000),
       redirect: 'error',
     })
@@ -198,7 +201,7 @@ export async function probeProviderProtocol(
       if (input.verifyResponse) {
         try {
           const data = await response.json() as any
-          if (isAnthropic && input.target === 'weworker') {
+          if (useToolCall) {
             if (!data.content?.some((block: any) => block.type === 'tool_use' && block.name === 'connection_check' && block.input?.ok === true)) throw new Error()
           } else {
             const content = isAnthropic
@@ -213,7 +216,14 @@ export async function probeProviderProtocol(
       return { ok: true, target: input.target, protocol, model: input.model }
     }
     const detail = (await readRemoteResponse(response)).detail.split(input.apiKey).join('[已隐藏]')
+    if (requiresToolCall && useToolCall && isThinkingToolChoiceConflict(response.status, detail)) {
+      return execute(false)
+    }
     return { ok: false, target: input.target, protocol, model: input.model, error: classifyProbeFailure(response.status, detail), detail }
+  }
+
+  try {
+    return await execute(requiresToolCall)
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
     return {
