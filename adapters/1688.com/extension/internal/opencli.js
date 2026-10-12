@@ -921,16 +921,29 @@ var __wave5 = (() => {
 
   // webcli/scripts/opencli-wave5/upstream/1688/auth.js
   async function has1688LogonCookie(page) {
-    const cookies = await page.getCookies({ url: "https://www.1688.com" });
+    let cookies;
+    try {
+      cookies = await page.getCookies({ url: "https://www.1688.com" });
+    } catch (error) {
+      if (String(error?.message || error).includes("Runtime helper URL host")) {
+        return false;
+      }
+      throw error;
+    }
     return cookies.some((c) => c.name === "__cn_logon__" && c.value === "true");
   }
   async function verify1688Identity(page) {
-    if (!await has1688LogonCookie(page)) {
-      throw new AuthRequiredError("1688.com", "1688 __cn_logon__=true cookie missing \u2014 anonymous");
-    }
     await page.goto("https://www.1688.com/");
     await page.wait(2);
-    const cookies = await page.getCookies({ url: "https://www.1688.com" });
+    let cookies;
+    try {
+      cookies = await page.getCookies({ url: "https://www.1688.com" });
+    } catch (error) {
+      if (String(error?.message || error).includes("Runtime helper URL host")) {
+        throw new AuthRequiredError("1688.com", "请先在共享 Chrome 完成 1688 登录/验证，再重试（whoami）");
+      }
+      throw error;
+    }
     const cookieMap = Object.fromEntries(cookies.map((c) => [c.name, c.value]));
     if (cookieMap["__cn_logon__"] !== "true") {
       throw new AuthRequiredError("1688.com", "1688 __cn_logon__ cookie absent after navigation");
@@ -1702,11 +1715,14 @@ var __wave5 = (() => {
       const resolvedUrl = resolveStoreUrl(rawInput);
       const explicitMemberId = extractMemberId(rawInput);
       const storePayload = await readStorePayload(page, resolvedUrl, "store");
-      const contactUrl = firstContactUrl(storePayload.contactLinks ?? []) || buildContactUrl(storePayload.href || resolvedUrl);
-      const contactPayload = contactUrl ? await readStorePayload(page, contactUrl, "store contact") : null;
-      const offerId = extractOfferId(rawInput) || firstOfferId(storePayload.offerLinks ?? []) || firstOfferId(contactPayload?.offerLinks ?? []);
+      let contactPayload = null;
       let seed = null;
-      if (offerId) {
+      if (!hasAnyEvidence(storePayload, null, null)) {
+        const contactUrl = firstContactUrl(storePayload.contactLinks ?? []) || buildContactUrl(storePayload.href || resolvedUrl);
+        contactPayload = contactUrl ? await readStorePayload(page, contactUrl, "store contact") : null;
+      }
+      const offerId = extractOfferId(rawInput) || firstOfferId(storePayload.offerLinks ?? []) || firstOfferId(contactPayload?.offerLinks ?? []);
+      if (!hasAnyEvidence(storePayload, contactPayload, null) && offerId) {
         try {
           seed = await readItemSeed(page, offerId);
         } catch (error) {
@@ -1737,7 +1753,7 @@ var __wave5 = (() => {
     weread: ["weread.qq.com", "i.weread.qq.com", "www.weread.qq.com"],
     xueqiu: ["xueqiu.com", "www.xueqiu.com", "stock.xueqiu.com", "danjuanfunds.com", "www.danjuanfunds.com"],
     weibo: ["weibo.com", "www.weibo.com", "s.weibo.com"],
-    "1688": ["1688.com", "www.1688.com", "login.1688.com", "detail.1688.com", "winport.m.1688.com", "s.1688.com"],
+    "1688": ["1688.com", "www.1688.com", "login.1688.com", "login.taobao.com", "account.1688.com", "detail.1688.com", "detail.m.1688.com", "winport.m.1688.com", "s.1688.com"],
     xianyu: ["goofish.com", "www.goofish.com"],
     twitter: ["x.com", "www.x.com"]
   };
@@ -1753,6 +1769,7 @@ var __wave5 = (() => {
     async goto(raw) {
       const target = new URL(raw), current = new URL(location.href);
       const hostAllowed = domains[this.command.site]?.includes(target.hostname) || domainSuffix[this.command.site] && target.hostname.endsWith(domainSuffix[this.command.site]) && target.hostname !== domainSuffix[this.command.site].slice(1);
+      const currentHostAllowed = domains[this.command.site]?.includes(current.hostname) || domainSuffix[this.command.site] && current.hostname.endsWith(domainSuffix[this.command.site]) && current.hostname !== domainSuffix[this.command.site].slice(1);
       if (target.protocol !== "https:" || target.username || target.password || target.port || !hostAllowed) throw new ArgumentError("Untrusted navigation target");
       const markerKey = "__ww_wave5_navigation";
       if (current.origin === target.origin && current.pathname === target.pathname && [...target.searchParams].every(([k, v]) => current.searchParams.get(k) === v)) {
@@ -1764,7 +1781,13 @@ var __wave5 = (() => {
         previous = JSON.parse(sessionStorage.getItem(markerKey));
       } catch {
       }
-      if (previous?.url === target.href && Date.now() - previous.at < 105e3) throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      if (previous?.url === target.href && Date.now() - previous.at < 105e3) {
+        if (current.protocol === "https:" && currentHostAllowed) {
+          sessionStorage.removeItem(markerKey);
+          return;
+        }
+        throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      }
       sessionStorage.setItem(markerKey, JSON.stringify({ url: target.href, at: Date.now() }));
       this.pending = { __webcli_navigation: { version: 1, url: target.href, resume: this.command.access !== "write" } };
       throw new CommandExecutionError("Navigation required");
