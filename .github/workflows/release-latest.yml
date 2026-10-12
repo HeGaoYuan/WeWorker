@@ -240,15 +240,22 @@ jobs:
         shell: bash
         run: |
           tag="${RELEASE_TAG}"
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          test "$tag" = "v$(node -p "require('./weworker/package.json').version")"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]
+          base_tag="${tag%%-*}"
+          test "$base_tag" = "v$(node -p "require('./weworker/package.json').version")"
 
       - name: Create draft release
+        shell: bash
         run: |
+          args=()
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            args+=(--prerelease)
+          fi
           gh release create "${RELEASE_TAG}" \
             --title "WeWorker ${RELEASE_TAG}" \
             --generate-notes \
             --draft \
+            "${args[@]}" \
             dist/release/*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

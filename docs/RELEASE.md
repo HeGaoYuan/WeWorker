@@ -27,6 +27,20 @@ v1.0.1
 v1.1.0
 ```
 
+构建测试或候选版本可使用预发布 Tag：
+
+```bash
+v<major>.<minor>.<patch>-rc.<number>
+```
+
+例如：
+
+```bash
+v1.0.0-rc.1
+```
+
+预发布 Tag 会复用同一个基础版本号；例如 `v1.0.0-rc.1` 要求 `weworker/package.json` 的版本仍为 `1.0.0`。Release workflow 会把带 `-rc`、`-beta` 或 `-alpha` 的版本标记为 prerelease，并仍创建 Draft Release 供维护者确认。
+
 Tag 必须满足：
 
 - 指向 `main` 上已经合并的提交。
@@ -51,6 +65,13 @@ Tag 必须满足：
    ```bash
    git tag v1.0.0
    git push origin v1.0.0
+   ```
+
+   如果只是验证编译产物，可创建 RC Tag：
+
+   ```bash
+   git tag v1.0.0-rc.1
+   git push origin v1.0.0-rc.1
    ```
 
 5. GitHub Actions 自动构建：
