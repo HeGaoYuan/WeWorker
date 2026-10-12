@@ -1,6 +1,9 @@
 name: Release Latest
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
@@ -23,6 +26,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -124,6 +128,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -202,9 +207,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Checkout release scripts
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@v7
@@ -230,14 +239,14 @@ jobs:
       - name: Validate release tag
         shell: bash
         run: |
-          tag='${{ inputs.tag }}'
+          tag="${RELEASE_TAG}"
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$tag" = "v$(node -p "require('./weworker/package.json').version")"
 
       - name: Create draft release
         run: |
-          gh release create '${{ inputs.tag }}' \
-            --title "WeWorker ${{ inputs.tag }}" \
+          gh release create "${RELEASE_TAG}" \
+            --title "WeWorker ${RELEASE_TAG}" \
             --generate-notes \
             --draft \
             dist/release/*
