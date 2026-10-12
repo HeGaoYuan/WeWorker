@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, getVisibleModelRefreshDetail, isModelRefreshFailed, shouldShowModelRefreshFailure } from '../utils/model-selection.js'
+import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, getVisibleModelRefreshDetail, isModelRefreshFailed, selectModelAfterCatalogRefresh, shouldShowModelRefreshFailure } from '../utils/model-selection.js'
 
 describe('provider model selection', () => {
   it('keeps an unlisted current model as an enabled option', () => {
@@ -15,6 +15,12 @@ describe('provider model selection', () => {
       { value: 'model-a', label: 'model-a', currentOnly: false },
       { value: 'model-b', label: 'model-b', currentOnly: false },
     ])
+  })
+
+  it('selects the first remote model after refresh when the current model is stale', () => {
+    assert.equal(selectModelAfterCatalogRefresh('glm-5.2', { source: 'remote', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] }), 'deepseek-v4-flash')
+    assert.equal(selectModelAfterCatalogRefresh('deepseek-v4-pro', { source: 'remote', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] }), 'deepseek-v4-pro')
+    assert.equal(selectModelAfterCatalogRefresh('glm-5.2', { source: 'fallback', models: ['deepseek-v4-flash'] }), 'glm-5.2')
   })
 
   it('reports refresh failure for fallback and empty remote catalogs', () => {

@@ -11,6 +11,15 @@ export function buildModelOptions(models, currentModel) {
   ]
 }
 
+export function selectModelAfterCatalogRefresh(currentModel, catalog) {
+  const current = String(currentModel || '').trim()
+  const models = [...new Set((Array.isArray(catalog?.models) ? catalog.models : [])
+    .map((model) => String(model || '').trim())
+    .filter(Boolean))]
+  if (catalog?.source !== 'remote' || models.length === 0) return current
+  return current && models.includes(current) ? current : models[0]
+}
+
 export function isModelRefreshFailed(catalog) {
   return Boolean(catalog && (
     catalog.source !== 'remote'
