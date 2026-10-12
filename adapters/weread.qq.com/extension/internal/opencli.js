@@ -81,13 +81,17 @@ var __wave5 = (() => {
     if (rule.prefix?.some((prefix) => url.pathname.startsWith(prefix))) return true;
     return false;
   }
-  async function fetch(raw, options = {}) {
+  async function restrictedFetch(raw, options = {}) {
     const url = new URL(raw);
     if (url.protocol !== "https:" || url.username || url.password || url.port || !allowed(url)) {
       throw new CommandExecutionError("Request is outside the fixed source API endpoints");
     }
-    if (options.method && String(options.method).toUpperCase() !== "GET") {
-      throw new CommandExecutionError("Only GET requests are allowed");
+    const method = String(options.method || "GET").toUpperCase();
+    if (method !== "GET" && method !== "POST") {
+      throw new CommandExecutionError("Only GET and POST requests are allowed");
+    }
+    if (method === "POST" && url.hostname !== WEREAD_DOMAIN) {
+      throw new CommandExecutionError("POST requests are only allowed for fixed WeRead web API endpoints");
     }
     let response;
     try {
@@ -96,10 +100,11 @@ var __wave5 = (() => {
         browserFallback: false,
         redactBodyInTrace: true,
         options: {
-          method: "GET",
+          method,
           redirect: "manual",
           maxResponseBytes: 4 * 1024 * 1024,
-          headers: { Accept: "application/json", ...options.headers }
+          headers: { Accept: "application/json", ...options.headers },
+          ...options.body === void 0 ? {} : { body: options.body }
         }
       });
     } catch {
@@ -111,6 +116,7 @@ var __wave5 = (() => {
     if (typeof response?.body !== "string" || response.body.length > 4 * 1024 * 1024) throw new CommandExecutionError("Missing or oversized response body");
     return { ok: response.ok, status: response.status, text: async () => response.body, json: async () => JSON.parse(response.body) };
   }
+  var fetch = restrictedFetch;
 
   // webcli/scripts/opencli-wave5/registry.js
   var commands = /* @__PURE__ */ new Map();
@@ -128,8 +134,11 @@ var __wave5 = (() => {
   var API = `https://i.${WEREAD_DOMAIN}`;
   var WEREAD_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
   var WEREAD_AUTH_ERRCODES = /* @__PURE__ */ new Set([-2010, -2012]);
+  function getWereadErrCode(data) {
+    return Number(data?.errcode ?? data?.errCode);
+  }
   function isAuthErrorResponse(resp, data) {
-    return resp.status === 401 || WEREAD_AUTH_ERRCODES.has(Number(data?.errcode));
+    return resp.status === 401 || WEREAD_AUTH_ERRCODES.has(getWereadErrCode(data));
   }
   function getCurrentVid(cookies) {
     return String(cookies.find((cookie) => cookie.name === "wr_vid")?.value || "").trim();
@@ -142,7 +151,7 @@ var __wave5 = (() => {
   }
   function normalizeWebShelfSnapshot(value) {
     return {
-      cacheFound: value?.cacheFound === true,
+      snapshotLoaded: value?.snapshotLoaded === true,
       rawBooks: Array.isArray(value?.rawBooks) ? value.rawBooks : [],
       shelfIndexes: Array.isArray(value?.shelfIndexes) ? value.shelfIndexes : []
     };
@@ -190,12 +199,12 @@ var __wave5 = (() => {
       const poll = () => {
         const rawBooks = readJson(localStorage.getItem(rawBooksKey));
         const shelfIndexes = readJson(localStorage.getItem(shelfIndexesKey));
-        const cacheFound = Array.isArray(rawBooks);
-        const ready = cacheFound && (!requireTrustedIndexes || hasTrustedIndexes(rawBooks, shelfIndexes));
+        const snapshotLoaded = Array.isArray(rawBooks);
+        const ready = snapshotLoaded && (!requireTrustedIndexes || hasTrustedIndexes(rawBooks, shelfIndexes));
 
         if (ready || Date.now() >= deadline) {
           resolve({
-            cacheFound,
+            snapshotLoaded,
             rawBooks: Array.isArray(rawBooks) ? rawBooks : [],
             shelfIndexes: Array.isArray(shelfIndexes) ? shelfIndexes : [],
           });
@@ -292,7 +301,7 @@ var __wave5 = (() => {
     const cookies = await page.getCookies({ domain: WEREAD_DOMAIN });
     const currentVid = getCurrentVid(cookies);
     if (!currentVid) {
-      return { snapshot: { cacheFound: false, rawBooks: [], shelfIndexes: [] }, currentVid: "" };
+      return { snapshot: { snapshotLoaded: false, rawBooks: [], shelfIndexes: [] }, currentVid: "" };
     }
     const result = await page.evaluate(buildShelfSnapshotPollScript(getWebShelfStorageKeys(currentVid), false));
     return {
@@ -305,7 +314,7 @@ var __wave5 = (() => {
     return snapshot;
   }
   async function waitForTrustedWebShelfSnapshot(page, snapshot, currentVid) {
-    if (!snapshot.cacheFound)
+    if (!snapshot.snapshotLoaded)
       return snapshot;
     if (getTrustedIndexedBookIds(snapshot).length > 0)
       return snapshot;
@@ -317,7 +326,7 @@ var __wave5 = (() => {
   async function resolveShelfReader(page, bookId) {
     const { snapshot: initialSnapshot, currentVid } = await loadWebShelfSnapshotWithVid(page);
     const snapshot = await waitForTrustedWebShelfSnapshot(page, initialSnapshot, currentVid);
-    if (!snapshot.cacheFound) {
+    if (!snapshot.snapshotLoaded) {
       return { snapshot, readerUrl: null };
     }
     const rawBookIds = getUniqueRawBookIds(snapshot);
@@ -387,7 +396,7 @@ var __wave5 = (() => {
     } catch {
       throw new CliError("PARSE_ERROR", `Invalid JSON response for ${path}`, "WeRead may have returned an HTML error page");
     }
-    if (data?.errcode === -2010 || data?.errcode === -2012) {
+    if (WEREAD_AUTH_ERRCODES.has(getWereadErrCode(data))) {
       throw new CliError("AUTH_REQUIRED", "Not logged in to WeRead", "Please log in to weread.qq.com in Chrome first");
     }
     if (!resp.ok) {
@@ -1525,7 +1534,7 @@ var __wave5 = (() => {
           throw error;
         }
         const snapshot = await loadWebShelfSnapshot(page);
-        if (!snapshot.cacheFound) {
+        if (!snapshot.snapshotLoaded) {
           throw error;
         }
         log.warn("WeRead private API auth expired; showing cached shelf data from localStorage. Results may be stale, and detail commands may still require re-login.");

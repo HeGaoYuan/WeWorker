@@ -3,6 +3,7 @@
   "name": "weread.qq.com",
   "version": "0.1.0",
   "description": "微信读书：OpenCLI 对齐能力",
+  "homepage_url": "https://weread.qq.com/",
   "match": [
     "weread.qq.com",
     "i.weread.qq.com"
@@ -13,6 +14,7 @@
     "微信读书"
   ],
   "runtime_allowed_hosts": [
+    "weread.qq.com",
     "i.weread.qq.com"
   ],
   "commands": [
