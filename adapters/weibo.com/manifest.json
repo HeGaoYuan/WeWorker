@@ -1,0 +1,302 @@
+{
+  "schema_version": 2,
+  "name": "weibo.com",
+  "version": "0.1.0",
+  "description": "微博：OpenCLI 对齐能力",
+  "match": [
+    "weibo.com",
+    "www.weibo.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "weibo",
+    "微博"
+  ],
+  "commands": [
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "weibo.com",
+      "description": "Show the current logged-in weibo account",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "weibo.com",
+      "description": "Open the weibo login page; finish signing in on the page, then verify with whoami",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "comments",
+      "runtime": "extension",
+      "module": "extension/commands/comments.js",
+      "routeDomain": "weibo.com",
+      "description": "Get comments on a Weibo post",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Post ID (numeric idstr)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of comments (max 50)",
+            "default": 20
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "delete",
+      "runtime": "extension",
+      "module": "extension/commands/delete.js",
+      "routeDomain": "weibo.com",
+      "description": "Delete one of my Weibo posts by id",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Post ID (numeric idstr or mblogid from URL / weibo me / weibo post output)"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "favorites",
+      "runtime": "extension",
+      "module": "extension/commands/favorites.js",
+      "routeDomain": "weibo.com",
+      "description": "我的微博收藏列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "数量（最多50）",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "feed",
+      "runtime": "extension",
+      "module": "extension/commands/feed.js",
+      "routeDomain": "weibo.com",
+      "description": "Fetch Weibo timeline (for-you or following)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Timeline type: for-you (algorithmic) or following (chronological)",
+            "default": "for-you"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of posts (max 50)",
+            "default": 15
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hot",
+      "runtime": "extension",
+      "module": "extension/commands/hot.js",
+      "routeDomain": "weibo.com",
+      "description": "微博热搜",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Number of items (max 50)",
+            "default": 30
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "me",
+      "runtime": "extension",
+      "module": "extension/commands/me.js",
+      "routeDomain": "weibo.com",
+      "description": "My Weibo profile info",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "post",
+      "runtime": "extension",
+      "module": "extension/commands/post.js",
+      "routeDomain": "weibo.com",
+      "description": "Get a single Weibo post",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Post ID (numeric idstr or mblogid from URL)"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "publish",
+      "runtime": "extension",
+      "module": "extension/commands/publish.js",
+      "routeDomain": "weibo.com",
+      "description": "Publish a new Weibo post immediately (text only)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Weibo text content (max 2000 chars)"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "weibo.com",
+      "description": "搜索微博",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "Search keyword"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results (max 50)",
+            "default": 10
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "user",
+      "runtime": "extension",
+      "module": "extension/commands/user.js",
+      "routeDomain": "weibo.com",
+      "description": "Get Weibo user profile",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "User ID (numeric uid) or screen name"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "user-posts",
+      "runtime": "extension",
+      "module": "extension/commands/user-posts.js",
+      "routeDomain": "weibo.com",
+      "description": "List Weibo posts from a user, optionally filtered by date range",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "User ID (numeric uid) or screen name"
+          },
+          "start": {
+            "type": "string",
+            "description": "Start date in Asia/Shanghai (YYYY-MM-DD)"
+          },
+          "end": {
+            "type": "string",
+            "description": "End date in Asia/Shanghai (YYYY-MM-DD)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of posts (1-100)",
+            "default": 20
+          },
+          "include-retweets": {
+            "type": "boolean",
+            "description": "Include retweets",
+            "default": false
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
