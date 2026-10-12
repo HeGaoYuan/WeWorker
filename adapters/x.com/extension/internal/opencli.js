@@ -6041,6 +6041,53 @@ async function fetchJsonOrLoginWall(input, init) {
       created_at: stringField(core.created_at) || stringField(legacy.created_at)
     }];
   }
+  async function parseTwitterProfileDom(page, screenName) {
+    const primary = document.querySelector('[data-testid="primaryColumn"]') || document.body;
+    const pickText = (selector) => {
+      const node = primary?.querySelector(selector);
+      return node ? (node.textContent || "").trim() : "";
+    };
+    const nameBox = primary?.querySelector('[data-testid="UserName"]');
+    const nameSpans = nameBox ? Array.from(nameBox.querySelectorAll("span")).map((node) => (node.textContent || "").trim()).filter(Boolean) : [];
+    const profileLinks = Array.from(primary?.querySelectorAll("a[href]") || []).map((node) => {
+      try {
+        return { url: new URL(node.getAttribute("href"), location.origin), text: node.textContent || "" };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    const countFor = (suffix) => {
+      const item = profileLinks.find((entry) => entry.url.pathname.toLowerCase().endsWith("/" + suffix));
+      const match = String(item?.text || "").replace(/,/g, "").match(/([0-9]+(?:\.[0-9]+)?)([KkMm万亿]?)/);
+      if (!match) return 0;
+      const base = Number(match[1]);
+      const unit = match[2];
+      if (!Number.isFinite(base)) return 0;
+      if (unit === "K" || unit === "k") return Math.round(base * 1000);
+      if (unit === "M" || unit === "m") return Math.round(base * 1e6);
+      if (unit === "万") return Math.round(base * 1e4);
+      if (unit === "亿") return Math.round(base * 1e8);
+      return Math.round(base);
+    };
+    const screen = nameSpans.find((text) => text.startsWith("@")) || "@" + screenName;
+    const result = {
+      screen_name: screen.replace(/^@/, ""),
+      name: nameSpans.find((text) => !text.startsWith("@")) || "",
+      bio: pickText('[data-testid="UserDescription"]'),
+      location: pickText('[data-testid="UserLocation"]'),
+      url: pickText('[data-testid="UserUrl"]'),
+      followers: countFor("verified_followers") || countFor("followers"),
+      following: countFor("following"),
+      tweets: 0,
+      likes: 0,
+      verified: Boolean(primary?.querySelector('[aria-label*="Verified"], [data-testid="icon-verified"]')),
+      created_at: pickText('[data-testid="UserJoinDate"]')
+    };
+    if (!result || typeof result !== "object" || !result.screen_name) {
+      throw new CommandExecutionError(`Twitter profile response for @${screenName} is unavailable from API and page DOM`);
+    }
+    return [result];
+  }
   cli({
     site: "twitter",
     name: "profile",
@@ -6132,7 +6179,7 @@ async function fetchJsonOrLoginWall(input, init) {
       }
     `));
       if (!isPlainObject2(rawResult)) {
-        throw new CommandExecutionError("Twitter profile response payload is malformed");
+        return parseTwitterProfileDom(page, username);
       }
       if (!rawResult.ok) {
         const message = typeof rawResult.httpStatus === "number" ? describeTwitterApiError("UserByScreenName", rawResult.httpStatus, rawResult.hint) : rawResult.error + (rawResult.hint ? ` (${rawResult.hint})` : "");
@@ -6142,7 +6189,7 @@ async function fetchJsonOrLoginWall(input, init) {
         if (rawResult.notFound) {
           throw new EmptyResultError("twitter profile", message);
         }
-        throw new CommandExecutionError(message);
+        return parseTwitterProfileDom(page, username);
       }
       return mapTwitterProfileResult(rawResult.result, username);
     }
@@ -6981,6 +7028,64 @@ async function fetchJsonOrLoginWall(input, init) {
     visit(instructions);
     return { rows, nextCursor };
   }
+  async function parseVisibleTweetRows(page, seen, limit) {
+    const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const parseMetric = (value) => {
+      const text = clean(value).replace(/,/g, "");
+      const match = text.match(/([0-9]+(?:\.[0-9]+)?)([KkMm万亿]?)/);
+      if (!match) return 0;
+      const base = Number(match[1]);
+      if (!Number.isFinite(base)) return 0;
+      const unit = match[2];
+      if (unit === "K" || unit === "k") return Math.round(base * 1e3);
+      if (unit === "M" || unit === "m") return Math.round(base * 1e6);
+      if (unit === "万") return Math.round(base * 1e4);
+      if (unit === "亿") return Math.round(base * 1e8);
+      return Math.round(base);
+    };
+    const rows = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).map((article) => {
+      const statusLink = Array.from(article.querySelectorAll('a[href*="/status/"]')).map((link) => {
+        try {
+          return new URL(link.getAttribute("href"), location.origin);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean).find((url) => /\/status\/\d+/.test(url.pathname));
+      const id = statusLink ? (statusLink.pathname.match(/\/status\/(\d+)/) || [])[1] : "";
+      const authorLink = Array.from(article.querySelectorAll('a[href^="/"]')).map((link) => {
+        const href = link.getAttribute("href") || "";
+        const match = href.match(/^\/([A-Za-z0-9_]{1,15})(?:$|[/?#])/);
+        return match ? match[1] : "";
+      }).find(Boolean) || "";
+      const text = clean(Array.from(article.querySelectorAll('[data-testid="tweetText"]')).map((node) => node.textContent || "").join("\n"));
+      const time = article.querySelector("time");
+      const metric = (name) => parseMetric(article.querySelector('[data-testid="' + name + '"]')?.getAttribute("aria-label") || article.querySelector('[data-testid="' + name + '"]')?.textContent || "");
+      const imgs = Array.from(article.querySelectorAll("img[src]")).map((img) => img.src).filter((src) => /twimg\.com/.test(src));
+      return {
+        id,
+        author: authorLink,
+        bio: "",
+        text,
+        created_at: time ? time.getAttribute("datetime") || time.textContent || "" : "",
+        likes: metric("like"),
+        views: clean(article.querySelector('a[href$="/analytics"]')?.textContent || "0"),
+        url: statusLink ? statusLink.href.replace(/^https:\/\/twitter\.com\//, "https://x.com/") : "",
+        has_media: imgs.length > 0,
+        media_urls: imgs,
+        media_posters: [],
+        card: null,
+        quoted_tweet: null
+      };
+    }).filter((row) => row.id && (row.text || row.has_media));
+    const out = [];
+    for (const row of rows) {
+      if (!row?.id || seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push(row);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
   cli({
     site: "twitter",
     name: "search",
@@ -7011,7 +7116,8 @@ async function fetchJsonOrLoginWall(input, init) {
       const cookies = await page.getCookies({ url: "https://x.com" });
       const ct0 = cookies.find((c) => c.name === "ct0")?.value || null;
       if (!ct0) throw new AuthRequiredError("x.com", "Not logged into x.com (no ct0 cookie)");
-      await page.goto("https://x.com/home", { waitUntil: "load", settleMs: 1e3 });
+      const searchUrl = `https://x.com/search?q=${encodeURIComponent(finalQuery)}&src=typed_query&f=${encodeURIComponent(PRODUCT_TO_F_PARAM[kwargs.product || kwargs.filter || "top"] || "top")}`;
+      await page.goto(searchUrl, { waitUntil: "load", settleMs: 2e3 });
       const operation = await resolveTwitterOperationMetadata(page, "SearchTimeline", SEARCH_TIMELINE_OPERATION);
       const headers = JSON.stringify({
         "Authorization": `Bearer ${decodeURIComponent(TWITTER_BEARER_TOKEN)}`,
@@ -7050,7 +7156,15 @@ async function fetchJsonOrLoginWall(input, init) {
         cursor = nextCursor;
       }
       const trimmed = results.slice(0, kwargs.limit);
-      return applyTopByEngagement(trimmed, kwargs["top-by-engagement"]);
+      if (trimmed.length > 0) {
+        return applyTopByEngagement(trimmed, kwargs["top-by-engagement"]);
+      }
+      await page.wait(3);
+      const fallbackRows = await parseVisibleTweetRows(page, seen, Number(kwargs.limit));
+      if (fallbackRows.length === 0) {
+        throw new EmptyResultError(`twitter search ${finalQuery}`, "No tweets were returned by X GraphQL or the visible search page. The session may need login/verification or the page structure may have changed.");
+      }
+      return applyTopByEngagement(fallbackRows.slice(0, kwargs.limit), kwargs["top-by-engagement"]);
     }
   });
 
@@ -7403,24 +7517,38 @@ async function fetchJsonOrLoginWall(input, init) {
       if (!ct0)
         throw new AuthRequiredError("x.com", "Not logged into x.com (no ct0 cookie)");
       await page.wait(2);
-      const trends = await page.evaluate(`(() => {
-      const items = [];
+      const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      const trends = [];
+      const pushTopic = (topic, category) => {
+        topic = clean(topic);
+        category = clean(category);
+        if (!topic || trends.some((item) => item.topic === topic)) return;
+        trends.push({ rank: trends.length + 1, topic, category });
+      };
       const cells = document.querySelectorAll('[data-testid="trend"]');
       cells.forEach((cell) => {
-        const text = cell.textContent || '';
-        if (text.includes('Promoted')) return;
-        const container = cell.querySelector(':scope > div');
-        if (!container) return;
-        const divs = container.children;
-        if (divs.length < 2) return;
-        const topic = divs[1].textContent.trim();
-        if (!topic) return;
-        const catText = divs[0].textContent.trim();
-        const category = catText.replace(/^\\d+\\s*/, '').replace(/^\\xB7\\s*/, '').trim();
-        items.push({ rank: items.length + 1, topic, category });
+        const text = cell.textContent || "";
+        if (text.includes("Promoted")) return;
+        const container = cell.querySelector(":scope > div");
+        const divs = container ? Array.from(container.children) : [];
+        const topic = clean(divs[1]?.textContent || cell.querySelector('[dir="ltr"]')?.textContent || "");
+        const catText = clean(divs[0]?.textContent || "");
+        const category = catText.replace(/^\d+\s*/, "").replace(/^·\s*/, "").trim();
+        pushTopic(topic, category);
       });
-      return items;
-    })()`);
+      if (trends.length === 0) {
+        const links = Array.from(document.querySelectorAll('a[href*="/search?q="]'));
+        links.forEach((link) => {
+          try {
+            const url = new URL(link.getAttribute("href"), location.origin);
+            const topic = url.searchParams.get("q") || "";
+            const text = clean(link.textContent || "");
+            const category = text.replace(topic, "").replace(/Trending|Posts|post[s]?|条帖子/gi, "").trim();
+            pushTopic(topic, category);
+          } catch {
+          }
+        });
+      }
       if (!Array.isArray(trends) || trends.length === 0) {
         throw new EmptyResultError("twitter trending", "No trends found. The page structure may have changed.");
       }
@@ -7526,7 +7654,20 @@ async function fetchJsonOrLoginWall(input, init) {
     func: async (page, kwargs) => {
       const limit = normalizeLimit(kwargs.limit);
       const pageDelaySeconds = normalizePageDelaySeconds(kwargs["page-delay"]);
-      const context = await resolveUserTimelineContext(page, kwargs.username, { allowLoggedInDefault: true });
+      let context;
+      try {
+        context = await resolveUserTimelineContext(page, kwargs.username, { allowLoggedInDefault: true });
+      } catch (error) {
+        const raw = String(kwargs.username ?? "").trim();
+        const fallbackUsername = normalizeTwitterScreenName(raw);
+        if (!fallbackUsername) throw error;
+        await page.goto(`https://x.com/${fallbackUsername}`, { waitUntil: "load", settleMs: 2e3 });
+        await page.wait(3);
+        const seen = /* @__PURE__ */ new Set();
+        const fallbackRows = await parseVisibleTweetRows(page, seen, limit);
+        if (fallbackRows.length === 0) throw error;
+        return applyTopByEngagement(fallbackRows.slice(0, limit), kwargs["top-by-engagement"]);
+      }
       const { username } = context;
       const seen = /* @__PURE__ */ new Set();
       const all = [];
@@ -7546,7 +7687,15 @@ async function fetchJsonOrLoginWall(input, init) {
         if (!nextCursor || nextCursor === cursor) break;
         cursor = nextCursor;
       }
-      if (all.length === 0) throw new EmptyResultError(`@${username} has no recent tweets`, "Account may be private or suspended");
+      if (all.length === 0) {
+        await page.goto(`https://x.com/${username}`, { waitUntil: "load", settleMs: 2e3 });
+        await page.wait(3);
+        const fallbackRows = await parseVisibleTweetRows(page, seen, limit);
+        if (fallbackRows.length > 0) {
+          return applyTopByEngagement(fallbackRows.slice(0, limit), kwargs["top-by-engagement"]);
+        }
+        throw new EmptyResultError(`@${username} has no recent tweets`, "Account may be private, suspended, hidden by verification, or the page structure may have changed");
+      }
       return applyTopByEngagement(all.slice(0, limit), kwargs["top-by-engagement"]);
     }
   });
@@ -7987,7 +8136,7 @@ async function fetchJsonOrLoginWall(input, init) {
     weibo: ["weibo.com", "www.weibo.com", "s.weibo.com"],
     "1688": ["1688.com", "www.1688.com", "login.1688.com", "detail.1688.com", "winport.m.1688.com", "s.1688.com"],
     xianyu: ["goofish.com", "www.goofish.com"],
-    twitter: ["x.com", "www.x.com"]
+    twitter: ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"]
   };
   var domainSuffix = { "1688": ".1688.com" };
   var helper = (action, payload) => window.__webmcpWecliRuntime.requestPrivileged(action, payload);
@@ -8001,6 +8150,7 @@ async function fetchJsonOrLoginWall(input, init) {
     async goto(raw) {
       const target = new URL(raw), current = new URL(location.href);
       const hostAllowed = domains[this.command.site]?.includes(target.hostname) || domainSuffix[this.command.site] && target.hostname.endsWith(domainSuffix[this.command.site]) && target.hostname !== domainSuffix[this.command.site].slice(1);
+      const currentHostAllowed = domains[this.command.site]?.includes(current.hostname) || domainSuffix[this.command.site] && current.hostname.endsWith(domainSuffix[this.command.site]) && current.hostname !== domainSuffix[this.command.site].slice(1);
       if (target.protocol !== "https:" || target.username || target.password || target.port || !hostAllowed) throw new ArgumentError("Untrusted navigation target");
       const markerKey = "__ww_wave5_navigation";
       if (current.origin === target.origin && current.pathname === target.pathname && [...target.searchParams].every(([k, v]) => current.searchParams.get(k) === v)) {
@@ -8012,7 +8162,13 @@ async function fetchJsonOrLoginWall(input, init) {
         previous = JSON.parse(sessionStorage.getItem(markerKey));
       } catch {
       }
-      if (previous?.url === target.href && Date.now() - previous.at < 105e3) throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      if (previous?.url === target.href && Date.now() - previous.at < 105e3) {
+        if (current.protocol === "https:" && currentHostAllowed) {
+          sessionStorage.removeItem(markerKey);
+          return;
+        }
+        throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      }
       sessionStorage.setItem(markerKey, JSON.stringify({ url: target.href, at: Date.now() }));
       this.pending = { __webcli_navigation: { version: 1, url: target.href, resume: this.command.access !== "write" } };
       throw new CommandExecutionError("Navigation required");

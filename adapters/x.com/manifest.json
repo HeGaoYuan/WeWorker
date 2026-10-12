@@ -3,14 +3,25 @@
   "name": "x.com",
   "version": "0.1.0",
   "description": "Twitter/X：OpenCLI 对齐能力",
+  "homepage_url": "https://x.com/",
   "match": [
     "x.com",
-    "www.x.com"
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com"
   ],
   "requires_auth": false,
   "discovery_terms": [
     "twitter",
     "Twitter/X"
+  ],
+  "runtime_allowed_hosts": [
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com"
   ],
   "commands": [
     {
