@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "x.com",
   "version": "0.1.0",
-  "description": "Twitter/X：OpenCLI 对齐能力",
+  "description": "Twitter/X：搜索、时间线、推文/资料、书签/列表、互动发布和登录检查",
   "homepage_url": "https://x.com/",
   "match": [
     "x.com",
@@ -22,6 +22,57 @@
     "twitter.com",
     "www.twitter.com",
     "mobile.twitter.com"
+  ],
+  "scenarios": [
+    {
+      "id": "search-and-trending",
+      "title": "搜索和趋势",
+      "summary": "搜索推文，读取趋势话题和时间线",
+      "tool_names": [
+        "search",
+        "trending",
+        "timeline"
+      ]
+    },
+    {
+      "id": "tweet-and-profile",
+      "title": "读取推文和资料",
+      "summary": "读取用户资料、用户推文、推文线程、长文和媒体 URL",
+      "tool_names": [
+        "profile",
+        "tweets",
+        "thread",
+        "article",
+        "download"
+      ]
+    },
+    {
+      "id": "bookmarks-and-lists",
+      "title": "书签和列表",
+      "summary": "读取或管理书签、书签文件夹和 Twitter/X 列表",
+      "tool_names": [
+        "bookmarks",
+        "bookmark",
+        "bookmark-folders",
+        "bookmark-folder",
+        "lists",
+        "list-tweets"
+      ]
+    },
+    {
+      "id": "social-actions",
+      "title": "互动和发布",
+      "summary": "在用户明确确认后执行关注、点赞、转发、回复、发帖、私信和屏蔽等操作",
+      "tool_names": [
+        "follow",
+        "like",
+        "retweet",
+        "reply",
+        "post",
+        "reply-dm",
+        "block"
+      ]
+    }
   ],
   "commands": [
     {
