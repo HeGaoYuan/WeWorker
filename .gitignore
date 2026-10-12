@@ -55,6 +55,9 @@ dist.zip
 # claude
 .claude
 
+# Codex local workspace assets
+.codex/
+
 # 临时调试工具
 claude-cli/
 
