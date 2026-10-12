@@ -51,6 +51,7 @@ import {
   ALLOWED_PROVIDER_IDS,
   PROVIDER_BASE_URLS,
   buildRuntimeAllowedLlmBaseUrls,
+  findProviderByWeWorkerBaseUrl,
   getProvider,
 } from './provider-registry.js'
 import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
@@ -2311,6 +2312,9 @@ app.post('/terminal/assist', async (req, res) => {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
   }
+  const effectiveProviderId = settings.active_provider === 'custom'
+    ? findProviderByWeWorkerBaseUrl(baseUrl)?.id || settings.active_provider
+    : settings.active_provider
 
   const terminalPrompt = renderPrompt('terminal', {})
   const system = terminalPrompt.endsWith('\n') ? terminalPrompt.slice(0, -1) : terminalPrompt
@@ -2325,7 +2329,7 @@ app.post('/terminal/assist', async (req, res) => {
     const response = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
+        ...buildAnthropicAuthHeaders(settings.api_key, effectiveProviderId, settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },

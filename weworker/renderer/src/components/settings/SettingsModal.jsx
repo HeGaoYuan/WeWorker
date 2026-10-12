@@ -10,7 +10,7 @@ import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
+import { buildModelOptions, getVisibleModelRefreshDetail, selectModelAfterCatalogRefresh, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
@@ -1311,6 +1311,11 @@ function ModelTab({ onClose }) {
       if (!res.ok) throw new Error(data.detail || '模型列表获取失败')
       if (catalogRequestIds.current[pid] !== requestId) return
       setCatalogs((current) => ({ ...current, [pid]: { ...data, explicitRefresh } }))
+      setForms((current) => {
+        const form = current[pid] || getForm(pid)
+        const nextModel = selectModelAfterCatalogRefresh(form.model, data)
+        return nextModel === form.model ? current : { ...current, [pid]: { ...form, model: nextModel } }
+      })
     } catch (error) {
       if (catalogRequestIds.current[pid] !== requestId) return
       const provider = PROVIDERS.find((item) => item.id === pid)
