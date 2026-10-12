@@ -1,0 +1,288 @@
+{
+  "schema_version": 2,
+  "name": "goofish.com",
+  "version": "0.1.0",
+  "description": "闲鱼：OpenCLI 对齐能力",
+  "match": [
+    "goofish.com",
+    "www.goofish.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "xianyu",
+    "闲鱼"
+  ],
+  "commands": [
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "goofish.com",
+      "description": "Show the current logged-in xianyu account",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "goofish.com",
+      "description": "Open the xianyu login page; finish signing in on the page, then verify with whoami",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "chat",
+      "runtime": "extension",
+      "module": "extension/commands/chat.js",
+      "routeDomain": "www.goofish.com",
+      "description": "打开闲鱼聊一聊会话，并可选发送消息",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "闲鱼商品 item_id"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "聊一聊对方的 user_id / peerUserId"
+          },
+          "text": {
+            "type": "string",
+            "description": "Message to send after opening the chat"
+          }
+        },
+        "required": [
+          "item_id",
+          "user_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "inbox",
+      "runtime": "extension",
+      "module": "extension/commands/inbox.js",
+      "routeDomain": "www.goofish.com",
+      "description": "列出闲鱼最近私信会话",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Number of conversations to return",
+            "default": 20
+          },
+          "unread-only": {
+            "type": "boolean",
+            "description": "Return only conversations with unread messages",
+            "default": false
+          },
+          "resolve-ids": {
+            "type": "boolean",
+            "description": "Click each visible conversation to resolve item_id and peer_user_id from the chat URL",
+            "default": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "item",
+      "runtime": "extension",
+      "module": "extension/commands/item.js",
+      "routeDomain": "www.goofish.com",
+      "description": "查看闲鱼商品详情",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "闲鱼商品 item_id"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "messages",
+      "runtime": "extension",
+      "module": "extension/commands/messages.js",
+      "routeDomain": "www.goofish.com",
+      "description": "读取指定闲鱼私信会话的最近聊天内容",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "闲鱼商品 item_id"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "聊一聊对方的 user_id / peerUserId"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of visible messages to return",
+            "default": 50
+          },
+          "rank": {
+            "type": "integer",
+            "description": "Conversation rank from xianyu inbox; clicks the visible row instead of requiring IDs",
+            "default": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "publish",
+      "runtime": "extension",
+      "module": "extension/commands/publish.js",
+      "routeDomain": "www.goofish.com",
+      "description": "发布闲鱼宝贝（需先在浏览器中登录闲鱼）",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "商品标题"
+          },
+          "description": {
+            "type": "string",
+            "description": "商品描述/详情"
+          },
+          "price": {
+            "type": "number",
+            "description": "出售价格（元）"
+          },
+          "condition": {
+            "type": "string",
+            "description": "成色：全新 / 几乎全新 / 轻微使用 / 明显使用 / 老旧"
+          },
+          "category": {
+            "type": "string",
+            "description": "商品分类关键词（如：手机、衣服、图书）"
+          },
+          "original_price": {
+            "type": "number",
+            "description": "原价（选填，用于显示折扣）"
+          },
+          "location": {
+            "type": "string",
+            "description": "所在地区（选填，如：杭州）"
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "price",
+          "condition",
+          "category"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reply",
+      "runtime": "extension",
+      "module": "extension/commands/reply.js",
+      "routeDomain": "www.goofish.com",
+      "description": "回复指定闲鱼私信会话",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "闲鱼商品 item_id"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "聊一聊对方的 user_id / peerUserId"
+          },
+          "text": {
+            "type": "string",
+            "description": "Message text to send"
+          },
+          "rank": {
+            "type": "integer",
+            "description": "Conversation rank from xianyu inbox; clicks the visible row instead of requiring IDs",
+            "default": 0
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.goofish.com",
+      "description": "搜索闲鱼商品（支持服务端价格区间 / 地区筛选）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回结果数（最多 60，自动翻页）",
+            "default": 20
+          },
+          "min-price": {
+            "type": "number",
+            "description": "最低价格（元），服务端筛选"
+          },
+          "max-price": {
+            "type": "number",
+            "description": "最高价格（元），服务端筛选"
+          },
+          "province": {
+            "type": "string",
+            "description": "省份名（如 广东），服务端按地区筛选"
+          },
+          "city": {
+            "type": "string",
+            "description": "城市名（如 深圳 / 湛江），可单独使用，服务端按地区筛选"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
