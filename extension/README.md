@@ -22,7 +22,7 @@ extension/
 └── icons/                 扩展图标
 ```
 
-当前公开 Profile 的主要 Adapter 包位于仓库根目录 `adapters/<domain>/`，并由 `weworker/build-profile.json` 控制是否进入默认构建。`extension/adapters/` 主要保留扩展直注入兼容实现和补充集成。
+当前内置 Adapter 包位于仓库根目录 `adapters/<domain>/`，并由 `weworker/build-profile.json` 控制是否进入默认构建。`extension/adapters/` 保留浏览器扩展直注入运行所需的 Adapter 资源。
 
 ## Chrome 扩展的运行模型
 

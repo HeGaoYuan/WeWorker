@@ -139,7 +139,7 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 - 根更新日志与应用内更新日志已重置为仅记录首次公开版本 `1.0.0`。
 - 浏览器扩展的公开名称统一为 `WeWorker Browser Adapter`，公开链接不再指向旧项目地址。
 - 根 README 已按当前真实架构、启动命令、安全边界和发布状态重写。
-- 20 个目标网站清单已按当前公开 Profile 更新为已实现状态；补充 Adapter 包和扩展兼容 Adapter 已在 README、Adapter 清单、官网文档和更新日志中区分记录。
+- 当前支持的 Adapter 已在 README、Adapter 清单、官网文档和更新日志中按首次公开版本口径记录。
 - 贡献指南已改为基于 `main` 的 GitHub Flow，并补充真实检查命令、Adapter 贡献要求和本地敏感信息自检规则。
 - 已新增 Git 工作流文档，明确 PR、受保护分支、受控敏感信息检查、Squash Merge、Tag 和紧急修复流程。
 - Issue 与 PR 模板已完善，覆盖 Bug、功能、文档和 Adapter 提议，并区分贡献者自检与维护者受控敏感信息检查。

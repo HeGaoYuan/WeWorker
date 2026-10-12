@@ -22,7 +22,7 @@ WeWorker 是一款运行在 macOS 和 Windows 上的桌面个人助理应用。�
 - 在 GitHub、Gitee、V2EX、Hacker News 等开发者社区读取公开信息
 - 在携程、12306、微信读书、雪球、BOSS 直聘等网站查询和整理个人相关信息
 
-当前公开 Profile 覆盖原定 20 个目标网站，并额外提供携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票等补充 Adapter。完整清单见 [Adapter 适配器](./adapters.md)。
+首次公开版本已内置 QQ 邮箱、163 邮箱、京东、小红书、B 站、知乎、GitHub、Gitee、豆瓣、微博、携程、12306、Wikipedia、arXiv 等网站 Adapter。完整清单见 [Adapter 适配器](./adapters.md)。
 
 ### 定时任务
 设置定时任务，让 AI 在你不在的时候自动工作：

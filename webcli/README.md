@@ -29,11 +29,10 @@ webcli call <adapter-id>.<tool-id> --key=value
 
 ## 当前公开 Adapter
 
-当前公开 Profile 默认打包 32 个 Adapter 包，覆盖：
+首次公开版本内置一批常用网站 Adapter，覆盖：
 
-- 原定目标网站：QQ 邮箱、163 邮箱、京东、闲鱼、1688、GitHub、Gitee、小红书、微博、Twitter/X、B 站、知乎、掘金、贴吧、V2EX、豆瓣、36氪、微信读书、雪球、BOSS 直聘。
-- 补充场景：携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票。
-- 扩展兼容目录额外保留 Gmail Adapter。
+- 邮件、电商、代码托管、内容社区、社交媒体、阅读、金融信息、招聘、出行、资讯、百科、论文和发票等场景。
+- 典型网站包括 QQ 邮箱、163 邮箱、Gmail、京东、小红书、B 站、知乎、GitHub、Gitee、豆瓣、微博、携程、12306、Wikipedia、arXiv 等。
 
 以当前安装环境为准查看可用项：
 

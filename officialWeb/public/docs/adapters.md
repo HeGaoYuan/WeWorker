@@ -4,7 +4,7 @@ Adapter 是 WeWorker 操作特定网站的“技能包”。每个 Adapter 会�
 
 ## 当前内置支持
 
-当前公开 Profile 已覆盖原定 20 个目标网站：
+首次公开版本已内置一批常用网站 Adapter：
 
 - 邮件：QQ 邮箱、163 邮箱
 - 电商：京东、闲鱼、1688
@@ -14,7 +14,7 @@ Adapter 是 WeWorker 操作特定网站的“技能包”。每个 Adapter 会�
 - 阅读与信息：微信读书、雪球
 - 招聘：BOSS 直聘
 
-此外还提供携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票等补充 Adapter。浏览器扩展兼容目录还保留 Gmail Adapter。
+还支持携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票、Gmail 等网站。
 
 不同 Adapter 的能力边界不同：公开读取类能力通常可以直接返回结构化结果；点赞、收藏、发布、删除、购买、支付、投递等会产生外部影响的操作必须经过用户确认。完整状态以仓库中的 `docs/ADAPTERS.md` 为准。
 
