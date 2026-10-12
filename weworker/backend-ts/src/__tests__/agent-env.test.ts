@@ -92,4 +92,17 @@ describe('buildConfiguredModelEnv', () => {
     expect(env.ANTHROPIC_API_KEY).toBe('fixture-custom-key')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
   })
+
+  it('uses the known provider auth mode when a custom base url matches DeepSeek', () => {
+    const env = buildConfiguredModelEnv({
+      active_provider: 'custom',
+      api_key: 'fixture-custom-deepseek-key',
+      base_url: 'https://api.deepseek.com/anthropic/',
+      custom_auth_type: 'auth_token',
+    })
+
+    expect(env.ANTHROPIC_API_KEY).toBe('fixture-custom-deepseek-key')
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic')
+  })
 })

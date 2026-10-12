@@ -1,6 +1,7 @@
 import type { ProviderEntry } from './llm-egress.js'
 import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
 import type { AnthropicAuthType } from './anthropic-auth.js'
+import { findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 
 export type ModelCatalogSource = 'remote' | 'fallback'
 export type ProbeTarget = 'weworker' | 'webwright'
@@ -147,13 +148,21 @@ function classifyProbeFailure(status: number, detail: string): ProbeErrorCode {
   return 'protocol_mismatch'
 }
 
-function shouldProbeWithAnthropicToolChoice(input: ProviderConnectionInput & { target: ProbeTarget; verifyResponse?: boolean }): boolean {
+function shouldProbeWithAnthropicToolChoice(input: ProviderProtocolProbeInput): boolean {
   if (!input.verifyResponse || input.target !== 'weworker') return false
+  const knownProvider = input.provider.id === 'custom'
+    ? findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
+    : undefined
   // DeepSeek's Anthropic-compatible endpoint rejects forced tool_choice when
   // thinking/reasoning mode is active. Use a plain JSON text probe for this
   // provider so the settings connection check does not fail before chat starts.
-  if (input.provider.id === 'deepseek') return false
+  if (input.provider.id === 'deepseek' || knownProvider?.id === 'deepseek') return false
   return input.provider.weworker.protocol === 'anthropic_messages'
+}
+
+function effectiveAnthropicProviderId(input: ProviderProtocolProbeInput, baseUrl: string): string {
+  if (input.provider.id !== 'custom') return input.provider.id
+  return findProviderByWeWorkerBaseUrl(baseUrl)?.id || input.provider.id
 }
 
 function shouldRetryAnthropicTextProbe(input: ProviderProtocolProbeInput, detail: string): boolean {
@@ -179,7 +188,7 @@ export async function probeProviderProtocol(
   const isAnthropic = protocol === 'anthropic_messages'
   const endpoint = `${baseUrl}${isAnthropic ? '/v1/messages' : '/chat/completions'}`
   const headers: Record<string, string> = isAnthropic
-    ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    ? { ...buildAnthropicAuthHeaders(input.apiKey, effectiveAnthropicProviderId(input, baseUrl), input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
   const useAnthropicToolProbe = isAnthropic && !input.forceAnthropicTextProbe && shouldProbeWithAnthropicToolChoice(input)
@@ -253,7 +262,9 @@ export async function probeProviderProtocol(
 }
 
 export async function probeMainConnection(input: ProviderConnectionInput & { autoAuth?: boolean }, fetchImpl: FetchLike = fetch): Promise<ProtocolProbeResult> {
-  const authType = input.anthropicAuthType || 'auth_token'
+  const authType = input.provider.id === 'custom' && findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
+    ? 'api_key'
+    : input.anthropicAuthType || 'auth_token'
   const result = await probeProviderProtocol({ ...input, target: 'weworker', verifyResponse: true }, fetchImpl)
   if (input.provider.id !== 'custom') return result
   if (result.ok) return { ...result, auth_type: authType }

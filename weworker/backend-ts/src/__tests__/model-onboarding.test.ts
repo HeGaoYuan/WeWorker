@@ -86,6 +86,22 @@ describe('main model onboarding', () => {
     expect(secondBody).not.toHaveProperty('tool_choice')
     expect(secondBody).not.toHaveProperty('tools')
   })
+
+  it('treats a custom DeepSeek Anthropic base url like the built-in provider', async () => {
+    const fetchMock = vi.fn(async () => anthropicTextResponse())
+    expect(await probeMainConnection({
+      ...mainInput(),
+      anthropicBaseUrl: 'https://api.deepseek.com/anthropic',
+    }, fetchMock)).toMatchObject({ ok: true, auth_type: 'api_key' })
+
+    const [_url, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    const headers = new Headers(options.headers)
+    const body = JSON.parse(options.body as string)
+    expect(headers.get('x-api-key')).toBe('fixture-main-key')
+    expect(headers.has('authorization')).toBe(false)
+    expect(body).not.toHaveProperty('tool_choice')
+    expect(body).not.toHaveProperty('tools')
+  })
 })
 
 describe('exploration connection preparation', () => {
