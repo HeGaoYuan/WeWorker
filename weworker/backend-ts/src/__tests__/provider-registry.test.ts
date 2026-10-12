@@ -73,6 +73,21 @@ describe('provider model catalog', () => {
     expect(new Headers(anthropicRequest?.[1]?.headers).get('authorization')).toBe('Bearer secret')
     expect(new Headers(anthropicRequest?.[1]?.headers).has('x-api-key')).toBe(false)
   })
+
+  it('uses the matched built-in catalog route for a custom DeepSeek Anthropic base url', async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      data: [{ id: 'deepseek-remote-a' }, { id: 'deepseek-remote-b' }],
+    }))
+    const result = await listProviderModels({
+      provider: provider('custom'),
+      apiKey: 'secret',
+      anthropicBaseUrl: 'https://api.deepseek.com/anthropic',
+    }, fetchMock)
+
+    expect(result).toEqual({ models: ['deepseek-remote-a', 'deepseek-remote-b'], source: 'remote' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('https://api.deepseek.com/models', expect.anything())
+  })
 })
 
 describe('provider protocol probe', () => {

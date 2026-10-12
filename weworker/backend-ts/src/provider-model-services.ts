@@ -111,6 +111,10 @@ export async function listProviderModels(
 
   const requests: Array<{ label: string; promise: Promise<string[]> }> = []
   if (input.provider.id === 'custom') {
+    const knownProvider = findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
+    if (knownProvider) {
+      return listProviderModels({ ...input, provider: knownProvider }, fetchImpl)
+    }
     if (input.anthropicBaseUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
     if (input.openaiBaseUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, input.apiKey, fetchImpl) })
   } else if (input.provider.webwright.protocol === 'openai_chat_completions') {
