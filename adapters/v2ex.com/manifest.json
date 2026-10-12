@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "v2ex.com",
   "version": "0.1.0",
-  "description": "V2EX 社区：OpenCLI 对齐能力",
+  "description": "V2EX：热门/最新话题、节点、主题回复、用户资料和签到提醒",
   "homepage_url": "https://www.v2ex.com/",
   "match": [
     "www.v2ex.com",
@@ -12,6 +12,49 @@
   "discovery_terms": [
     "v2ex",
     "V2EX 社区"
+  ],
+  "scenarios": [
+    {
+      "id": "topic-feed",
+      "title": "浏览话题",
+      "summary": "读取 V2EX 热门话题、最新话题或节点话题列表",
+      "tool_names": [
+        "hot",
+        "latest",
+        "node",
+        "nodes"
+      ]
+    },
+    {
+      "id": "topic-detail",
+      "title": "查看主题和回复",
+      "summary": "读取 V2EX 主题详情和回复列表",
+      "tool_names": [
+        "topic",
+        "replies"
+      ]
+    },
+    {
+      "id": "member-profile",
+      "title": "查看用户资料",
+      "summary": "读取 V2EX 用户资料和用户发帖列表",
+      "tool_names": [
+        "member",
+        "user"
+      ]
+    },
+    {
+      "id": "account-notifications",
+      "title": "个人提醒和签到",
+      "summary": "登录后读取个人资料、提醒，并执行每日签到",
+      "tool_names": [
+        "me",
+        "notifications",
+        "daily",
+        "whoami",
+        "login"
+      ]
+    }
   ],
   "commands": [
     {

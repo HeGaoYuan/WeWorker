@@ -1,6 +1,7 @@
 import type { ProviderEntry } from './llm-egress.js'
 import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
 import type { AnthropicAuthType } from './anthropic-auth.js'
+import { findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 
 export type ModelCatalogSource = 'remote' | 'fallback'
 export type ProbeTarget = 'weworker' | 'webwright'
@@ -44,6 +45,11 @@ export interface ProtocolProbeResult {
 }
 
 type FetchLike = typeof fetch
+type ProviderProtocolProbeInput = ProviderConnectionInput & {
+  target: ProbeTarget
+  verifyResponse?: boolean
+  forceAnthropicTextProbe?: boolean
+}
 
 function uniqueModels(values: unknown[]): string[] {
   return [...new Set(values
@@ -105,6 +111,10 @@ export async function listProviderModels(
 
   const requests: Array<{ label: string; promise: Promise<string[]> }> = []
   if (input.provider.id === 'custom') {
+    const knownProvider = findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
+    if (knownProvider) {
+      return listProviderModels({ ...input, provider: knownProvider }, fetchImpl)
+    }
     if (input.anthropicBaseUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
     if (input.openaiBaseUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, input.apiKey, fetchImpl) })
   } else if (input.provider.webwright.protocol === 'openai_chat_completions') {
@@ -142,8 +152,32 @@ function classifyProbeFailure(status: number, detail: string): ProbeErrorCode {
   return 'protocol_mismatch'
 }
 
+function shouldProbeWithAnthropicToolChoice(input: ProviderProtocolProbeInput): boolean {
+  if (!input.verifyResponse || input.target !== 'weworker') return false
+  const knownProvider = input.provider.id === 'custom'
+    ? findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
+    : undefined
+  // DeepSeek's Anthropic-compatible endpoint rejects forced tool_choice when
+  // thinking/reasoning mode is active. Use a plain JSON text probe for this
+  // provider so the settings connection check does not fail before chat starts.
+  if (input.provider.id === 'deepseek' || knownProvider?.id === 'deepseek') return false
+  return input.provider.weworker.protocol === 'anthropic_messages'
+}
+
+function effectiveAnthropicProviderId(input: ProviderProtocolProbeInput, baseUrl: string): string {
+  if (input.provider.id !== 'custom') return input.provider.id
+  return findProviderByWeWorkerBaseUrl(baseUrl)?.id || input.provider.id
+}
+
+function shouldRetryAnthropicTextProbe(input: ProviderProtocolProbeInput, detail: string): boolean {
+  if (input.forceAnthropicTextProbe) return false
+  if (input.provider.id !== 'custom') return false
+  if (!shouldProbeWithAnthropicToolChoice(input)) return false
+  return /\btool_choice\b|\btool choice\b|\btools?\b|\bthinking\b|\breasoning\b/i.test(detail)
+}
+
 export async function probeProviderProtocol(
-  input: ProviderConnectionInput & { target: ProbeTarget; verifyResponse?: boolean },
+  input: ProviderProtocolProbeInput,
   fetchImpl: FetchLike = fetch,
 ): Promise<ProtocolProbeResult> {
   const config = input.target === 'weworker' ? input.provider.weworker : input.provider.webwright
@@ -158,15 +192,16 @@ export async function probeProviderProtocol(
   const isAnthropic = protocol === 'anthropic_messages'
   const endpoint = `${baseUrl}${isAnthropic ? '/v1/messages' : '/chat/completions'}`
   const headers: Record<string, string> = isAnthropic
-    ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    ? { ...buildAnthropicAuthHeaders(input.apiKey, effectiveAnthropicProviderId(input, baseUrl), input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
+  const useAnthropicToolProbe = isAnthropic && !input.forceAnthropicTextProbe && shouldProbeWithAnthropicToolChoice(input)
   const body = isAnthropic
     ? {
         model: input.model,
         max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
-        ...(input.verifyResponse && input.target === 'weworker' ? {
+        ...(useAnthropicToolProbe ? {
           tools: [{ name: 'connection_check', description: 'Confirm the connection without performing any action.', input_schema: schema }],
           tool_choice: { type: 'tool', name: 'connection_check' },
         } : {}),
@@ -191,7 +226,7 @@ export async function probeProviderProtocol(
       if (input.verifyResponse) {
         try {
           const data = await response.json() as any
-          if (isAnthropic && input.target === 'weworker') {
+          if (useAnthropicToolProbe) {
             if (!data.content?.some((block: any) => block.type === 'tool_use' && block.name === 'connection_check' && block.input?.ok === true)) throw new Error()
           } else {
             const content = isAnthropic
@@ -200,12 +235,22 @@ export async function probeProviderProtocol(
             if (JSON.parse(content).ok !== true) throw new Error()
           }
         } catch {
-          return { ok: false, target: input.target, protocol, model: input.model, error: 'protocol_mismatch', detail: input.target === 'weworker' ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力' }
+          return {
+            ok: false,
+            target: input.target,
+            protocol,
+            model: input.model,
+            error: 'protocol_mismatch',
+            detail: useAnthropicToolProbe ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力',
+          }
         }
       }
       return { ok: true, target: input.target, protocol, model: input.model }
     }
     const detail = (await readRemoteResponse(response)).detail.split(input.apiKey).join('[已隐藏]')
+    if (isAnthropic && shouldRetryAnthropicTextProbe(input, detail)) {
+      return probeProviderProtocol({ ...input, forceAnthropicTextProbe: true }, fetchImpl)
+    }
     return { ok: false, target: input.target, protocol, model: input.model, error: classifyProbeFailure(response.status, detail), detail }
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
@@ -221,7 +266,9 @@ export async function probeProviderProtocol(
 }
 
 export async function probeMainConnection(input: ProviderConnectionInput & { autoAuth?: boolean }, fetchImpl: FetchLike = fetch): Promise<ProtocolProbeResult> {
-  const authType = input.anthropicAuthType || 'auth_token'
+  const authType = input.provider.id === 'custom' && findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
+    ? 'api_key'
+    : input.anthropicAuthType || 'auth_token'
   const result = await probeProviderProtocol({ ...input, target: 'weworker', verifyResponse: true }, fetchImpl)
   if (input.provider.id !== 'custom') return result
   if (result.ok) return { ...result, auth_type: authType }

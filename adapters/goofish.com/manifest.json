@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "goofish.com",
   "version": "0.1.0",
-  "description": "闲鱼：OpenCLI 对齐能力",
+  "description": "闲鱼：商品搜索/详情、私信会话、发布宝贝和登录检查",
   "homepage_url": "https://www.goofish.com/",
   "match": [
     "goofish.com",
@@ -16,6 +16,43 @@
   "runtime_allowed_hosts": [
     "goofish.com",
     "www.goofish.com"
+  ],
+  "scenarios": [
+    {
+      "id": "item-search",
+      "title": "搜索商品",
+      "summary": "搜索闲鱼商品，支持价格区间和地区筛选",
+      "tool_names": [
+        "search"
+      ]
+    },
+    {
+      "id": "item-detail",
+      "title": "查看商品详情",
+      "summary": "读取闲鱼商品详情",
+      "tool_names": [
+        "item"
+      ]
+    },
+    {
+      "id": "messages",
+      "title": "处理私信",
+      "summary": "列出私信会话、读取聊天内容，并在用户确认后回复或发送消息",
+      "tool_names": [
+        "inbox",
+        "messages",
+        "reply",
+        "chat"
+      ]
+    },
+    {
+      "id": "publish-item",
+      "title": "发布宝贝",
+      "summary": "在已登录浏览器会话中发布闲鱼宝贝",
+      "tool_names": [
+        "publish"
+      ]
+    }
   ],
   "commands": [
     {

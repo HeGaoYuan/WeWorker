@@ -173,7 +173,7 @@ Webwright 中间产物位于 `weworker/build/webwright-dist/`，已被 Git 忽�
 
 ### CI/CD
 
-`.github/workflows/release-latest.yml` 在推送 `v*` tag 或手动触发时执行三套原生构建：
+`.github/workflows/release-latest.yml` 在推送 `v<major>.<minor>.<patch>` tag 或手动触发时执行三套原生构建：
 
 | 目标 | Runner | 产物 |
 |------|--------|------|
@@ -181,9 +181,11 @@ Webwright 中间产物位于 `weworker/build/webwright-dist/`，已被 Git 忽�
 | macOS arm64 | `macos-15` | arm64 `.dmg`、`.zip`、`.blockmap` |
 | macOS x64 | `macos-15-intel` | x64 `.dmg`、`.zip`、`.blockmap` |
 
-Webwright 源码随 WeWorker 一次 checkout，不需要额外 PAT 或仓库 secret。发布 `latest` prerelease 使用 GitHub 自动提供的 `GITHUB_TOKEN`。
+网站探索agent源码随 WeWorker 一次 checkout，不需要额外 PAT 或仓库 secret。创建 GitHub Draft Release 使用 GitHub 自动提供的 `GITHUB_TOKEN`。
 
-三个构建 job 全部通过后，release job 会合并两份 macOS 更新元数据，并更新 `latest` tag 和 prerelease。最终用户可下载产物位于仓库 GitHub Releases 的 `latest` prerelease；各构建 job 的原始产物也保留在对应 workflow run 的 Artifacts 中。
+三个构建 job 全部通过后，release job 会合并两份 macOS 更新元数据，并为当前版本 tag 创建 Draft Release。维护者确认安装包、更新说明和签名状态后，再手动发布 Release；各构建 job 的原始产物也保留在对应 workflow run 的 Artifacts 中。
+
+完整发布步骤见 [发布指南](../docs/RELEASE.md)。
 
 ### 发版清单
 

@@ -26,18 +26,28 @@ export function validatePublicConfig(repoRoot) {
   for (const id of duplicates(registered)) errors.push(`duplicate registered Adapter: ${id}`)
   for (const id of duplicates(profile.adapters)) errors.push(`duplicate packaged Adapter: ${id}`)
 
-  const manifestDirectories = fs.readdirSync(adaptersRoot, { withFileTypes: true })
+  const legacyManifestDirectories = fs.readdirSync(adaptersRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .filter((id) => fs.existsSync(path.join(adaptersRoot, id, 'manifest.json')))
     .sort()
+  const managedManifestDirectories = fs.readdirSync(managedAdaptersRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((id) => fs.existsSync(path.join(managedAdaptersRoot, id, 'manifest.json')))
+    .sort()
+  for (const id of legacyManifestDirectories) {
+    if (managedManifestDirectories.includes(id)) {
+      errors.push(`Adapter ${id} exists in both adapters/ and extension/adapters/`)
+    }
+  }
 
   const sortedRegistered = [...registered].sort()
   if (JSON.stringify(registered) !== JSON.stringify(sortedRegistered)) {
     errors.push('extension/adapters/index.json must be sorted')
   }
-  if (JSON.stringify(sortedRegistered) !== JSON.stringify(manifestDirectories)) {
-    errors.push('registered Adapters must exactly match directories containing manifest.json')
+  if (JSON.stringify(sortedRegistered) !== JSON.stringify(legacyManifestDirectories)) {
+    errors.push('extension/adapters/index.json must exactly match legacy directories containing manifest.json')
   }
 
   for (const id of registered) {

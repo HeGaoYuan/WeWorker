@@ -27,7 +27,7 @@ import { ASSISTANT_STATUS_PREFIX, normalizeAssistantStatusLine } from './assista
 import { composeSystemPromptWithZcf } from './zcf-sync.js'
 import { computeUsageMetrics } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
-import { buildRuntimeAllowedLlmBaseUrls } from './provider-registry.js'
+import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 import { createWeWorkerToolPolicy } from './agent-tool-policy.js'
 import { spawnManagedClaudeCodeProcess } from './claude-process.js'
 import { waitForAdapterRuntimeReload } from './adapter-runtime-reload.js'
@@ -136,13 +136,16 @@ export function buildConfiguredModelEnv(
   for (const key of MODEL_AUTH_ENV_KEYS) delete env[key]
   delete env.CLAUDE_CODE_GIT_BASH_PATH
   delete env.WEWORKER_BUNDLED_GIT_BASH
-  if (usesAnthropicBearerToken(settings.active_provider, settings.custom_auth_type)) {
+  const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
+  const effectiveProviderId = settings.active_provider === 'custom'
+    ? findProviderByWeWorkerBaseUrl(baseUrl)?.id || settings.active_provider
+    : settings.active_provider
+  if (usesAnthropicBearerToken(effectiveProviderId, settings.custom_auth_type)) {
     env.ANTHROPIC_AUTH_TOKEN = settings.api_key
   } else {
     env.ANTHROPIC_API_KEY = settings.api_key
   }
   env.CLAUDE_CONFIG_DIR = ensureIsolatedClaudeConfigDir()
-  const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
   if (baseUrl !== 'https://api.anthropic.com') {
     env.ANTHROPIC_BASE_URL = baseUrl
   } else {
@@ -241,6 +244,9 @@ export async function generateAssistantStatusLine(
   if (!trimmedReply) return null
 
   const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
+  const effectiveProviderId = settings.active_provider === 'custom'
+    ? findProviderByWeWorkerBaseUrl(baseUrl)?.id || settings.active_provider
+    : settings.active_provider
   const endpoint = `${baseUrl}/v1/messages`
   const prompt = [
     '请基于下面这条 AI 回复，输出一行简短中文状态。',
@@ -255,7 +261,7 @@ export async function generateAssistantStatusLine(
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
+        ...buildAnthropicAuthHeaders(settings.api_key, effectiveProviderId, settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },

@@ -27,6 +27,22 @@ webcli call <adapter-id>.<tool-id> --key=value
 
 现有 Extension Adapter 的 `manifest.json` 未声明 `adapter_type` 时按 `extension` 处理。Toolkit Adapter 必须声明 `schema_version: 1`、`adapter_type: "toolkit"`、固定入口与完整 Tool 列表；WeWorker 通过 `WEWORKER_ADAPTERS_DIR` 指向项目 Skill 根目录，普通 CLI 未设置时回退扫描 `<cwd>/.claude/skills/`。独立 npm WebCLI 缺少 Toolkit Runtime 时会明确失败，不回退系统 Python。
 
+## 当前公开 Adapter
+
+首次公开版本内置一批常用网站 Adapter，覆盖：
+
+- 邮件、电商、代码托管、内容社区、社交媒体、阅读、金融信息、招聘、出行、资讯、百科、论文和发票等场景。
+- 典型网站包括 QQ 邮箱、163 邮箱、Gmail、京东、小红书、B 站、知乎、GitHub、Gitee、豆瓣、微博、携程、12306、Wikipedia、arXiv 等。
+
+以当前安装环境为准查看可用项：
+
+```bash
+webcli adapter list
+webcli adapter info <adapter-id>
+```
+
+完整状态、能力边界和维护规则见 [`../docs/ADAPTERS.md`](../docs/ADAPTERS.md)。
+
 ## 工作原理
 
 ```

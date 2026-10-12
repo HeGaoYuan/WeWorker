@@ -1,6 +1,22 @@
 # Adapter 适配器
 
-Adapter 是 WeWorker 操作特定网站的"技能包"。每个 Adapter 是一个 JavaScript 文件，通过 `window.__webmcpRegister` 向 Chrome 扩展注册工具，让 AI 能够操作对应的网站。
+Adapter 是 WeWorker 操作特定网站的“技能包”。每个 Adapter 会向 WeWorker 暴露一组结构化工具，让 AI 能够在用户确认边界内操作对应的网站。
+
+## 当前内置支持
+
+首次公开版本已内置一批常用网站 Adapter：
+
+- 邮件：QQ 邮箱、163 邮箱
+- 电商：京东、闲鱼、1688
+- 代码托管：GitHub、Gitee
+- 内容与社区：小红书、B 站、知乎、掘金、贴吧、V2EX、豆瓣、36氪
+- 社交媒体：微博、Twitter/X
+- 阅读与信息：微信读书、雪球
+- 招聘：BOSS 直聘
+
+还支持携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票、Gmail 等网站。
+
+不同 Adapter 的能力边界不同：公开读取类能力通常可以直接返回结构化结果；点赞、收藏、发布、删除、购买、支付、投递等会产生外部影响的操作必须经过用户确认。完整状态以仓库中的 `docs/ADAPTERS.md` 为准。
 
 ## 编写自定义 Adapter
 
@@ -157,25 +173,16 @@ Chrome 扩展的后台脚本（service-worker）是扩展的核心逻辑，负�
 
 ### 第一步：编写 JS 文件
 
-在 WeWorker 安装目录的 `extension/adapters/` 下创建一个以域名命名的 JS 文件，例如 `mysite.com.js`：
+推荐将自定义 Adapter 放在用户级目录，避免应用升级时覆盖安装目录中的文件：
 
-- **macOS**：`/Applications/WeWorker.app/Contents/Resources/extension/adapters/mysite.com.js`
-- **Windows**：`C:\Users\{用户名}\AppData\Local\Programs\WeWorker\resources\extension\adapters\mysite.com.js`
+- **macOS / Linux**：`~/.weworker/adapters/mysite.com/`
+- **Windows**：`%USERPROFILE%\.weworker\adapters\mysite.com\`
 
-文件内容参考上方"基本结构"示例。
+目录内至少包含 `manifest.json` 与 `index.js`。文件内容参考上方“基本结构”示例。
 
 ### 第二步：注册到 registry.json
 
-在同目录下的 `registry.json` 中，向 `adapters` 数组添加一条记录（字段说明参考上方 [registry.json](#registryjson) 章节）：
-
-```json
-{
-  "id": "mysite.com",
-  "name": "My Site",
-  "description": "My site adapter",
-  "match": ["mysite.com"]
-}
-```
+用户级 Adapter 由 WebCLI Bridge 和浏览器扩展按目录发现，不需要修改安装包内置的 `extension/adapters/index.json`。如果维护的是仓库内置 Adapter，则需要在对应 PR 中同步更新 Adapter manifest、构建 Profile 和文档清单。
 
 ### 第三步：重新加载扩展
 
@@ -183,4 +190,4 @@ Chrome 扩展的后台脚本（service-worker）是扩展的核心逻辑，负�
 2. 找到 WeWorker Browser Adapter，点击刷新图标
 3. 打开目标网站，扩展图标变绿说明 Adapter 已加载成功
 
-> 注意：WeWorker 应用更新后，安装目录下的文件会被覆盖。建议将自定义 Adapter 备份到其他位置，更新后重新放入。
+> 注意：如果你为了临时调试修改安装目录下的扩展文件，应用更新后这些文件可能被覆盖。长期自定义 Adapter 应放在用户级目录。

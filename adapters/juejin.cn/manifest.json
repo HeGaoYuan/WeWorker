@@ -2,11 +2,45 @@
   "schema_version": 2,
   "name": "juejin.cn",
   "version": "1.0.9",
-  "description": "Generated adapter shell for juejin.cn",
+  "description": "掘金：登录检查、当前内容点赞/收藏和详情候选读取",
   "match": [
     "juejin.cn"
   ],
   "requires_auth": true,
+  "scenarios": [
+    {
+      "id": "login-status",
+      "title": "登录检查",
+      "summary": "检查当前掘金浏览器会话是否已登录",
+      "tool_names": [
+        "check-login-status"
+      ]
+    },
+    {
+      "id": "content-candidates",
+      "title": "读取详情候选",
+      "summary": "返回当前页面或探索阶段捕获到的掘金详情链接候选",
+      "tool_names": [
+        "list-detail-candidates"
+      ]
+    },
+    {
+      "id": "like-content",
+      "title": "点赞当前内容",
+      "summary": "在用户明确确认后，对当前打开的掘金内容执行点赞",
+      "tool_names": [
+        "like-current-item"
+      ]
+    },
+    {
+      "id": "favorite-content",
+      "title": "收藏当前内容",
+      "summary": "在用户明确确认后，对当前打开的掘金内容执行收藏",
+      "tool_names": [
+        "favorite-current-item"
+      ]
+    }
+  ],
   "commands": [
     {
       "id": "check-login-status",

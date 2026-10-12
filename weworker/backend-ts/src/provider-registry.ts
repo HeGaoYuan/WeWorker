@@ -1,4 +1,4 @@
-import { buildAllowedLlmBaseUrls, type ProviderEntry } from './llm-egress.js'
+import { buildAllowedLlmBaseUrls, normalizeLlmBaseUrl, type ProviderEntry } from './llm-egress.js'
 
 declare const __BUILD_PROVIDERS__: ProviderEntry[]
 
@@ -17,6 +17,17 @@ export const PROVIDER_BASE_URLS: Record<string, string> = Object.fromEntries(
 
 export function getProvider(providerId: string): ProviderEntry | undefined {
   return PROVIDERS.find(provider => provider.id === providerId)
+}
+
+export function findProviderByWeWorkerBaseUrl(baseUrl: string | undefined): ProviderEntry | undefined {
+  if (!baseUrl?.trim()) return undefined
+  let normalized: string
+  try {
+    normalized = normalizeLlmBaseUrl(baseUrl)
+  } catch {
+    return undefined
+  }
+  return PROVIDERS.find(provider => provider.id !== 'custom' && normalizeLlmBaseUrl(provider.weworker.baseUrl) === normalized)
 }
 
 export const ALLOWED_PROVIDER_IDS = new Set(PROVIDERS.map(p => p.id))

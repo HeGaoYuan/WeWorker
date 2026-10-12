@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "smzdm.com",
   "version": "0.1.0",
-  "description": "什么值得买：OpenCLI 对齐能力",
+  "description": "什么值得买：搜索好价内容",
   "match": [
     "smzdm.com",
     "www.smzdm.com",
@@ -13,6 +13,16 @@
   "discovery_terms": [
     "smzdm",
     "什么值得买"
+  ],
+  "scenarios": [
+    {
+      "id": "deal-search",
+      "title": "搜索好价",
+      "summary": "按关键词搜索什么值得买好价内容",
+      "tool_names": [
+        "search"
+      ]
+    }
   ],
   "commands": [
     {

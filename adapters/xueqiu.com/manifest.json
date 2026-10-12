@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "xueqiu.com",
   "version": "0.1.0",
-  "description": "雪球：OpenCLI 对齐能力",
+  "description": "雪球：股票搜索/行情、热门动态、自选组合、基金持仓和登录检查",
   "homepage_url": "https://xueqiu.com/",
   "match": [
     "xueqiu.com",
@@ -21,6 +21,48 @@
     "stock.xueqiu.com",
     "danjuanfunds.com",
     "www.danjuanfunds.com"
+  ],
+  "scenarios": [
+    {
+      "id": "stock-search",
+      "title": "搜索和查看股票",
+      "summary": "搜索雪球股票，读取实时行情、K 线和预计财报日期",
+      "tool_names": [
+        "search",
+        "stock",
+        "kline",
+        "earnings-date"
+      ]
+    },
+    {
+      "id": "market-feed",
+      "title": "热门动态和股票榜",
+      "summary": "读取雪球热门动态、热门股票榜和单只股票讨论",
+      "tool_names": [
+        "hot",
+        "hot-stock",
+        "comments",
+        "feed"
+      ]
+    },
+    {
+      "id": "watchlist",
+      "title": "自选和组合",
+      "summary": "读取自选股分组和自选股/模拟组合列表",
+      "tool_names": [
+        "groups",
+        "watchlist"
+      ]
+    },
+    {
+      "id": "funds",
+      "title": "基金持仓",
+      "summary": "读取蛋卷基金快照和基金持仓明细",
+      "tool_names": [
+        "fund-snapshot",
+        "fund-holdings"
+      ]
+    }
   ],
   "commands": [
     {

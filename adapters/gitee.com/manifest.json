@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "gitee.com",
   "version": "0.1.0",
-  "description": "Gitee 代码托管：OpenCLI 对齐能力",
+  "description": "Gitee：仓库搜索、推荐项目、用户资料和登录检查",
   "homepage_url": "https://gitee.com/",
   "match": [
     "gitee.com",
@@ -17,6 +17,41 @@
     "gitee.com",
     "www.gitee.com",
     "so.gitee.com"
+  ],
+  "scenarios": [
+    {
+      "id": "repo-search",
+      "title": "搜索仓库",
+      "summary": "按关键词搜索 Gitee 仓库",
+      "tool_names": [
+        "search"
+      ]
+    },
+    {
+      "id": "trending-projects",
+      "title": "查看推荐项目",
+      "summary": "读取 Gitee Explore 推荐开源项目",
+      "tool_names": [
+        "trending"
+      ]
+    },
+    {
+      "id": "user-profile",
+      "title": "查看用户资料",
+      "summary": "读取 Gitee 用户资料面板",
+      "tool_names": [
+        "user"
+      ]
+    },
+    {
+      "id": "login-status",
+      "title": "登录检查",
+      "summary": "打开登录页并检查当前 Gitee 登录身份",
+      "tool_names": [
+        "whoami",
+        "login"
+      ]
+    }
   ],
   "commands": [
     {
