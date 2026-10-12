@@ -494,7 +494,7 @@ var __wave5 = (() => {
   function parseTweetUrl(rawUrl) {
     const value = String(rawUrl ?? "").trim();
     if (!value) {
-      throw new ArgumentError("twitter tweet URL cannot be empty", "Example: opencli twitter retweet https://x.com/jack/status/20");
+      throw new ArgumentError("twitter tweet URL cannot be empty", "Example: use the corresponding x.com Adapter tool");
     }
     let parsed;
     try {
@@ -1523,12 +1523,12 @@ var __wave5 = (() => {
     site: "twitter",
     name: "bookmark-folder",
     access: "read",
-    description: "Read the tweets inside a single Twitter/X bookmark folder. Get the folder id from `opencli twitter bookmark-folders`.",
+    description: "Read the tweets inside a single Twitter/X bookmark folder. Get the folder id from the bookmark-folders tool.",
     domain: "x.com",
     strategy: Strategy.COOKIE,
     browser: true,
     args: [
-      { name: "folder-id", positional: true, type: "string", required: true, help: "Folder id from `opencli twitter bookmark-folders`." },
+      { name: "folder-id", positional: true, type: "string", required: true, help: "Folder id from the bookmark-folders tool." },
       { name: "limit", type: "int", default: 20, help: "Maximum number of bookmarks to return (default 20)." },
       { name: "top-by-engagement", type: "int", default: 0, help: "When set to N>0, re-rank the folder by weighted engagement (likes\xD71 + retweets\xD73 + replies\xD72 + bookmarks\xD75 + log10(views+1)\xD70.5) and return the top N. Default 0 keeps the API's native (saved-time) ordering." }
     ],
@@ -1537,7 +1537,7 @@ var __wave5 = (() => {
       const folderId = String(kwargs["folder-id"] || "").trim();
       if (!folderId || !FOLDER_ID_PATTERN.test(folderId)) {
         throw new ArgumentError(
-          `Invalid folder-id: ${JSON.stringify(kwargs["folder-id"])}. Expected a safe folder ID from \`opencli twitter bookmark-folders\`.`
+          `Invalid folder-id: ${JSON.stringify(kwargs["folder-id"])}. Expected a safe folder ID returned by the bookmark-folders tool.`
         );
       }
       const limit = Number(kwargs.limit ?? 20);
@@ -2079,11 +2079,11 @@ var __wave5 = (() => {
     if (raw && !username) {
       throw new ArgumentError(
         `twitter ${commandName} username must be a valid Twitter/X handle`,
-        commandName === "collection" ? "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z" : "Example: opencli twitter tweets @jack --limit 20"
+        commandName === "collection" ? "Example: use the corresponding x.com Adapter tool" : "Example: use the corresponding x.com Adapter tool"
       );
     }
     if (!username && !allowLoggedInDefault) {
-      throw new ArgumentError("twitter collection username must be a valid Twitter/X handle", "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z");
+      throw new ArgumentError("twitter collection username must be a valid Twitter/X handle", "Example: use the corresponding x.com Adapter tool");
     }
     if (!username) {
       await page.goto("https://x.com/home");
@@ -2140,7 +2140,7 @@ var __wave5 = (() => {
     if (!match) {
       throw new ArgumentError(
         "twitter collection --until must be an RFC3339 timestamp",
-        "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, , zone, , offsetHourRaw, offsetMinuteRaw] = match;
@@ -2156,14 +2156,14 @@ var __wave5 = (() => {
     if (month < 1 || month > 12 || day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
       throw new ArgumentError(
         "twitter collection --until must be an RFC3339 timestamp",
-        "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) {
       throw new ArgumentError(
         "twitter collection --until must be an RFC3339 timestamp",
-        "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     return parsed;
@@ -2173,7 +2173,7 @@ var __wave5 = (() => {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_USER_TWEETS_LIMIT) {
       throw new ArgumentError(
         `twitter collection --limit must be an integer between 1 and ${MAX_USER_TWEETS_LIMIT}`,
-        "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z --limit 250"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     return limit;
@@ -2183,7 +2183,7 @@ var __wave5 = (() => {
     if (!Number.isInteger(delay) || delay < 0 || delay > 60) {
       throw new ArgumentError(
         "twitter collection --page-delay must be an integer between 0 and 60 seconds",
-        "Example: opencli twitter collection @jack --until 2026-07-23T00:00:00Z --page-delay 2"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     return delay;
@@ -2942,7 +2942,7 @@ var __wave5 = (() => {
         const limit = requireLimit(kwargs.limit);
         const username = normalizeTwitterScreenName(rawUsername);
         if (!username) {
-          throw new ArgumentError("twitter download username must be a valid Twitter/X handle", "Example: opencli twitter download @jack --limit 20");
+          throw new ArgumentError("twitter download username must be a valid Twitter/X handle", "Example: use the corresponding x.com Adapter tool");
         }
         return downloadUserMedia(page, username, limit);
       } catch (err) {
@@ -3368,7 +3368,7 @@ var __wave5 = (() => {
       const rawUser = String(kwargs.user ?? "").trim();
       let targetUser = normalizeScreenName(rawUser);
       if (rawUser && !targetUser) {
-        throw new ArgumentError("twitter followers user must be a valid Twitter/X handle", "Example: opencli twitter followers @elonmusk --limit 100");
+        throw new ArgumentError("twitter followers user must be a valid Twitter/X handle", "Example: use the corresponding x.com Adapter tool");
       }
       await page.goto("https://x.com/home");
       await page.wait({ selector: '[data-testid="primaryColumn"]' });
@@ -3391,7 +3391,7 @@ var __wave5 = (() => {
         }
       }
       if (!targetUser) {
-        throw new ArgumentError("twitter followers user cannot be empty", "Example: opencli twitter followers @elonmusk --limit 100");
+        throw new ArgumentError("twitter followers user cannot be empty", "Example: use the corresponding x.com Adapter tool");
       }
       await page.installInterceptor("/Followers?");
       const targetPath = `/${targetUser}/followers`;
@@ -3586,12 +3586,12 @@ var __wave5 = (() => {
     func: async (page, kwargs) => {
       const limit = kwargs.limit === void 0 || kwargs.limit === null ? 50 : Number(kwargs.limit);
       if (!Number.isInteger(limit) || limit <= 0) {
-        throw new ArgumentError("twitter following --limit must be a positive integer", "Example: opencli twitter following @elonmusk --limit 200");
+        throw new ArgumentError("twitter following --limit must be a positive integer", "Example: use the corresponding x.com Adapter tool");
       }
       const rawUser = String(kwargs.user ?? "").trim();
       let targetUser = normalizeScreenName2(rawUser);
       if (rawUser && !targetUser) {
-        throw new ArgumentError("twitter following user must be a valid Twitter/X handle", "Example: opencli twitter following @elonmusk --limit 200");
+        throw new ArgumentError("twitter following user must be a valid Twitter/X handle", "Example: use the corresponding x.com Adapter tool");
       }
       const cookies = await page.getCookies({ url: "https://x.com" });
       const ct0 = cookies.find((c) => c.name === "ct0")?.value || null;
@@ -3611,7 +3611,7 @@ var __wave5 = (() => {
           throw new AuthRequiredError("x.com", "Could not detect logged-in user. Are you logged in?");
       }
       if (!targetUser) {
-        throw new ArgumentError("twitter following user cannot be empty", "Example: opencli twitter following @elonmusk --limit 200");
+        throw new ArgumentError("twitter following user cannot be empty", "Example: use the corresponding x.com Adapter tool");
       }
       const followingQueryId = await resolveTwitterQueryId(page, "Following", FOLLOWING_QUERY_ID);
       const userByScreenNameQueryId = await resolveTwitterQueryId(page, "UserByScreenName", USER_BY_SCREEN_NAME_QUERY_ID3);
@@ -4089,7 +4089,7 @@ var __wave5 = (() => {
       const rawUsername = String(kwargs.username ?? "").trim();
       let username = normalizeTwitterScreenName(rawUsername);
       if (rawUsername && !username) {
-        throw new ArgumentError("twitter likes username must be a valid Twitter/X handle", "Example: opencli twitter likes @jack --limit 20");
+        throw new ArgumentError("twitter likes username must be a valid Twitter/X handle", "Example: use the corresponding x.com Adapter tool");
       }
       const cookies = await page.getCookies({ url: "https://x.com" });
       const ct0 = cookies.find((c) => c.name === "ct0")?.value || null;
@@ -4468,10 +4468,10 @@ var __wave5 = (() => {
     const listId = String(kwargs.listId || "").trim();
     const username = String(kwargs.username || "").replace(/^@/, "").trim();
     if (!listId || !/^\d+$/.test(listId)) {
-      throw new ArgumentError(`Invalid listId: ${JSON.stringify(kwargs.listId)}. Expected numeric ID.`, "Example: opencli twitter list-add 123456789 alice");
+      throw new ArgumentError(`Invalid listId: ${JSON.stringify(kwargs.listId)}. Expected numeric ID.`, "Example: use the corresponding x.com Adapter tool");
     }
     if (!username) {
-      throw new ArgumentError("twitter list-add username is required", "Example: opencli twitter list-add 123456789 alice");
+      throw new ArgumentError("twitter list-add username is required", "Example: use the corresponding x.com Adapter tool");
     }
     await page.goto("https://x.com");
     await page.wait(3);
@@ -4573,7 +4573,7 @@ var __wave5 = (() => {
     strategy: Strategy.UI,
     browser: true,
     args: [
-      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from `opencli twitter lists`)" },
+      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from the lists tool)" },
       { name: "username", positional: true, type: "string", required: true, help: "Twitter/X handle to add (with or without @)" }
     ],
     columns: ["listId", "username", "userId", "status", "message"],
@@ -4658,7 +4658,7 @@ var __wave5 = (() => {
   }
 
   // webcli/scripts/opencli-wave5/upstream/twitter/list-add-batch.js
-  var EXAMPLE = 'Example: opencli twitter list-add-batch 123456789 "@alice,@bob" --interval 5';
+  var EXAMPLE = "Example: use the list-add-batch tool with a list ID and comma-separated usernames.";
   cli({
     site: "twitter",
     name: "list-add-batch",
@@ -4668,7 +4668,7 @@ var __wave5 = (() => {
     strategy: Strategy.UI,
     browser: true,
     args: [
-      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from `opencli twitter lists`)" },
+      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from the lists tool)" },
       { name: "usernames", positional: true, type: "string", required: true, help: "Comma-separated Twitter/X handles to add (with or without @)" },
       { name: "interval", type: "int", default: 5, help: "Seconds to wait between account additions (default: 5)" },
       { name: "timeout", type: "int", default: 600, help: "Max seconds for the overall batch command (default: 600)" }
@@ -4699,7 +4699,7 @@ var __wave5 = (() => {
     const description = String(kwargs.description || "").trim();
     const modeRaw = String(kwargs.mode || "public").trim().toLowerCase();
     if (!name) {
-      throw new ArgumentError("List name is required", 'Example: opencli twitter list-create "My List"');
+      throw new ArgumentError("List name is required", "Example: use the list-create tool with a list name.");
     }
     if (name.length > NAME_MAX) {
       throw new ArgumentError(`List name too long: ${name.length} chars (max ${NAME_MAX})`);
@@ -4884,7 +4884,7 @@ var __wave5 = (() => {
     strategy: Strategy.UI,
     browser: true,
     args: [
-      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from `opencli twitter lists`)" },
+      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from the lists tool)" },
       { name: "confirm", type: "boolean", default: false, help: "Required. Set --confirm true to delete the list." },
       { name: "timeout", type: "int", default: 300, help: "Max seconds for the overall delete command (default: 300)" }
     ],
@@ -4892,10 +4892,10 @@ var __wave5 = (() => {
     func: async (page, kwargs) => {
       const listId = String(kwargs.listId || "").trim();
       if (!listId || !/^\d+$/.test(listId)) {
-        throw new ArgumentError(`Invalid listId: ${JSON.stringify(kwargs.listId)}. Expected numeric ID.`, "Example: opencli twitter list-delete 123456789 --confirm true");
+        throw new ArgumentError(`Invalid listId: ${JSON.stringify(kwargs.listId)}. Expected numeric ID.`, "Example: use the corresponding x.com Adapter tool");
       }
       if (!normalizeConfirm(kwargs.confirm)) {
-        throw new ArgumentError("Refusing to delete list without --confirm true", "Example: opencli twitter list-delete 123456789 --confirm true");
+        throw new ArgumentError("Refusing to delete list without --confirm true", "Example: use the corresponding x.com Adapter tool");
       }
       await page.goto("https://x.com");
       await page.wait(3);
@@ -5211,7 +5211,7 @@ var __wave5 = (() => {
     strategy: Strategy.UI,
     browser: true,
     args: [
-      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from `opencli twitter lists`)" },
+      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from the lists tool)" },
       { name: "username", positional: true, type: "string", required: true, help: "Twitter/X handle to remove (with or without @)" }
     ],
     columns: ["listId", "username", "userId", "status", "message"],
@@ -5219,7 +5219,7 @@ var __wave5 = (() => {
   });
 
   // webcli/scripts/opencli-wave5/upstream/twitter/list-remove-batch.js
-  var EXAMPLE2 = 'Example: opencli twitter list-remove-batch 123456789 "@alice,@bob" --interval 5';
+  var EXAMPLE2 = "Example: use the list-remove-batch tool with a list ID and comma-separated usernames.";
   cli({
     site: "twitter",
     name: "list-remove-batch",
@@ -5229,7 +5229,7 @@ var __wave5 = (() => {
     strategy: Strategy.UI,
     browser: true,
     args: [
-      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from `opencli twitter lists`)" },
+      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of the list you own (e.g. from the lists tool)" },
       { name: "usernames", positional: true, type: "string", required: true, help: "Comma-separated Twitter/X handles to remove (with or without @)" },
       { name: "interval", type: "int", default: 5, help: "Seconds to wait between account removals (default: 5)" },
       { name: "timeout", type: "int", default: 600, help: "Max seconds for the overall batch command (default: 600)" }
@@ -5399,7 +5399,7 @@ async function fetchJsonOrLoginWall(input, init) {
     strategy: Strategy.COOKIE,
     browser: true,
     args: [
-      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of a Twitter/X list (e.g. from `opencli twitter lists`)" },
+      { name: "listId", positional: true, type: "string", required: true, help: "Numeric ID of a Twitter/X list (e.g. from the lists tool)" },
       { name: "limit", type: "int", default: 50 },
       { name: "top-by-engagement", type: "int", default: 0, help: "When set to N>0, re-rank the list timeline by weighted engagement (likes\xD71 + retweets\xD73 + replies\xD72 + bookmarks\xD75 + log10(views+1)\xD70.5) and return the top N. Default 0 keeps the list's native (recency) ordering." }
     ],
@@ -5407,7 +5407,7 @@ async function fetchJsonOrLoginWall(input, init) {
     func: async (page, kwargs) => {
       const listId = String(kwargs.listId || "").trim();
       if (!listId || !/^\d+$/.test(listId)) {
-        throw new CommandExecutionError(`Invalid listId: ${JSON.stringify(kwargs.listId)}. Expected a numeric ID (see \`opencli twitter lists\`).`);
+        throw new CommandExecutionError(`Invalid listId: ${JSON.stringify(kwargs.listId)}. Expected a numeric ID (see \`the lists tool\`).`);
       }
       const limit = kwargs.limit || 50;
       const cookies = await page.getCookies({ url: "https://x.com" });
@@ -5963,7 +5963,7 @@ async function fetchJsonOrLoginWall(input, init) {
       await page.wait(1);
       const result = await submitTweet(page, text);
       if (result?.unconfirmed) {
-        throw new TimeoutError("twitter post", SUBMIT_TIMEOUT_MS / 1e3, `${result.message} Check \`opencli twitter tweets --limit 1\` before retrying; the post may already be live.`);
+        throw new TimeoutError("twitter post", SUBMIT_TIMEOUT_MS / 1e3, `${result.message} Check the latest tweets with the tweets tool before retrying; the post may already be live.`);
       }
       if (!result?.ok) {
         throw new CommandExecutionError(result?.message ?? "Tweet failed to post.", "Nothing was posted. Open the composer in the browser and retry.");
@@ -6104,7 +6104,7 @@ async function fetchJsonOrLoginWall(input, init) {
       const rawUsername = String(kwargs.username ?? "").trim();
       let username = normalizeTwitterScreenName(rawUsername);
       if (rawUsername && !username) {
-        throw new ArgumentError("twitter profile username must be a valid Twitter/X handle", "Example: opencli twitter profile @jack");
+        throw new ArgumentError("twitter profile username must be a valid Twitter/X handle", "Example: use the corresponding x.com Adapter tool");
       }
       if (!username) {
         await page.goto("https://x.com/home");
@@ -7111,7 +7111,7 @@ async function fetchJsonOrLoginWall(input, init) {
         throw new ArgumentError("twitter search query is empty", "Provide a non-empty <query>, or use at least one of --from / --has / --exclude.");
       }
       if (!Number.isInteger(Number(kwargs.limit)) || Number(kwargs.limit) <= 0) {
-        throw new ArgumentError("twitter search --limit must be a positive integer", "Example: opencli twitter search opencli --limit 15");
+        throw new ArgumentError("twitter search --limit must be a positive integer", "Example: use the corresponding x.com Adapter tool");
       }
       const cookies = await page.getCookies({ url: "https://x.com" });
       const ct0 = cookies.find((c) => c.name === "ct0")?.value || null;
@@ -7621,7 +7621,7 @@ async function fetchJsonOrLoginWall(input, init) {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_TWEETS_LIMIT) {
       throw new ArgumentError(
         `twitter tweets --limit must be an integer between 1 and ${MAX_TWEETS_LIMIT}`,
-        "Example: opencli twitter tweets @jack --limit 250"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     return limit;
@@ -7631,7 +7631,7 @@ async function fetchJsonOrLoginWall(input, init) {
     if (!Number.isInteger(delay) || delay < 0 || delay > 60) {
       throw new ArgumentError(
         "twitter tweets --page-delay must be an integer between 0 and 60 seconds",
-        "Example: opencli twitter tweets @jack --limit 250 --page-delay 2"
+        "Example: use the corresponding x.com Adapter tool"
       );
     }
     return delay;

@@ -30,7 +30,7 @@ WeWorker 初次开源版本已内置一批常用网站 Adapter。常用示例：
 | 小红书 | `xiaohongshu.com` | 笔记搜索、笔记详情、评论读取、点赞、收藏、发布与草稿 |
 | B 站 | `bilibili.com` | 视频搜索、视频详情、评论读取、点赞、收藏 |
 | 知乎 | `zhihu.com` | 搜索、问题、回答、评论、热榜、点赞、收藏 |
-| GitHub | `github.com` | Trending 仓库读取 |
+| GitHub | `github.com` | Trending 仓库读取、登录检查、仓库搜索、仓库详情、Issue/PR 详情、Star 仓库 |
 | Gitee | `gitee.com` | 搜索、趋势榜、用户信息 |
 | 豆瓣 | `douban.com` | 条目搜索、详情、影评、Top250、相册、标记 |
 | 微博 | `weibo.com` | 热榜、搜索、信息流、用户主页、评论、发布 |

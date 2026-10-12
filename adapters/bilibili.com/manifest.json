@@ -109,7 +109,7 @@
           },
           "confirm": {
             "type": "boolean",
-            "description": "兼容旧调用的确认参数；当前包无需二次确认。"
+            "description": "是否确认执行点赞操作；当前版本会直接使用浏览器页面状态执行。"
           }
         },
         "required": []
@@ -138,7 +138,7 @@
           },
           "confirm": {
             "type": "boolean",
-            "description": "兼容旧调用的确认参数；当前包无需二次确认。"
+            "description": "是否确认执行收藏操作；当前版本会直接使用浏览器页面状态执行。"
           }
         },
         "required": []

@@ -120,11 +120,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Note ID (e.g., \"69a7ff7e00000000220334e1\")"
+            "description": "兼容参数：笔记 ID。读取笔记时优先使用 url 参数传入搜索、推荐或用户笔记结果返回的完整 URL。"
           },
           "url": {
             "type": "string",
-            "description": "Full note URL (e.g., \"https://www.xiaohongshu.com/explore/69a7ff7e00000000220334e1\")"
+            "description": "搜索、推荐或用户笔记结果返回的完整小红书笔记 URL，建议包含 xsec_token；为空时使用当前页。"
           }
         }
       },
@@ -143,11 +143,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "笔记 ID；为空时使用当前页"
+            "description": "兼容参数：笔记 ID。读取评论时优先使用 url 参数传入搜索、推荐或用户笔记结果返回的完整 URL。"
           },
           "url": {
             "type": "string",
-            "description": "笔记详情 URL；为空时使用当前页"
+            "description": "搜索、推荐或用户笔记结果返回的完整小红书笔记 URL，建议包含 xsec_token；为空时使用当前页。"
           },
           "limit": {
             "type": "number",
@@ -174,11 +174,11 @@
           },
           "url": {
             "type": "string",
-            "description": "笔记详情 URL；为空时使用当前页"
+            "description": "搜索、推荐或用户笔记结果返回的完整小红书笔记 URL，建议包含 xsec_token；为空时使用当前页。"
           },
           "confirm": {
             "type": "boolean",
-            "description": "兼容旧调用的确认参数；当前包无需二次确认。"
+            "description": "是否确认执行点赞操作；当前版本会直接使用浏览器页面状态执行。"
           }
         }
       },
@@ -202,11 +202,11 @@
           },
           "url": {
             "type": "string",
-            "description": "笔记详情 URL；为空时使用当前页"
+            "description": "搜索、推荐或用户笔记结果返回的完整小红书笔记 URL，建议包含 xsec_token；为空时使用当前页。"
           },
           "confirm": {
             "type": "boolean",
-            "description": "兼容旧调用的确认参数；当前包无需二次确认。"
+            "description": "是否确认执行收藏操作；当前版本会直接使用浏览器页面状态执行。"
           }
         }
       },

@@ -3195,7 +3195,7 @@ var __xhsOpenCLI = (() => {
   function draftNotFound(id, draftType, command9) {
     return new EmptyResultError(
       command9,
-      `Draft ${id} was not found in ${draftType} drafts. Run opencli xiaohongshu drafts --type ${draftType} to list current ids.`
+      `Draft ${id} was not found in ${draftType} drafts. Run the drafts tool with type ${draftType} to list current ids.`
     );
   }
 
@@ -3331,7 +3331,7 @@ var __xhsOpenCLI = (() => {
     browser: true,
     navigateBefore: false,
     args: [
-      { name: "id", positional: true, required: true, help: "Draft id returned by `opencli xiaohongshu drafts`" },
+      { name: "id", positional: true, required: true, help: "Draft id returned by the drafts tool" },
       { name: "type", default: "image", help: "Draft type: image, video, article, audio" },
       { name: "execute", type: "bool", default: false, help: "Actually delete the local draft. Default is dry-run verification only." }
     ],
@@ -3381,7 +3381,7 @@ var __xhsOpenCLI = (() => {
     browser: true,
     navigateBefore: false,
     args: [
-      { name: "id", positional: true, required: true, help: "Draft id returned by `opencli xiaohongshu drafts`" },
+      { name: "id", positional: true, required: true, help: "Draft id returned by the drafts tool" },
       { name: "type", default: "image", help: "Draft type: image, video, article, audio" }
     ],
     columns: ["id", "type", "title", "updated_at", "images", "content"],
@@ -4805,7 +4805,7 @@ var __xhsOpenCLI = (() => {
       await page.wait({ time: 3 });
       const pageUrl = await page.evaluate("() => location.href");
       if (!pageUrl.includes("creator.xiaohongshu.com")) {
-        throw new Error("Redirected away from creator center \u2014 session may have expired. Re-capture browser login via: opencli xiaohongshu creator-profile");
+        throw new Error("Redirected away from creator center \u2014 session may have expired. Refresh browser login with the creator-profile tool");
       }
       const tabResult = await selectImageTextTab(page);
       const surface = await waitForPublishSurfaceState(page, tabResult?.ok ? 5e3 : 2e3);
