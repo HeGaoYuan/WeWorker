@@ -1,7 +1,10 @@
-﻿import { query } from '@anthropic-ai/claude-agent-sdk'
+import { query } from '@anthropic-ai/claude-agent-sdk'
 import type {
   SDKMessage,
+  McpServerConfig,
   SettingSource,
+  HookCallback,
+  HookJSONOutput,
   SpawnOptions as ClaudeSpawnOptions,
   SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk' // used in mapSdkMessage parameter type
@@ -14,8 +17,9 @@ import { getConfigDirectory, getOpenBrowserAllowedOrigins, getSiteEnabled, getUs
 import { formatBlacklistEntry } from './user-directory-blacklist.js'
 import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import type { Message } from './works-store.js'
-import { buildMcpServer as _buildMcpServer } from './tools.js'
+import { buildMcpServer as _buildMcpServer, getMcpToolDefinitionSummary } from './tools.js'
 import { parseAllAdapters } from './adapter-parser.js'
+import { refreshDesktopAdapterSkills } from '../../../webcli/adapter-desktop.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
@@ -27,8 +31,55 @@ import { buildRuntimeAllowedLlmBaseUrls } from './provider-registry.js'
 import { createWeWorkerToolPolicy } from './agent-tool-policy.js'
 import { spawnManagedClaudeCodeProcess } from './claude-process.js'
 import { waitForAdapterRuntimeReload } from './adapter-runtime-reload.js'
+import {
+  buildContextAssembly,
+  buildEnabledSkillIndex,
+  createTurnContextCollector,
+  estimateContextTokens,
+  recallLongTermMemory,
+  type ContextSnapshot,
+} from './context-assembly.js'
+import {
+  buildCompactedConversationPrompt,
+  planConversationCompaction,
+  takeRecentWithinTokenBudget,
+} from './context/conversation-compaction.js'
+import type { ConversationCompactionSnapshot } from './context/context-types.js'
+import type { MemoryScope } from './memory/memory-types.js'
+import type { MemoryUpdateCandidate } from './memory/memory-types.js'
+import {
+  buildMemoryOutputProtocolPrompt,
+  MEMORY_USER_TURN_REMINDER,
+  parseAssistantMemoryOutput,
+  summarizeAssistantMemoryParse,
+  type MemoryParseSummary,
+} from './memory/memory-extractor.js'
+import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic-auth.js'
+import { renderPrompt } from './prompt-loader.js'
+import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
 
 const log = createLogger('agent')
+
+const compactedConversationByWork = new Map<string, {
+  sourceMessageCount: number
+  prompt: string
+}>()
+
+function takeStoredCompactedConversation(workId: string | undefined, messageCount: number): { prompt: string; includesCurrent: boolean } | undefined {
+  if (!workId) return undefined
+  const stored = compactedConversationByWork.get(workId)
+  if (!stored) return undefined
+  if (messageCount !== stored.sourceMessageCount && messageCount !== stored.sourceMessageCount + 1) {
+    if (messageCount > stored.sourceMessageCount + 1) compactedConversationByWork.delete(workId)
+    return undefined
+  }
+  compactedConversationByWork.delete(workId)
+  return { prompt: stored.prompt, includesCurrent: messageCount === stored.sourceMessageCount }
+}
+
+export function clearStoredConversationCompaction(workId: string): void {
+  compactedConversationByWork.delete(workId)
+}
 
 const MODEL_AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
@@ -78,14 +129,18 @@ export function buildClaudeNativeShellEnv(
 }
 
 export function buildConfiguredModelEnv(
-  settings: Pick<Settings, 'api_key' | 'base_url'>,
+  settings: Pick<Settings, 'api_key' | 'base_url'> & Partial<Pick<Settings, 'active_provider' | 'custom_auth_type'>>,
   extraEnv?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const env = { ...process.env, ...buildClaudeNativeShellEnv(), ...extraEnv }
   for (const key of MODEL_AUTH_ENV_KEYS) delete env[key]
   delete env.CLAUDE_CODE_GIT_BASH_PATH
   delete env.WEWORKER_BUNDLED_GIT_BASH
-  env.ANTHROPIC_API_KEY = settings.api_key
+  if (usesAnthropicBearerToken(settings.active_provider, settings.custom_auth_type)) {
+    env.ANTHROPIC_AUTH_TOKEN = settings.api_key
+  } else {
+    env.ANTHROPIC_API_KEY = settings.api_key
+  }
   env.CLAUDE_CONFIG_DIR = ensureIsolatedClaudeConfigDir()
   const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
   if (baseUrl !== 'https://api.anthropic.com') {
@@ -96,17 +151,72 @@ export function buildConfiguredModelEnv(
   return env
 }
 
+export function buildDisallowedTools(
+  channelPermissionMode: ChannelPermissionMode,
+  platform: NodeJS.Platform = process.platform,
+  restrictBuiltInTools = false,
+): string[] {
+  const nativeCommandTool = platform === 'win32' ? 'PowerShell' : 'Bash'
+  const alternateCommandTool = platform === 'win32' ? 'Bash' : 'PowerShell'
+  const baseDisallowed = [
+    'Agent',
+    'WebFetch',
+    'Task',
+    'TaskOutput',
+    'CronList',
+    'CronCreate',
+    'CronDelete',
+    'AskUserQuestion',
+    alternateCommandTool,
+  ]
+  const restrictedBuiltInTools = [
+    'Skill',
+    'Read',
+    'Glob',
+    'Grep',
+    'Edit',
+    'Write',
+    'NotebookEdit',
+    'TodoWrite',
+    'WebSearch',
+  ]
+  if (channelPermissionMode === 'qa_only' || restrictBuiltInTools) {
+    return [...baseDisallowed, nativeCommandTool, ...restrictedBuiltInTools]
+  }
+  if (channelPermissionMode === 'no_bash') return [...baseDisallowed, nativeCommandTool]
+  return baseDisallowed
+}
+
+export function ensureAgentWorkingDirectory(directory = getUserDirectory()): string {
+  fs.mkdirSync(directory, { recursive: true })
+  return directory
+}
+
 export interface SSEEvent {
-  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'user_choice' | 'done' | 'error' | 'usage'
+  type: 'text_delta' | 'tool_call_start' | 'tool_call_result' | 'tool_call_image' | 'skill_context' | 'user_choice' | 'done' | 'error' | 'usage' | 'context_snapshot' | 'context_compaction_start' | 'context_compaction_end' | 'memory_status' | 'memory_candidate' | 'memory_parse'
+  skillContext?: LoadedSkillContext
   content?: string
   id?: string
   name?: string
   args?: unknown
   result?: string
+  isError?: boolean
   data?: string
   question?: string
   options?: Array<{ label: string; description?: string }>
   usage?: UsageEvent
+  context?: ContextSnapshot
+  status?: 'running' | 'done' | 'processing' | 'saved' | 'ignored' | 'duplicate' | 'failed' | 'not_applicable'
+  workId?: string
+  eventId?: string
+  error?: string
+  candidate?: MemoryUpdateCandidate
+  memoryParse?: MemoryParseSummary
+  compaction?: Partial<ConversationCompactionSnapshot> & {
+    status?: 'started' | 'completed' | 'skipped' | 'failed'
+    reason?: 'no_droppable_history' | 'summary_unavailable' | 'summary_failed'
+    error?: string
+  }
 }
 
 /** Per-turn token & prompt-cache metrics, emitted once per streamChat turn. */
@@ -120,11 +230,12 @@ export interface UsageEvent {
   total_cost_usd?: number
   duration_ms?: number
   num_turns?: number
+  kind?: 'turn' | 'post_compaction_probe'
 }
 
 export async function generateAssistantStatusLine(
   replyText: string,
-  settings: Pick<Settings, 'api_key' | 'base_url' | 'model'>,
+  settings: Pick<Settings, 'api_key' | 'base_url' | 'model' | 'active_provider' | 'custom_auth_type'>,
 ): Promise<string | null> {
   const trimmedReply = String(replyText ?? '').trim()
   if (!trimmedReply) return null
@@ -144,7 +255,7 @@ export async function generateAssistantStatusLine(
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'x-api-key': settings.api_key,
+        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -177,25 +288,15 @@ export function buildSystemPrompt(opts?: {
   zcfRole?: string | null
   zcfMode?: string | null
   zcfCustomRoles?: import('./zcf-sync.js').ZcfCustomRole[]
+  memoryProtocol?: string
 }): string {
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
   const platform = opts?.platform ?? process.platform
   const nativeCommandTool = platform === 'win32' ? 'PowerShell' : 'Bash'
   const defaultShell = platform === 'win32' ? 'powershell' : 'bash'
   if (channelPermissionMode === 'qa_only') {
-    const base = `你是 WeWorker 问答助手。
-
-当前用户通过即时通讯通道与你对话，且该通道仅有问答权限。
-
-## 权限范围
-
-- 你可以回答知识性问题、解释概念、提供建议和文字总结。
-- 你不能操作网站、调用 webcli、读写文件、创建定时任务或执行任何自动化操作。
-- 不要调用 Skill、Bash、PowerShell 或任何工具；直接用文字回复用户。
-- 若用户请求上述能力，请明确说明需要主人权限，并提示联系管理员在 设置 → 通道 中配置主人 ID。
-
-请用简洁、准确的中文回复。`
-    return composeSystemPromptWithZcf(base, opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
+    const base = renderPrompt('agent-qa-only', {}).trim()
+    return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
   }
 
   const allAdapters = parseAllAdapters()
@@ -220,7 +321,6 @@ ${blacklistEntries.map((entry) => `- ${formatBlacklistEntry(entry)}`).join('\n')
   const webcliInvokeDesc = `Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
   const openBrowserDesc = `使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=<url>\``
   const webcliStep2 = `2. 使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
-  const webcliArgsDesc = '直接使用 `--key=value`；数组和对象可使用 JSON 字面量'
   const openBrowserRule = `用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=...\``
   const bashCapabilityNotice = channelPermissionMode === 'full'
     ? `
@@ -243,7 +343,7 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
 
   const authSites: string[] = []
   for (const [adapterId, adapter] of allAdapters) {
-    if (!getSiteEnabled(adapterId, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(adapterId, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     if (adapter.requiresAuth) {
       const backgroundApiTools = Object.entries(adapter.toolExecution || {})
         .filter(([, execution]) => execution?.type === 'api' && execution?.runtime === 'background')
@@ -260,90 +360,7 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
     }
   }
 
-  const base = `你是 WeWorker，一个通过 Adapter 操作网页的 AI 助手。
-
-## 能力范围
-
-${adapterExecutionEnabled
-    ? '你通过 webcli 命令行工具调用 Extension Adapter 与 Toolkit Adapter，能够在网页上执行操作。'
-    : '当前权限模式允许使用标准 Skill 和受控文件／Shell 工具，但不能执行 Extension Adapter 或 Toolkit Adapter。'}
-当用户提到某个网站时，你应该激活对应的 Skill 来了解该网站支持的工具和操作方式。
-${adapterExecutionEnabled
-    ? `所有网站工具通过${webcliInvokeDesc}调用。
-对于 Skill 中同时标记为 \`Execution: type=api, runtime=background\` 和 \`Execution: mode=direct\` 的工具，它们是无需 DOM 的 API 工具，必须直接调用，不需要先打开对应网站。旧 Skill 如果只标记了 \`Execution: mode=direct\`，也按同样规则处理。
-对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先${openBrowserDesc}打开该网站。`
-    : 'Skill 可用于阅读说明，但不要执行其中的 Adapter 命令。'}
-
-## 使用 webcli call 的规则
-
-当你需要操作某个网站时，按以下步骤进行：
-1. 激活该网站对应的 Skill，查阅其中的工具列表和参数说明。
-${adapterExecutionEnabled ? webcliStep2 : '2. 当前权限模式不能执行 Adapter；需要执行时明确说明需要 full 权限。'}
-3. 使用完整工具名称，例如 \`jd.com.search_products\`。
-4. 参数${webcliArgsDesc}，字段必须匹配 Skill 文档中的参数定义。
-
-对于没有对应 Skill 的网站，你没有操作能力，应明确告知用户当前不支持该网站。
-${bashCapabilityNotice}
-
-## 大结果读取规则
-
-webcli 工具（如 mail.example.com.list_messages 的列表/详情查询）返回过大时，完整结果会整份落盘到用户目录，只回传一个 \`type: "large_output"\` 的**精简指针**（含 \`file\`、\`count\`、一行 \`header\`）——**不含具体条目数据**。这样设计是为了不让超大文本占据上下文、拖慢后续每一个推理回合。
-- 拿到指针后，**不要**从指针本身去读工单内容；指针只告诉你"有几条、是什么类型"。
-- 需要具体内容时，调用 \`webcli_result\` 工具读取对应 \`file\`：\`mode=summary\` 看可读总览、\`page\` 分页、\`pick\` 只取需要的几列、\`item\` 看单条（可含 raw）。
-- **多查询并发场景**：先发起所有查询，中间步只看指针的 \`count\`/\`header\` 决定下一步即可；**到汇总阶段再用 \`webcli_result\` 统一取**需要的字段，避免每步都把大段数据读进上下文被反复重扫。
-- 缓存有有效期；若 \`webcli_result\` 返回 \`type: "cache_expired"\`，请重新调用原 webcli 工具刷新后再读，不要给出陈旧结果。
-- 不要为了取整份大文本而重跑原查询，也不要用 shell（cat/python/jq 等）自行解析落盘文件——直接用 \`webcli_result\`。
-
-## 使用 open_browser 的规则
-
-${adapterExecutionEnabled
-    ? '只有页面/DOM 工具需要先打开网站。`type=api, runtime=background` + `mode=direct` 的 API 工具不要预先打开网站或检测登录；如果这类工具返回需要登录或需要页面上下文，再打开 Skill 文档中的 Homepage URL。'
-    : '本节仅在 full 权限可执行；当前不要打开网站或调用 Adapter。'}
-
-${adapterExecutionEnabled ? `${openBrowserRule} 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。` : '当前权限模式不能调用 open_browser。'}
-原因：网站 adapter 需要时间注入并注册工具，过早调用会导致工具不存在而报错。
-
-URL 必须使用 Skill 文档中的 Homepage URL，不要自行猜测协议。
-很多公司内网站点使用 http 而非 https，使用错误协议会导致无法打开。
-
-## 文件访问范围
-
-Claude Code 原生文件工具、WeWorker Shell 和带路径参数的 MCP 工具只能访问用户目录 \`${userDirectory}\` 及其子目录中的文件。
-严禁读取、写入、列出、搜索、上传、解密或发送该目录之外的任何路径。
-${channelPermissionMode === 'full'
-    ? `此目录边界不适用于 \`full\` 模式的 Claude Code 内置 ${nativeCommandTool}；内置 ${nativeCommandTool} 可以访问其他绝对路径，也不应用用户目录黑名单。`
-    : 'WeWorker Shell 命令（含 cat、type、python 等）与内置文件工具同样受用户目录边界约束，越界请求会被系统拦截。'}
-如果用户请求访问其他位置，应说明需要先把文件导入用户目录（可通过文件面板或聊天附件导入），再在该目录内操作。
-\`CLAUDE_CONFIG_DIR/skills\` 下的技能目录禁止在 WeWorker 会话里直接编辑、删除、重命名或上传。用户如果要新增 skills、补资源、改结构，请一律引导使用左侧自带的 “SKILLS与场景” 功能，或者让用户在技能管理界面手动创建/导入 skill 文件夹。你可以在用户目录中帮用户生成/修改好 skill 草稿，再提供复制或软链安装方案；但不要直接代替用户修改 \`CLAUDE_CONFIG_DIR/skills\` 下的文件。
-如果用户直接提出修改 \`CLAUDE_CONFIG_DIR/skills\` 下文件的请求，第一句就必须拒绝并给出替代方案，不要先查看目录内容、不要先尝试执行写入、不要先向用户确认再继续。
-\`Read\`、\`Glob\`、\`Grep\`、\`Edit\`、\`Write\`、\`NotebookEdit\` 可用于用户目录内的文件读取、搜索和编辑。
-文件读取、搜索、编辑优先使用 Claude Code 内置文件工具：\`Read\`、\`Glob\`、\`Grep\`、\`Edit\`、\`Write\`、\`NotebookEdit\`；只有需要执行真实命令、构建、测试、git、npm 或查看命令输出时，才使用 \`weworker_powershell\`。
-\`list_files\`、\`check_file_encryption\`、\`decrypt_file\`、\`send_file_to_user\`、\`send_image_to_user\` 等工具也仅接受用户目录内的路径。
-${blacklistNotice}
-
-## 本地命令执行规则
-
-${channelPermissionMode === 'full'
-    ? `执行 Extension Adapter 或 Toolkit Adapter 时必须使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 ${nativeCommandTool}。`
-    : '当需要执行本地命令、Shell 命令、构建、测试、git、npm 或查看命令输出时，必须调用 `weworker_powershell` 工具，不要调用 Claude Code 内置 Bash 或 PowerShell。'}
-\`weworker_powershell\` 在当前平台默认使用 \`shell: "${defaultShell}"\`。
-\`xcopy\`、\`copy\`、\`dir\`、\`del\`、\`mklink\` 等 Windows 原生命令，或命令中包含 \`C:\\...\` 这类 Windows 路径时，应使用 \`shell: "powershell"\`，必要时设置 \`outputEncoding: "gbk"\` 读取中文输出，避免 bash 误解释反斜杠和 \`/E\` 等参数。
-\`weworker_powershell\` 默认已在用户目录执行，通常无需先 cd 到用户目录。
-\`weworker_powershell\` 的实时 stdout/stderr 会显示在 WeWorker 终端面板中，用户可以看到执行过程。
-${adapterExecutionEnabled
-    ? '网站操作仍按 webcli 规则执行；不要为了调用网站工具而改用 `weworker_powershell`。'
-    : '当前权限模式不能执行 Adapter；严禁用 `weworker_powershell` 调用 webcli。'}
-
-## 引导用户执行命令
-
-用户也可以在聊天输入框中输入 \`!<命令>\`，通过当前平台默认 Shell（${defaultShell}）直接执行，执行结果会进入当前对话上下文，不会再交给 AI 判断。
-当你需要用户自己执行某条本地命令或 webcli 命令时，请把命令写成以 \`!\` 开头的代码块，例如：
-\`\`\`bash
-!webcli call open_browser --url=http://jd.com
-\`\`\`
-前端会自动为这种 \`!\` 命令显示“复制”和“执行”按钮：用户点击“复制”会复制命令，点击“执行”会直接执行命令，不会再次发送给 AI。
-不要只给普通命令；需要用户执行时必须包含 \`!\` 前缀。
-${process.platform === 'win32' ? `
+  const windowsEncryptionRules = process.platform === 'win32' ? `
 ## 文件加密处理规则
 
 在使用任何文件之前（读取内容、上传附件、发送给用户、作为其他工具参数等），必须先调用 \`check_file_encryption\` 工具检查该文件是否被公司 DLP 加密。
@@ -354,53 +371,8 @@ ${process.platform === 'win32' ? `
 3. 如果是 encrypted，必须先调用 \`decrypt_file\` 对同一路径解密，确认 success: true 后再继续。
 4. 如果未加密，直接继续原定操作。
 5. 如果加密检查失败或解密失败（包含未找到 sd_decrypt.exe），当前环境可能为非 OA 环境；直接按原定操作继续，不要阻塞或等待用户确认；在回复中简要说明已跳过加密检查。
-` : ''}
-
-## 文件读取编码规则
-
-读取文本文件时，默认首选 UTF-8。
-如果内容出现乱码，再按当前系统尝试常见本地编码：Windows 可尝试 gbk、gb18030、cp936、utf-16-le；macOS 可尝试 macintosh、latin1、utf-16-le；Linux 可尝试 latin1、gbk。
-如果仍然乱码，再尝试 big5、shift_jis、euc-kr、utf-16-be、cp1252 等。
-每次换编码都应重新读取并比对内容是否可读，不要混用多种编码结果。
-
-## 用户选择规则
-
-当操作涉及需要用户做出偏好决策的场景（例如支付方式、收货地址、商品规格等），必须调用 \`ask_user\` 工具让用户选择，不要自行决定。
-绝对禁止用纯文本列出选项让用户回复，你必须调用 \`ask_user\` 工具。
-绝对禁止调用内置工具 \`AskUserQuestion\`；该工具不会显示 WeWorker 选择按钮，用户无法正确作答。任何需要用户选择或确认的场景，一律使用 \`ask_user\`。
-调用 \`ask_user\` 时，尽量从前一步工具返回的真实数据中提取选项。
-当任何工具返回结果中包含 \`requires_user_choice: true\` 字段时，你必须立即调用 \`ask_user\` 工具，并将返回结果中的 \`question\` 和 \`options\` 原样传入。
-
-## 当前状态回复规则
-
-你的每一条 assistant 回复末尾都必须包含一行当前状态，格式固定为：\`${ASSISTANT_STATUS_PREFIX}<简短状态>\`。
-要求：
-- 每次回复都要写，不能省略。
-- 状态必须反映此时真实进展，例如：正在执行第 2 步、等待用户选择、已完成当前任务。
-- 即使前面已经写了步骤说明、Todo 列表或工具执行结果总结，最后也要补上这一行。
-- 如果你正在等待用户行动，也必须明确写出等待中的状态。
-
-## Todo List 更新规则
-
-当当前任务需要计划、分步执行、继续未完成计划，或当前对话已存在未完成 Todo List 时，你必须使用内置 \`TodoWrite\` 工具维护进度。
-规则：
-- 创建计划时，调用 \`TodoWrite\` 写入完整 todo 列表。
-- 每次开始、继续、完成、阻塞、修改或删除任何 todo 时，必须再次调用 \`TodoWrite\`，并传入完整最新列表。
-- 不要只用自然语言说“第 N 步完成/开始”，状态变化必须配套调用 \`TodoWrite\`。
-- \`TodoWrite.todos\` 是全量快照，不是增量更新；删除未完成 todo 时，直接从最新列表中移除。
-- todo 状态只能使用 \`pending\`、\`in_progress\`、\`completed\`。
-- 当当前 \`in_progress\` todo 受阻、失败、超时、连续重试失败或需要用户介入时，可保持 \`status: "in_progress"\` 并写入 \`blocked_reason\` 或 \`failure_reason\` 说明原因，前端会显示失败；也可以由你自行调整计划、改回 \`pending\` 或删除未完成项。
-- 仅在自然语言正文中说明“失败/阻塞/超时”不算更新 Todo List；失败必须通过 \`TodoWrite\` 参数中的 \`blocked_reason\` 或 \`failure_reason\` 表达。
-- 已完成 todo 不可修改、删除或回退状态。
-- 未完成 todo 可以修改、删除、新增或调整状态。
-- 当前计划未完成、失败或中止时，不要重开新计划；只能基于原 TodoWrite 列表继续更新。
-- 当前计划全部完成后，后续如用户明确要求新任务，才创建新的 TodoWrite 列表。
-
-## 工具错误处理规则
-
-当某个工具调用返回错误时，最多重试 2 次（即总共调用不超过 3 次）。
-如果同一个工具连续失败且错误信息相同或相似，立即停止重试，向用户说明情况，并调用 \`TodoWrite\` 更新当前计划：可将当前 todo 保持为 \`in_progress\` 并写入 \`blocked_reason\` 或 \`failure_reason\`，也可调整/删除未完成计划。
-${adapterExecutionEnabled && authSites.length > 0 ? `
+` : ''
+  const loginDetectionRules = adapterExecutionEnabled && authSites.length > 0 ? `
 ## 登录检测规则
 
 以下网站需要用户登录后才能操作：
@@ -409,8 +381,43 @@ ${authSites.join('\n')}
 
 对于这些网站，使用 open_browser 打开后（等待 5 秒后），必须先调用该网站的 check_login_status 工具检测登录状态。
 如果返回 \`logged_in: false\`，应立即告知用户需要先在浏览器中登录该网站。
-` : ''}`
-  return composeSystemPromptWithZcf(base, opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
+` : ''
+  const base = `${renderPrompt('agent', {
+    adapter_capability: adapterExecutionEnabled
+      ? '你通过 webcli 命令行工具调用 Extension Adapter 与 Toolkit Adapter，能够在网页上执行操作。'
+      : '当前权限模式允许使用标准 Skill 和受控文件／Shell 工具，但不能执行 Extension Adapter 或 Toolkit Adapter。',
+    adapter_execution_guidance: adapterExecutionEnabled
+      ? `所有网站工具通过${webcliInvokeDesc}调用。
+对于 Skill 中同时标记为 \`Execution: type=api, runtime=background\` 和 \`Execution: mode=direct\` 的工具，它们是无需 DOM 的 API 工具，必须直接调用，不需要先打开对应网站。旧 Skill 如果只标记了 \`Execution: mode=direct\`，也按同样规则处理。
+对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先${openBrowserDesc}打开该网站。`
+      : 'Skill 可用于阅读说明，但不要执行其中的 Adapter 命令。',
+    webcli_execution_step: adapterExecutionEnabled
+      ? webcliStep2
+      : '2. 当前权限模式不能执行 Adapter；需要执行时明确说明需要 full 权限。',
+    native_command_capability: bashCapabilityNotice,
+    open_browser_guidance: adapterExecutionEnabled
+      ? '只有页面/DOM 工具需要先打开网站。`type=api, runtime=background` + `mode=direct` 的 API 工具不要预先打开网站或检测登录；如果这类工具返回需要登录或需要页面上下文，再打开 Skill 文档中的 Homepage URL。'
+      : '本节仅在 full 权限可执行；当前不要打开网站或调用 Adapter。',
+    open_browser_wait_rule: adapterExecutionEnabled
+      ? `${openBrowserRule} 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。`
+      : '当前权限模式不能调用 open_browser。',
+    user_directory: userDirectory,
+    directory_boundary_rule: channelPermissionMode === 'full'
+      ? `此目录边界不适用于 \`full\` 模式的 Claude Code 内置 ${nativeCommandTool}；内置 ${nativeCommandTool} 可以访问其他绝对路径，也不应用用户目录黑名单。`
+      : 'WeWorker Shell 命令（含 cat、type、python 等）与内置文件工具同样受用户目录边界约束，越界请求会被系统拦截。',
+    blacklist_notice: blacklistNotice,
+    local_command_execution_rule: channelPermissionMode === 'full'
+      ? `执行 Extension Adapter 或 Toolkit Adapter 时必须使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 ${nativeCommandTool}。`
+      : '当需要执行本地命令、Shell 命令、构建、测试、git、npm 或查看命令输出时，必须调用 `weworker_powershell` 工具，不要调用 Claude Code 内置 Bash 或 PowerShell。',
+    default_shell: defaultShell,
+    adapter_shell_rule: adapterExecutionEnabled
+      ? '网站操作仍按 webcli 规则执行；不要为了调用网站工具而改用 `weworker_powershell`。'
+      : '当前权限模式不能执行 Adapter；严禁用 `weworker_powershell` 调用 webcli。',
+    windows_encryption_rules: windowsEncryptionRules,
+    assistant_status_prefix: ASSISTANT_STATUS_PREFIX,
+    login_detection_rules: loginDetectionRules,
+  }).trimEnd()}\n`
+  return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
 }
 function findClaudeExecutable(): string | undefined {
   try {
@@ -517,6 +524,128 @@ function getPackagedClaudeSetup(): { pathToClaudeCodeExecutable: string; executa
   return { pathToClaudeCodeExecutable: wrapperPath }
 }
 
+async function summarizeConversationOnly(input: {
+  conversation: string
+  settings: Settings
+  abortController?: AbortController
+  env: NodeJS.ProcessEnv
+  claudeSetup: { pathToClaudeCodeExecutable?: string; executable?: string }
+  spawnClaudeCodeProcess: (spawnArgs: ClaudeSpawnOptions) => SpawnedProcess
+}): Promise<string> {
+  const summaryQuery = query({
+    prompt: input.conversation,
+    options: {
+      abortController: input.abortController,
+      model: input.settings.model,
+      systemPrompt: [
+        '你正在执行 WeWorker 的对话上下文压缩。',
+        '只根据用户与助手的对话内容生成简洁、可继续执行的事实摘要。',
+        '保留用户目标、已经确认的事实、已完成或失败的步骤、重要参数、待处理事项和恢复线索。',
+        '不要加入系统规则、工具定义、Skills、长期记忆或对话之外的推断。',
+        '不要回答用户问题，不要输出标题、解释或元数据，只输出摘要正文。',
+      ].join('\n'),
+      tools: [],
+      settingSources: [],
+      persistSession: false,
+      maxTurns: 1,
+      permissionMode: 'dontAsk',
+      includePartialMessages: false,
+      cwd: getUserDirectory(),
+      pathToClaudeCodeExecutable: input.claudeSetup.pathToClaudeCodeExecutable,
+      spawnClaudeCodeProcess: input.spawnClaudeCodeProcess,
+      env: input.env,
+    },
+  })
+
+  try {
+    let receivedResult = false
+    for await (const message of summaryQuery) {
+      if (message.type !== 'result') continue
+      receivedResult = true
+      const result = message as unknown as { subtype?: string; result?: string; is_error?: boolean; errors?: string[] }
+      const summary = typeof result.result === 'string' ? result.result.trim() : ''
+      if (result.subtype === 'success' && summary) return summary
+      const providerErrors = Array.isArray(result.errors) ? result.errors.filter(Boolean).join('; ') : ''
+      const detail = providerErrors || (result.subtype
+        ? `摘要器返回状态 ${result.subtype}`
+        : '摘要器未返回状态')
+      log.error('conversation compaction summary failed', {
+        detail,
+        is_error: result.is_error === true,
+        subtype: result.subtype,
+        received_result: receivedResult,
+        has_result_text: Boolean(summary),
+      })
+      throw new Error(detail)
+    }
+    const detail = '摘要器未返回成功结果'
+    log.error('conversation compaction summary failed', { detail, received_result: receivedResult })
+    throw new Error(detail)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    if (detail.startsWith('对话压缩摘要失败：')) throw error
+    log.error('conversation compaction summary request failed', detail)
+    throw new Error(`对话压缩摘要失败：${detail}`)
+  } finally {
+    summaryQuery.close()
+  }
+}
+
+async function probeContextUsage(input: {
+  contextAssembly: { sdk: { system_prompt: string; prompt: string } }
+  settings: Settings
+  abortController?: AbortController
+  claudeSetup: { pathToClaudeCodeExecutable?: string }
+  spawnClaudeCodeProcess: (spawnArgs: ClaudeSpawnOptions) => SpawnedProcess
+  env: NodeJS.ProcessEnv
+  mcpServer: McpServerConfig
+  disallowedTools: string[]
+  settingSources: SettingSource[]
+}): Promise<UsageEvent> {
+  const probeQuery = query({
+    prompt: input.contextAssembly.sdk.prompt,
+    options: {
+      abortController: input.abortController,
+      model: input.settings.model,
+      systemPrompt: input.contextAssembly.sdk.system_prompt,
+      mcpServers: { weworker: input.mcpServer },
+      disallowedTools: input.disallowedTools,
+      canUseTool: async () => ({ behavior: 'deny', message: '上下文 token 探针不执行工具' }),
+      permissionMode: 'dontAsk',
+      includePartialMessages: false,
+      settingSources: input.settingSources,
+      persistSession: false,
+      maxTurns: 1,
+      cwd: getUserDirectory(),
+      pathToClaudeCodeExecutable: input.claudeSetup.pathToClaudeCodeExecutable,
+      spawnClaudeCodeProcess: input.spawnClaudeCodeProcess,
+      env: input.env,
+    },
+  })
+
+  try {
+    for await (const message of probeQuery) {
+      if (message.type !== 'result') continue
+      const result = message as unknown as {
+        subtype?: string
+        usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
+        errors?: string[]
+      }
+      if (result.usage && result.subtype === 'success') {
+        return {
+          ...computeUsageMetrics(result.usage),
+          kind: 'post_compaction_probe',
+        }
+      }
+      const detail = (result.errors ?? []).filter(Boolean).join('; ') || `上下文 token 探针返回状态 ${result.subtype ?? 'unknown'}`
+      throw new Error(detail)
+    }
+    throw new Error('上下文 token 探针未返回结果')
+  } finally {
+    probeQuery.close()
+  }
+}
+
 function stringifyPromptValue(value: unknown): string {
   if (value == null || value === '') return ''
   if (typeof value === 'string') return value
@@ -549,6 +678,17 @@ function extractToolResultText(result: unknown): string {
 function contentBlockPromptText(block: Message['content'][number]): string {
   if (block.type === 'text') return block.text
   if (block.type === 'file_attachment') return `[File] ${block.name}: ${block.path}`
+  if (block.type === 'timing') {
+    // 智能路由（fast-path）命中回合的 provenance 投影：fast-path 跳过了 LLM，
+    // 模型只能靠历史 md 认出那份结果；timing 块带 routeTool 时把来源/参数序列化成模型可见
+    // 的一行，追问回合据此可直接引用上文数据、细查时优先复用同 tool。普通耗时块（无
+    // routeTool）对模型无意义，保持空（与旧行为零差异）。
+    if (!block.routeTool) return ''
+    return [
+      `[智能路由结果] tool=${block.routeTool}${block.routeSource ? ` source=${block.routeSource}` : ''}${block.routeArgs ? ` args=${clampPromptText(block.routeArgs, 800)}` : ''}`,
+      '（本条 assistant 消息中的结果是直调 API 得到的确定性查询结果，未经模型加工，数据真实可信；追问可直接引用其中的数据，需要更细内容时优先用同 tool 重查。）',
+    ].join('\n')
+  }
   if (block.type === 'tool_use') {
     const args = block.args && typeof block.args === 'object' ? block.args as Record<string, unknown> : {}
     const command = typeof args.command === 'string' ? args.command : ''
@@ -572,7 +712,7 @@ function messagePromptText(message: Message): string {
 }
 
 // Convert stored messages to a single prompt string for the Agent SDK
-function buildPromptString(messages: Message[]): string {
+export function buildPromptString(messages: Message[]): string {
   if (messages.length === 0) return ''
 
   const lastMsg = messages[messages.length - 1]
@@ -660,7 +800,14 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       const buf = textBlockBuf.pop()
       if (buf?.text) {
         const cleaned = stripBase64Images(buf.text)
-        if (cleaned) yield { type: 'text_delta', content: cleaned }
+        const parsed = parseAssistantMemoryOutput(cleaned)
+        const memoryParse = summarizeAssistantMemoryParse(parsed)
+        log.info('memory_parse', memoryParse)
+        yield { type: 'memory_parse', memoryParse }
+        if (parsed.visibleText) yield { type: 'text_delta', content: parsed.visibleText }
+        if (parsed.decision?.should_remember && parsed.decision.candidate) {
+          yield { type: 'memory_candidate', candidate: parsed.decision.candidate }
+        }
       }
       return
     }
@@ -668,19 +815,42 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     return
   }
 
+  if (msg.type === 'system') {
+    const systemMessage = msg as unknown as {
+      subtype?: string
+      status?: string | null
+      compact_metadata?: { trigger?: 'manual' | 'auto'; pre_tokens?: number }
+    }
+    if (systemMessage.subtype === 'status' && systemMessage.status === 'compacting') {
+      yield { type: 'context_compaction_start', compaction: { status: 'started' } }
+    } else if (systemMessage.subtype === 'compact_boundary') {
+      yield {
+        type: 'context_compaction_end',
+        compaction: {
+          status: 'completed',
+          ...(systemMessage.compact_metadata?.trigger ? { mode: 'conversation_only' } : {}),
+          ...(Number.isFinite(systemMessage.compact_metadata?.pre_tokens)
+            ? { before_tokens: systemMessage.compact_metadata?.pre_tokens }
+            : {}),
+        },
+      }
+    }
+    return
+  }
+
   // User message 鈥?contains tool results (including images)
   if (msg.type === 'user') {
-    const userMsg = (msg as unknown as { message: { content: Array<{ type: string; tool_use_id?: string; content?: unknown }> } }).message
+    const userMsg = (msg as unknown as { message: { content: Array<{ type: string; tool_use_id?: string; content?: unknown; is_error?: boolean }> } }).message
     for (const block of userMsg.content ?? []) {
       if (block.type === 'tool_result') {
         // content may be a string (e.g. Skill tool) or an array of parts
         const content = block.content
         if (typeof content === 'string') {
-          yield { type: 'tool_call_result', id: block.tool_use_id, result: content }
+          yield { type: 'tool_call_result', id: block.tool_use_id, result: content, isError: block.is_error === true }
         } else if (Array.isArray(content)) {
           for (const part of content as Array<{ type: string; text?: string; source?: { data: string; media_type: string }; data?: string }>) {
             if (part.type === 'text' && part.text) {
-              yield { type: 'tool_call_result', id: block.tool_use_id, result: part.text }
+              yield { type: 'tool_call_result', id: block.tool_use_id, result: part.text, isError: block.is_error === true }
             } else if (part.type === 'image') {
               const imgData = part.source?.data ?? part.data
               if (imgData) {
@@ -701,7 +871,14 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       for (const block of assistantMsg.content ?? []) {
         if (block.type === 'text' && block.text) {
           const cleaned = stripBase64Images(block.text)
-          if (cleaned) yield { type: 'text_delta', content: cleaned }
+          const parsed = parseAssistantMemoryOutput(cleaned)
+          const memoryParse = summarizeAssistantMemoryParse(parsed)
+          log.info('memory_parse', memoryParse)
+          yield { type: 'memory_parse', memoryParse }
+          if (parsed.visibleText) yield { type: 'text_delta', content: parsed.visibleText }
+          if (parsed.decision?.should_remember && parsed.decision.candidate) {
+            yield { type: 'memory_candidate', candidate: parsed.decision.candidate }
+          }
         }
         if (block.type === 'tool_use' && block.id) {
           yield { type: 'tool_call_start', id: block.id, name: block.name ?? '', args: block.input ?? {} } as SSEEvent
@@ -728,6 +905,8 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       total_cost_usd?: number
       duration_ms?: number
       num_turns?: number
+      is_error?: boolean
+      errors?: string[]
     }
     if (r.usage) {
       const m = computeUsageMetrics(r.usage)
@@ -743,6 +922,12 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
           num_turns: r.num_turns,
         },
       } as SSEEvent
+    }
+    if (r.is_error === true || r.subtype !== 'success') {
+      yield {
+        type: 'error',
+        content: (r.errors ?? []).filter(Boolean).join('\n') || `Claude Code execution failed (${r.subtype ?? 'unknown'})`,
+      }
     }
     yield { type: 'done' }
   }
@@ -761,6 +946,16 @@ export async function* streamChat(
     channelPermissionMode?: ChannelPermissionMode;
     onAskUser?: (event: { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }) => void;
     channelAskUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>;
+    systemPromptOverride?: string;
+    mcpServerOverride?: ReturnType<typeof _buildMcpServer>;
+    restrictBuiltInTools?: boolean;
+    memoryScope?: MemoryScope;
+    memoryEnabled?: boolean;
+    memoryExpectedType?: import('./memory/memory-types.js').MemoryType;
+    memoryTriggerHint?: import('./memory/memory-types.js').MemoryEventTrigger | 'chat';
+    previousTaskFailed?: boolean;
+    forceCompaction?: boolean;
+    compactionOnly?: boolean;
   } = {},
 ): AsyncGenerator<SSEEvent> {
   // Claude Code discovers user Skills when each query starts. If a website was
@@ -775,6 +970,7 @@ export async function* streamChat(
     askUserSSECallback: opts.onAskUser ?? null,
     channelAskUserHandler: opts.channelAskUserHandler ?? null,
   })
+  const activeMcpServer = opts.mcpServerOverride || mcpServer
   const claudeSetup: { pathToClaudeCodeExecutable?: string; executable?: string; extraEnv?: Record<string, string> } = process.env.WEWORKER_PACKAGED
     ? getPackagedClaudeSetup()
     : { pathToClaudeCodeExecutable: findClaudeExecutable() }
@@ -795,13 +991,6 @@ export async function* streamChat(
     child.on('exit', (code: number) => log.info(' code:', code))
     return child as unknown as SpawnedProcess
   }
-  const systemPrompt = buildSystemPrompt({
-    channelPermissionMode,
-    zcfRole: opts.zcfRole,
-    zcfMode: opts.zcfMode,
-    zcfCustomRoles: settings.zcf_custom_roles,
-  })
-
   let queryEnv: NodeJS.ProcessEnv
   try {
     queryEnv = buildConfiguredModelEnv(settings, claudeSetup.extraEnv)
@@ -815,7 +1004,7 @@ export async function* streamChat(
   // skills so visitors get plain text answers instead of silent tool attempts.
   // Runtime skills are stored under the isolated CLAUDE_CONFIG_DIR/skills,
   // which Claude Code treats as the user skill source.
-  const settingSources: SettingSource[] = channelPermissionMode === 'qa_only' ? [] : ['user', 'project']
+  const settingSources: SettingSource[] = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? [] : ['user', 'project']
   const includePartialMessages = channelPermissionMode === 'qa_only'
     ? false
     : opts.streaming !== false
@@ -837,41 +1026,277 @@ export async function* streamChat(
     ...(process.env.WEWORKER_PACKAGED ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 
-  const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
-  const alternateCommandTool = process.platform === 'win32' ? 'Bash' : 'PowerShell'
-  const baseDisallowed = ['Agent', 'WebFetch', 'Task', 'TaskOutput', 'CronList', 'CronCreate', 'CronDelete', 'AskUserQuestion', alternateCommandTool]
-  const disallowedTools = channelPermissionMode === 'qa_only'
-    ? [...baseDisallowed, nativeCommandTool, 'Skill', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'TodoWrite', 'WebSearch']
-    : channelPermissionMode === 'no_bash'
-      ? [...baseDisallowed, nativeCommandTool]
-      : baseDisallowed
-  const filesystemSettings = buildAgentFilesystemSettings(getUserDirectory(), channelPermissionMode)
+  const disallowedTools = buildDisallowedTools(
+    channelPermissionMode,
+    process.platform,
+    opts.restrictBuiltInTools,
+  )
+  const agentCwd = ensureAgentWorkingDirectory()
+  const filesystemSettings = buildAgentFilesystemSettings(agentCwd, channelPermissionMode)
   const filesystemToolGuard = createUnifiedToolGuard(channelPermissionMode)
   const toolPolicy = createWeWorkerToolPolicy(channelPermissionMode)
   const canUseTool: typeof toolPolicy = async (toolName, input, context) => {
     const policyDecision = await toolPolicy(toolName, input, context)
+    if (!policyDecision) {
+      return { behavior: 'deny', message: `Tool permission was not resolved: ${toolName}`, interrupt: false }
+    }
     if (policyDecision.behavior === 'deny') return policyDecision
     return filesystemToolGuard(toolName, input as Record<string, unknown>)
   }
 
+  const memoryEnabled = opts.memoryEnabled !== false && !opts.restrictBuiltInTools
+  const skillRoots = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? [] : [
+    path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
+    path.join(getUserDirectory(), '.claude', 'skills'),
+  ]
+  if (skillRoots.length) refreshDesktopAdapterSkills(skillRoots[0])
+  const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
+  const skillContextCollector = createSkillContextCollector(skillRoots)
+  log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
+  const storedCompactedConversation = takeStoredCompactedConversation(opts.workId, messages.length)
+  const latestMessage = messages[messages.length - 1]
+  const promptRaw = storedCompactedConversation
+    ? storedCompactedConversation.includesCurrent || !latestMessage
+      ? storedCompactedConversation.prompt
+      : `${storedCompactedConversation.prompt}\n\nUser: ${messagePromptText(latestMessage)}`
+    : buildPromptString(messages)
+  const prompt = promptRaw
+  const memoryQuery = messages.length > 0
+    ? messagePromptText(messages[messages.length - 1]).slice(0, 2_000)
+    : ''
+  const identityPrompt = channelPermissionMode === 'qa_only'
+    ? '你是 WeWorker 问答助手。'
+    : '你是 WeWorker，一个通过 Adapter 操作网页的 AI 助手。'
+  const longTermMemory = memoryEnabled
+    ? recallLongTermMemory({
+      query: memoryQuery,
+      scope: opts.memoryScope ?? { user: 'local' },
+      limit: 8,
+    })
+    : { recalled: '' }
+  const memoryProtocol = memoryEnabled
+    ? buildMemoryOutputProtocolPrompt({
+      scope: opts.memoryScope ?? { user: 'local' },
+      triggerHint: opts.memoryTriggerHint ?? 'chat',
+      expectedMemoryType: opts.memoryExpectedType,
+      previousTaskFailed: opts.previousTaskFailed,
+    })
+    : ''
+  const systemPrompt = opts.systemPromptOverride ?? buildSystemPrompt({
+    channelPermissionMode,
+    zcfRole: opts.zcfRole,
+    zcfMode: opts.zcfMode,
+    zcfCustomRoles: settings.zcf_custom_roles,
+    memoryProtocol,
+  })
+  const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
+  const buildAssembly = (conversationPrompt: string, compaction?: ConversationCompactionSnapshot) => buildContextAssembly({
+    systemPrompt,
+    identityPrompt,
+    prompt: conversationPrompt,
+    toolDefinitions: [
+      `Claude Code 原生 ${nativeCommandTool}`,
+      'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
+    ].join('\n'),
+    skillIndex: channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? '' : buildEnabledSkillIndex(path.join(queryEnv.CLAUDE_CONFIG_DIR || '', 'skills')),
+    loadedSkills,
+    mcpDynamicTools: opts.mcpServerOverride ? '' : getMcpToolDefinitionSummary(channelPermissionMode),
+    subagentDefinitions: '',
+    recalledMemory: longTermMemory.recalled,
+    contextLimit: settings.context_limit,
+    compaction,
+  })
+  const fullContextAssembly = buildAssembly(prompt)
+  const nonConversationTokens = fullContextAssembly.snapshot.categories
+    .filter((item) => item.id !== 'conversation')
+    .reduce((sum, item) => sum + item.estimated_tokens, 0)
+  const conversationTokens = fullContextAssembly.snapshot.categories
+    .find((item) => item.id === 'conversation')?.estimated_tokens ?? 0
+  const compactionPlan = planConversationCompaction({
+    contextLimit: fullContextAssembly.snapshot.context_limit,
+    nonConversationTokens,
+    conversationTokens,
+  })
+  let contextAssembly = fullContextAssembly
+  let compactionEventEmitted = false
+  let compactionCompleted = false
+
+  if ((compactionPlan.shouldCompact || opts.forceCompaction) && messages.length > 1) {
+    const historyMessages = messages.slice(0, -1)
+    const currentMessage = messages[messages.length - 1]
+    const currentTokens = estimateContextTokens(messagePromptText(currentMessage))
+    const recentSelection = takeRecentWithinTokenBudget(
+      historyMessages,
+      Math.max(1, compactionPlan.targetTokens - currentTokens),
+      (message) => estimateContextTokens(messagePromptText(message)),
+    )
+    const compactionBase = {
+      mode: 'conversation_only' as const,
+      before_tokens: conversationTokens,
+      after_tokens: 0,
+      summarized_message_count: recentSelection.dropped.length,
+      retained_message_count: recentSelection.retained.length + 1,
+    }
+    if (recentSelection.dropped.length > 0) {
+      const summarySource = recentSelection.dropped
+        .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${messagePromptText(message)}`)
+        .filter((text) => text.trim())
+        .join('\n\n')
+      compactionEventEmitted = true
+      yield { type: 'context_compaction_start', compaction: { ...compactionBase, status: 'started' } }
+      try {
+        const summary = await summarizeConversationOnly({
+          conversation: summarySource,
+          settings,
+          abortController,
+          env: envWithWebcli,
+          claudeSetup,
+          spawnClaudeCodeProcess,
+        })
+        if (summary) {
+          const recentConversation = buildPromptString([...recentSelection.retained, currentMessage])
+          const compactedConversation = buildCompactedConversationPrompt({
+            summary: clampPromptText(summary, 16_000),
+            recentConversation,
+          })
+          const compactedPrompt = compactedConversation
+          const compaction = {
+            ...compactionBase,
+            after_tokens: estimateContextTokens(compactedPrompt),
+          }
+          contextAssembly = buildAssembly(compactedPrompt, compaction)
+          compactionCompleted = true
+          if (opts.compactionOnly && opts.workId) {
+            compactedConversationByWork.set(opts.workId, {
+              sourceMessageCount: messages.length,
+              prompt: compactedConversation,
+            })
+          }
+          compactionEventEmitted = true
+          yield { type: 'context_compaction_end', compaction: { ...compaction, status: 'completed' } }
+        } else {
+          compactionEventEmitted = true
+          yield { type: 'context_compaction_end', compaction: { ...compactionBase, status: 'failed', reason: 'summary_unavailable', error: '摘要器未返回内容' } }
+        }
+      } catch (error) {
+        if (abortController?.signal.aborted) throw error
+        compactionEventEmitted = true
+        yield {
+          type: 'context_compaction_end',
+          compaction: {
+            ...compactionBase,
+            status: 'failed',
+            reason: 'summary_failed',
+            error: error instanceof Error ? error.message : String(error),
+          },
+        }
+      }
+    } else {
+      compactionEventEmitted = true
+      yield {
+        type: 'context_compaction_end',
+        compaction: {
+          ...compactionBase,
+          after_tokens: conversationTokens,
+          status: 'skipped',
+          reason: 'no_droppable_history',
+        },
+      }
+    }
+  }
+  if (opts.forceCompaction && !compactionEventEmitted) {
+    yield {
+      type: 'context_compaction_end',
+      compaction: {
+        mode: 'conversation_only',
+        before_tokens: conversationTokens,
+        after_tokens: conversationTokens,
+        summarized_message_count: 0,
+        retained_message_count: messages.length,
+        status: 'skipped',
+        reason: 'no_droppable_history',
+      },
+    }
+  }
+  yield { type: 'context_snapshot', context: contextAssembly.snapshot }
+  if (opts.compactionOnly) {
+    if (compactionCompleted) {
+      try {
+        const usage = await probeContextUsage({
+          contextAssembly,
+          settings,
+          abortController,
+          claudeSetup,
+          spawnClaudeCodeProcess,
+          env: envWithWebcli,
+          mcpServer: activeMcpServer,
+          disallowedTools,
+          settingSources,
+        })
+        yield { type: 'usage', usage } as SSEEvent
+      } catch (error) {
+        log.error('post-compaction usage probe failed', error instanceof Error ? error.message : String(error))
+      }
+    }
+    yield { type: 'done' }
+    return
+  }
+  const turnContextCollector = createTurnContextCollector(contextAssembly.snapshot)
+  let memoryUserPromptInjectionCount = 0
+  let memoryPostToolBatchInjectionCount = 0
+  const memoryUserPromptSubmitHook: HookCallback = async (): Promise<HookJSONOutput> => {
+    memoryUserPromptInjectionCount += 1
+    log.info('memory_reminder_injected', {
+      source: 'user_prompt_submit',
+      sequence: memoryUserPromptInjectionCount,
+      present: true,
+    })
+    return {
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: MEMORY_USER_TURN_REMINDER,
+      },
+    }
+  }
+  const memoryPostToolBatchHook: HookCallback = async (): Promise<HookJSONOutput> => {
+    memoryPostToolBatchInjectionCount += 1
+    log.info('memory_reminder_injected', {
+      source: 'post_tool_batch',
+      sequence: memoryPostToolBatchInjectionCount,
+      present: true,
+    })
+    return {
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'PostToolBatch',
+        additionalContext: MEMORY_USER_TURN_REMINDER,
+      },
+    }
+  }
+
   const queryHandle = query({
-    prompt: buildPromptString(messages),
+    prompt: contextAssembly.sdk.prompt,
     options: {
       abortController,
       model: settings.model,
-      systemPrompt,
-      mcpServers: { weworker: mcpServer },
+      systemPrompt: contextAssembly.sdk.system_prompt,
+      mcpServers: { weworker: activeMcpServer },
       disallowedTools,
       canUseTool,
       settings: filesystemSettings,
       // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
       permissionMode: 'default',
       includePartialMessages,
-      cwd: getUserDirectory(),
+      cwd: agentCwd,
       settingSources,
       pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
       spawnClaudeCodeProcess,
       env: envWithWebcli,
+      hooks: memoryEnabled ? {
+        UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }],
+        PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }],
+      } : undefined,
     },
   })
 
@@ -898,16 +1323,61 @@ export async function* streamChat(
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
+    let completed = false
+    let assistantResponseCount = 0
+    let memoryParseCount = 0
+    let sdkUserEventCount = 0
+    let sdkUserReminderObservedCount = 0
     for await (const msg of queryHandle) {
       if (!firstEventReceived) {
         firstEventReceived = true
         log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
       }
+      if (msg.type === 'user') {
+        sdkUserEventCount += 1
+        const serialized = JSON.stringify(msg)
+        const reminderObserved = serialized.includes(MEMORY_USER_TURN_REMINDER)
+        if (reminderObserved) sdkUserReminderObservedCount += 1
+        log.info('memory_reminder_observed', {
+          source: 'sdk_user_event',
+          present: reminderObserved,
+        })
+      }
+      if (msg.type === 'assistant') assistantResponseCount += 1
+      for (const skillContext of skillContextCollector.observe(msg)) {
+        turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
+        log.info('skill_context_captured', { chars: skillContext.text.length })
+        yield { type: 'skill_context', skillContext }
+      }
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
-        yield event
+        if (event.type === 'memory_parse') memoryParseCount += 1
+        if (
+          event.type === 'text_delta'
+          || event.type === 'tool_call_start'
+          || event.type === 'tool_call_result'
+          || event.type === 'usage'
+        ) {
+          turnContextCollector.observe(event)
+        }
+        if (event.type === 'done') {
+          completed = true
+        } else {
+          yield event
+        }
       }
     }
+    if (completed) {
+      for (const event of turnContextCollector.finish()) yield event
+    }
     log.info(` for-await loop completed normally 鈥?total=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+    log.info('memory_context_check', {
+      user_prompt_injections: memoryUserPromptInjectionCount,
+      post_tool_batch_injections: memoryPostToolBatchInjectionCount,
+      assistant_responses: assistantResponseCount,
+      memory_parse_events: memoryParseCount,
+      sdk_user_events: sdkUserEventCount,
+      sdk_user_reminders_observed: sdkUserReminderObservedCount,
+    })
   } catch (e) {
     // Silently ignore abort errors (user cancelled)
     if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('aborted'))) {

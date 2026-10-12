@@ -1,0 +1,618 @@
+{
+  "schema_version": 2,
+  "name": "zhihu.com",
+  "version": "0.1.1",
+  "description": "知乎热榜、搜索、回答、评论和用户内容",
+  "match": [
+    "www.zhihu.com",
+    "zhuanlan.zhihu.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "知乎",
+    "zhihu",
+    "回答",
+    "专栏"
+  ],
+  "commands": [
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎搜索",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results (max 1000; use normal-sized requests)",
+            "default": 10
+          },
+          "type": {
+            "type": "string",
+            "description": "Result type: all, answer, article, or question",
+            "default": "all",
+            "enum": "TYPES"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "recommend",
+      "runtime": "extension",
+      "module": "extension/commands/recommend.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎首页推荐",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Number of items to return (max 1000; use normal-sized requests)",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "question",
+      "runtime": "extension",
+      "module": "extension/commands/question.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎问题详情和回答",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Question ID (numeric)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of answers (max 1000; use normal-sized requests)",
+            "default": 5
+          },
+          "sort": {
+            "type": "string",
+            "description": "Answer order: default or created",
+            "default": "default",
+            "enum": [
+              "default",
+              "created"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "answer-detail",
+      "runtime": "extension",
+      "module": "extension/commands/answer-detail.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎单个回答完整内容（按 answer ID 获取）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Answer ID, full Zhihu answer URL, or typed target (answer:<qid>:<aid>)"
+          },
+          "max-content": {
+            "type": "integer",
+            "description": "Optional cap on stripped content length in characters (0 = no truncation, return the full answer)",
+            "default": 0
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "answer-comments",
+      "runtime": "extension",
+      "module": "extension/commands/answer-comments.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎回答评论列表（保留回复层级）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Answer ID, full Zhihu answer URL, or typed target (answer:<qid>:<aid>)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of top-level comments (max 1000)",
+            "default": 20
+          },
+          "replies-limit": {
+            "type": "integer",
+            "description": "Number of replies to include per top-level comment (max 100)",
+            "default": 3
+          },
+          "order": {
+            "type": "string",
+            "description": "Root comment order",
+            "default": "score",
+            "enum": [
+              "score",
+              "latest"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "collections",
+      "runtime": "extension",
+      "module": "extension/commands/collections.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎收藏夹列表（需要登录）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "每页数量（最大 20）",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "collection",
+      "runtime": "extension",
+      "module": "extension/commands/collection.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎收藏夹内容列表（需要登录）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "收藏夹 ID (数字，可从收藏夹 URL 中获取)"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "起始偏移量（用于分页）",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "description": "每页数量（最大 20）",
+            "default": 20
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "user",
+      "runtime": "extension",
+      "module": "extension/commands/user.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎用户主页资料（粉丝/关注/回答/文章/获赞数）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User url_token or people URL, e.g. wen-jie-16-47"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "user-answers",
+      "runtime": "extension",
+      "module": "extension/commands/user-answers.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎某用户的回答列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User url_token or people URL"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of answers to return (max 1000)",
+            "default": 20
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "user-articles",
+      "runtime": "extension",
+      "module": "extension/commands/user-articles.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎某用户的文章/专栏列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User url_token or people URL"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of articles to return (max 1000)",
+            "default": 20
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "followers",
+      "runtime": "extension",
+      "module": "extension/commands/followers.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎某用户的粉丝列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User url_token or people URL"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of followers to return (max 1000)",
+            "default": 20
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "following",
+      "runtime": "extension",
+      "module": "extension/commands/following.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎某用户关注的人列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User url_token or people URL"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of followees to return (max 1000)",
+            "default": 20
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "pins",
+      "runtime": "extension",
+      "module": "extension/commands/pins.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎某用户的想法（短内容）列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User url_token or people URL"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of pins to return (max 1000)",
+            "default": 20
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hot",
+      "runtime": "extension",
+      "module": "extension/commands/hot.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "知乎热榜",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Number of items to return",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Verify current identity",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Open official login; manual interaction",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "follow",
+      "runtime": "extension",
+      "module": "extension/commands/follow.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Follow a Zhihu user or question",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Zhihu target URL or typed target"
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "Actually perform the write action"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "like",
+      "runtime": "extension",
+      "module": "extension/commands/like.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Like a Zhihu answer or article",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Zhihu target URL or typed target"
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "Actually perform the write action"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "favorite",
+      "runtime": "extension",
+      "module": "extension/commands/favorite.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Favorite a Zhihu answer or article into a specific collection",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Zhihu target URL or typed target"
+          },
+          "collection": {
+            "type": "string",
+            "description": "Collection name"
+          },
+          "collection-id": {
+            "type": "string",
+            "description": "Stable collection id"
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "Actually perform the write action"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "comment",
+      "runtime": "extension",
+      "module": "extension/commands/comment.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Create a top-level comment on a Zhihu answer or article",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Zhihu target URL or typed target"
+          },
+          "text": {
+            "type": "string",
+            "description": "Comment text"
+          },
+          "file": {
+            "type": "string",
+            "description": "Comment text file path"
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "Actually perform the write action"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "answer",
+      "runtime": "extension",
+      "module": "extension/commands/answer.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "Answer a Zhihu question",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Zhihu question URL or typed target"
+          },
+          "text": {
+            "type": "string",
+            "description": "Answer text"
+          },
+          "file": {
+            "type": "string",
+            "description": "Answer text file path"
+          },
+          "execute": {
+            "type": "boolean",
+            "description": "Actually perform the write action"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "download",
+      "runtime": "extension",
+      "module": "extension/commands/download.js",
+      "routeDomain": "www.zhihu.com",
+      "description": "导出知乎专栏文章或回答为 Markdown 格式",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Column article URL, answer ID, typed target, or answer URL"
+          },
+          "output": {
+            "type": "string",
+            "default": "./zhihu-articles",
+            "description": "Output directory"
+          },
+          "download-images": {
+            "type": "boolean",
+            "default": false,
+            "description": "Download images locally"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "runtime_allowed_hosts": [
+    "pic1.zhimg.com",
+    "pic2.zhimg.com",
+    "pic3.zhimg.com",
+    "pic4.zhimg.com",
+    "pica.zhimg.com",
+    "picb.zhimg.com",
+    "picx.zhimg.com",
+    "picy.zhimg.com",
+    "picx1.zhimg.com"
+  ]
+}

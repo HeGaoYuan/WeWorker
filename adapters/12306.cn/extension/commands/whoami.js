@@ -1,0 +1,3 @@
+/* Adapted from jackwener/OpenCLI 24136945847afbfad266c6c46a8cd335377f9112 (Apache-2.0).
+ * Modified for WeWorker v2: page-local APIs, strict arguments and host navigation continuation. */
+(function(){__webcliRegisterCommand('whoami',async()=>{const c=window.__rail12306;if(!c.ready())return c.navigate('https://kyfw.12306.cn/otn/view/index.html');const j=await c.json('/otn/index/initMy12306Api',{method:'POST'});const name=j.data?.user_name||j.data?.userName||j.user_name;if(j.status===false||!name)throw new c.AuthRequiredError('12306','Server did not verify identity');return {logged_in:true,user_name:String(name)};});})();

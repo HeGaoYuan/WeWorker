@@ -641,7 +641,8 @@ export class WecomChannel implements Channel {
     // Per-turn timing (mirrors server.ts / task-executor.ts so 企微 turns are observable)
     const chatStartTime = Date.now()
     let lastStepEndTime = chatStartTime
-    let lastToolStartTime = 0
+    // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
+    const toolStartTimes = new Map<string, number>()
     let llmMsTotal = 0
     let execMsTotal = 0
     let stepIndex = 0
@@ -701,9 +702,12 @@ export class WecomChannel implements Channel {
         zcfRole: zcfPrefs.zcfRole,
         zcfMode: zcfPrefs.zcfMode,
         channelPermissionMode,
+        memoryScope: { user: `wecom:${userId}` },
         channelAskUserHandler: askUserHandler,
       })) {
-        if (event.type === 'text_delta' && event.content) {
+        if (event.type === 'skill_context' && event.skillContext) {
+          assistantContent.push(event.skillContext)
+        } else if (event.type === 'text_delta' && event.content) {
           fullText += event.content
           currentTextChunk += event.content
           // Flush to WeCom periodically to avoid flooding
@@ -725,18 +729,26 @@ export class WecomChannel implements Channel {
           // Dedup + capture think time (streaming emits tool_call_start twice per call)
           const isNew = !seenToolIds.has(event.id)
           let thinkMs: number | undefined
+          let startMs: number | undefined
           if (isNew) {
             seenToolIds.add(event.id)
             stepIndex++
-            lastToolStartTime = Date.now()
-            thinkMs = lastToolStartTime - lastStepEndTime
+            startMs = Date.now()
+            // Charge think only when no tool is outstanding (parallel starts' gaps are
+            // LLM arg streaming covered by each tool's own exec window)
+            thinkMs = toolStartTimes.size === 0 ? startMs - lastStepEndTime : 0
             llmMsTotal += thinkMs
+            toolStartTimes.set(event.id, startMs)
+          } else {
+            // Dedup re-emission: keep the original per-tool start instead of clobbering
+            // it with whatever tool started most recently
+            startMs = toolCallMap.get(event.id)?.startMs
           }
           toolCallMap.set(event.id, {
             name: cleanName,
             args: event.args,
             ...(thinkMs !== undefined ? { thinkMs } : {}),
-            ...(lastToolStartTime ? { startMs: lastToolStartTime } : {}),
+            ...(startMs !== undefined ? { startMs } : {}),
           })
           // Send tool call hint to user
           flushText()
@@ -749,6 +761,7 @@ export class WecomChannel implements Channel {
         } else if (event.type === 'tool_call_result' && event.id) {
           const started = toolCallMap.get(event.id)
           const toolDuration = started?.startMs ? Date.now() - started.startMs : 0
+          toolStartTimes.delete(event.id)
           execMsTotal += toolDuration
           lastStepEndTime = Date.now()
           assistantContent.push({
@@ -757,7 +770,7 @@ export class WecomChannel implements Channel {
             name: started?.name ?? '',
             args: started?.args ?? {},
             result: event.result ?? '',
-            status: 'done',
+            status: event.isError ? 'failed' : 'done',
             execMs: toolDuration,
             ...(started?.thinkMs !== undefined ? { thinkMs: started.thinkMs } : {}),
           })

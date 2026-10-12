@@ -607,6 +607,9 @@ def create_app(
         else RuntimeIdentity.resolve().as_health_fields()
     )
     app.config["WEBWRIGHT_BIND_HOST"] = bind_host
+    app.config["WEWORKER_EXPLORATION_INSTANCE_ID"] = os.environ.get(
+        "WEWORKER_EXPLORATION_INSTANCE_ID", ""
+    )
     app.config["WEBWRIGHT_BIND_PORT"] = bind_port
     configured_user_files_dir = (
         weworker_user_files_dir
@@ -697,6 +700,7 @@ def create_app(
             {
                 "ok": True,
                 **identity,
+                "instance_id": app.config["WEWORKER_EXPLORATION_INSTANCE_ID"],
                 "runtime": "local_browser.local_cdp",
                 "bind": app.config["WEBWRIGHT_BIND_HOST"],
                 "port": str(configured_port if configured_port is not None else request_port or ""),
@@ -1091,12 +1095,10 @@ def create_app(
 
     @app.get("/api/toolkits/<toolkit_id>/tools/<tool_id>/debug-runs")
     def list_debug_runs(toolkit_id: str, tool_id: str):
-        toolkits.get_tool(toolkit_id, tool_id)
-        return jsonify({"debug_runs": debug_runs.list_for_tool(tool_id)})
+        return jsonify({"debug_runs": debug_runs.list_for_tool(tool_id, toolkit_id)})
 
     @app.post("/api/toolkits/<toolkit_id>/tools/<tool_id>/debug-runs")
     def create_debug_run(toolkit_id: str, tool_id: str):
-        toolkits.get_tool(toolkit_id, tool_id)
         payload = _request_json()
         run = manager.start_debug_run(
             toolkit_id=toolkit_id,
@@ -1104,6 +1106,7 @@ def create_app(
             channel=str(payload.get("channel") or "development"),
             parameters=payload.get("parameters") or {},
             timeout_seconds=int(payload.get("timeout_seconds") or 60),
+            expected_distribution_hash=payload.get("expected_distribution_hash"),
         )
         debug_run_id = str(run["debug_run_id"])
         return jsonify(

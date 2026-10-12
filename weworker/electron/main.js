@@ -3,7 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { fileURLToPath } from 'url'
-import { randomBytes } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import {
   BridgeManager,
   NodeManager,
@@ -16,6 +16,7 @@ import { UpdateManager } from './update-manager.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
+const devRendererUrl = process.env.WEWORKER_RENDERER_DEV_URL || process.env.WEWORKER_DEV_SERVER_URL || 'http://localhost:5173'
 
 // ── Load metrics env (~/.webcli/metrics.env) ─────────────────────────────────
 // 从固定路径读取埋点上报配置（KEY=VALUE），注入 process.env。
@@ -153,10 +154,11 @@ if (!hasSingleInstanceLock) {
 }
 const httpAuthToken = randomBytes(32).toString('base64url')
 const webwrightModelToken = randomBytes(32).toString('base64url')
+const explorationInstanceId = randomUUID()
 const webwrightHome = resolveWebwrightHome()
 const userFilesDir = readConfiguredUserFilesDir()
 const bridgeManager = new BridgeManager(log, path.dirname(logFile))
-const pythonManager = new NodeManager(log, logFile, httpAuthToken, webwrightHome, webwrightModelToken)
+const pythonManager = new NodeManager(log, logFile, httpAuthToken, webwrightHome, webwrightModelToken, explorationInstanceId)
 const webwrightManager = new WebwrightManager({
   log,
   isPackaged: app.isPackaged,
@@ -165,6 +167,7 @@ const webwrightManager = new WebwrightManager({
   webwrightHome,
   userFilesDir,
   modelConfigToken: webwrightModelToken,
+  explorationInstanceId,
 })
 let isInstallingUpdate = false
 const updateManager = new UpdateManager({
@@ -201,8 +204,11 @@ async function createWindow() {
   })
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
+    mainWindow.loadURL(devRendererUrl)
+    // UI E2E attaches over CDP; auto DevTools steals the only page handle puppeteer sees.
+    if (!process.env.WEWORKER_E2E) {
+      mainWindow.webContents.openDevTools()
+    }
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'))
   }

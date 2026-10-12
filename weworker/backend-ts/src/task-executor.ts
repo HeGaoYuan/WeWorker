@@ -10,6 +10,15 @@ import type { ScheduledTask, ContentBlock } from './works-store.js'
 import { parseAllAdapters } from './adapter-parser.js'
 import { getSiteEnabled } from './config.js'
 import { ensureAssistantStatusLine } from './assistant-status.js'
+import { createLogger } from './logger.js'
+import { processMemoryEvent } from './memory/memory-lifecycle.js'
+import { buildMemoryEventContext, type MemoryAdapterIdentity } from './memory/memory-event-context.js'
+import { planTaskMemoryEvent } from './memory/memory-event-planner.js'
+import { getMemoryStore } from './memory/memory-store.js'
+import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory/memory-types.js'
+import { redactSensitive } from './http-security.js'
+
+const memoryLog = createLogger('memory')
 
 export interface ExecutionResult {
   workId: string
@@ -43,6 +52,35 @@ async function safeNotify(payload: NotificationPayload, channels: string[]): Pro
   }
 }
 
+function queueTaskMemoryProcessing(input: {
+  executionId: string
+  trigger: MemoryEventTrigger
+  scope: MemoryScope
+  expectedMemoryType?: MemoryType
+  candidate: MemoryUpdateCandidate
+}): void {
+  let store: ReturnType<typeof getMemoryStore>
+  try {
+    store = getMemoryStore()
+  } catch (error) {
+    memoryLog.warn('task memory store unavailable', { executionId: input.executionId, error: redactSensitive(error instanceof Error ? error.message : String(error)) })
+    return
+  }
+  void processMemoryEvent({
+    eventId: `task:${input.executionId}:${input.trigger}`,
+    scope: input.scope,
+    expectedMemoryType: input.expectedMemoryType,
+    store,
+    candidate: input.candidate,
+  }).then((result) => {
+    if (result.status === 'failed') {
+      memoryLog.warn('task memory processing failed', { executionId: input.executionId, error: redactSensitive(result.error) })
+    }
+  }).catch((error) => {
+    memoryLog.warn('task memory processing crashed', { executionId: input.executionId, error: redactSensitive(error instanceof Error ? error.message : String(error)) })
+  })
+}
+
 /**
  * 执行一个定时任务：创建 work、记录执行、调用 AI Agent、更新状态。
  */
@@ -60,6 +98,7 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
   }
 
   // 1. Create a new work for this execution (with scheduled task identifier)
+  const previousExecution = store.listTaskExecutions(task.id)[0]
   const now = new Date()
   const timeStr = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   const workTitle = `[定时] ${task.title} · ${timeStr}`
@@ -67,6 +106,15 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
 
   // 2. Create execution record (pending)
   const execution = store.createTaskExecution(task.id, work.id)
+  const assistantContent: ContentBlock[] = []
+  let memoryAdapters: MemoryAdapterIdentity[] = []
+  let taskMemoryContext = buildMemoryEventContext({
+    baseScope: { user: 'local' },
+    userMessage: task.prompt_template,
+    adapters: [],
+    toolCalls: [],
+  })
+  let memoryCandidate: MemoryUpdateCandidate | undefined
 
   // 3. Append the prompt template as user message
   store.appendMessage(work.id, 'user', [{ type: 'text', text: task.prompt_template }])
@@ -82,16 +130,27 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
     // 6. Build enabled adapter IDs (same pattern as server.ts chat endpoint)
     const allAdapters = parseAllAdapters()
     const enabledAdapterIds = new Set(
-      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled)).map(([id]) => id),
+      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled, a.managed?.enabled)).map(([id]) => id),
     )
+    memoryAdapters = [...allAdapters.values()].map((adapter) => ({
+      id: adapter.id,
+      name: adapter.name,
+      match: adapter.match,
+    }))
+    taskMemoryContext = buildMemoryEventContext({
+      baseScope: { user: 'local' },
+      userMessage: task.prompt_template,
+      adapters: memoryAdapters,
+      toolCalls: [],
+    })
 
     // 7. Call streamChat and iterate to completion (non-streaming, like runChannelChat)
-    const assistantContent: ContentBlock[] = []
     let currentText = ''
     // Per-turn timing (mirrors server.ts /chat handler so scheduled results also show durations)
     const chatStartTime = Date.now()
     let lastStepEndTime = chatStartTime
-    let lastToolStartTime = 0
+    // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
+    const toolStartTimes = new Map<string, number>()
     let llmMsTotal = 0
     let execMsTotal = 0
     let stepIndex = 0
@@ -105,9 +164,17 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
       workId: workWithMessages.id,
       zcfRole: zcfPrefs.zcfRole,
       zcfMode: zcfPrefs.zcfMode,
+      memoryScope: taskMemoryContext.scope,
+      memoryExpectedType: 'task_execution',
+      memoryTriggerHint: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',
+      previousTaskFailed: previousExecution?.status === 'failed',
     })) {
-      if (event.type === 'text_delta' && event.content) {
+      if (event.type === 'skill_context' && event.skillContext) {
+        assistantContent.push(event.skillContext)
+      } else if (event.type === 'text_delta' && event.content) {
         currentText += event.content
+      } else if (event.type === 'memory_candidate' && event.candidate) {
+        memoryCandidate = event.candidate
       } else if (event.type === 'tool_call_start' && event.id) {
         if (currentText) {
           assistantContent.push({ type: 'text', text: currentText })
@@ -118,9 +185,10 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
         if (isNew) {
           seenToolIds.add(event.id)
           stepIndex++
-          lastToolStartTime = Date.now()
-          thinkMs = lastToolStartTime - lastStepEndTime
+          const startTs = Date.now()
+          thinkMs = toolStartTimes.size === 0 ? startTs - lastStepEndTime : 0
           llmMsTotal += thinkMs
+          toolStartTimes.set(event.id, startTs)
         }
         assistantContent.push({
           type: 'tool_use',
@@ -131,7 +199,9 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
           ...(thinkMs !== undefined ? { thinkMs } : {}),
         })
       } else if (event.type === 'tool_call_result' && event.id) {
-        const toolDuration = lastToolStartTime ? Date.now() - lastToolStartTime : 0
+        const startTs = toolStartTimes.get(event.id)
+        const toolDuration = startTs !== undefined ? Date.now() - startTs : 0
+        toolStartTimes.delete(event.id)
         execMsTotal += toolDuration
         lastStepEndTime = Date.now()
         const idx = assistantContent.findIndex(
@@ -141,7 +211,7 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
           assistantContent[idx] = {
             ...(assistantContent[idx] as object),
             result: event.result,
-            status: 'done',
+            status: event.isError ? 'failed' : 'done',
             execMs: toolDuration,
           } as ContentBlock
         }
@@ -150,10 +220,11 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
           b => b.type === 'tool_use' && (b as { id: string }).id === event.id,
         )
         if (idx >= 0) {
+          const currentStatus = (assistantContent[idx] as Extract<ContentBlock, { type: 'tool_use' }>).status
           assistantContent[idx] = {
             ...(assistantContent[idx] as object),
             image: event.data,
-            status: 'done',
+            status: currentStatus === 'failed' ? 'failed' : 'done',
           } as ContentBlock
         }
       } else if (event.type === 'error') {
@@ -207,12 +278,31 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
       .map(b => (b as { text: string }).text)
       .join('')
     const summary = fullText.slice(0, 200) || undefined
-
+    const taskMemoryPlan = planTaskMemoryEvent({
+      executionId: execution.id,
+      trigger: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',
+      baseScope: { user: 'local' },
+      taskPrompt: task.prompt_template,
+      adapters: memoryAdapters,
+      toolCalls: assistantContent
+        .filter((block): block is Extract<ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
+        .map((block) => ({ name: block.name, args: block.args, status: block.status })),
+    })
     // 10. Mark execution as completed
     store.updateTaskExecution(execution.id, {
       status: 'completed',
       completed_at: new Date().toISOString(),
     })
+
+    if (memoryCandidate) {
+      queueTaskMemoryProcessing({
+        executionId: execution.id,
+        trigger: taskMemoryPlan.event.trigger,
+        scope: taskMemoryPlan.event.scope,
+        expectedMemoryType: taskMemoryPlan.event.expectedMemoryType,
+        candidate: memoryCandidate,
+      })
+    }
 
     // 11. Send notification (notifier will be created in task 5.1)
     await safeNotify(
@@ -236,13 +326,36 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err)
-
+    const failedMemoryPlan = planTaskMemoryEvent({
+      executionId: execution.id,
+      trigger: 'task_failed',
+      baseScope: { user: 'local' },
+      taskPrompt: task.prompt_template,
+      adapters: memoryAdapters,
+      toolCalls: assistantContent
+        .filter((block): block is Extract<ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
+        .map((block) => ({ name: block.name, args: block.args, status: block.status })),
+    })
     // Mark execution as failed
     store.updateTaskExecution(execution.id, {
       status: 'failed',
       error_message: errorMessage,
       completed_at: new Date().toISOString(),
     })
+
+    try {
+      if (memoryCandidate) {
+        queueTaskMemoryProcessing({
+          executionId: execution.id,
+          trigger: 'task_failed',
+          scope: failedMemoryPlan.event.scope,
+          expectedMemoryType: failedMemoryPlan.event.expectedMemoryType,
+          candidate: memoryCandidate,
+        })
+      }
+    } catch {
+      // A missing model configuration must not change the task failure result.
+    }
 
     // Send failure notification
     await safeNotify(

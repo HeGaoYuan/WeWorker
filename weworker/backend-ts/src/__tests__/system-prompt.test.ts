@@ -164,7 +164,7 @@ describe('System Prompt - Skill activation instructions (Req 4.2)', () => {
     enabledSites.clear()
   })
 
-  it('instructs to activate the relevant Skill when a user mentions a website', async () => {
+  it('reuses available Skill instructions and only reloads missing or invalid instructions', async () => {
     const jdAdapter = makeAdapter()
     mockAdapterMap.set(jdAdapter.id, jdAdapter)
     enabledSites.add(jdAdapter.id)
@@ -175,7 +175,10 @@ describe('System Prompt - Skill activation instructions (Req 4.2)', () => {
     // Should mention activating Skills
     expect(prompt).toContain('Skill')
     // Should instruct to use Skill documentation for tool names/args
-    expect(prompt.toLowerCase()).toMatch(/skill/i)
+    expect(prompt).toContain('优先使用当前上下文已有的 Skill 说明和工具参数')
+    expect(prompt).toContain('相关说明缺失、不完整或已失效时，再激活对应 Skill')
+    expect(prompt).toContain('不要为寻找同一缺失信息重复读取同一版本的说明')
+    expect(prompt).not.toContain('当用户提到某个网站时，你应该激活对应的 Skill')
   })
 
   it('instructs to use tool names and args from Skill documentation', async () => {
@@ -462,7 +465,7 @@ describe('System Prompt - channel permission modes', () => {
     expect(prompt).not.toMatch(/璇峰嬁灏濊瘯鎵撳紑娴忚鍣ㄦ垨鎿嶄綔缃戠珯/)
   })
 
-  it('full prompt runs both Adapter types through native Bash and webcli', async () => {
+  it('full prompt runs both Adapter types through the native shell and webcli', async () => {
     const jdAdapter = makeAdapter()
     mockAdapterMap.set(jdAdapter.id, jdAdapter)
     enabledSites.add(jdAdapter.id)
@@ -471,15 +474,16 @@ describe('System Prompt - channel permission modes', () => {
     const prompt = buildSystemPrompt()
 
     expect(prompt).not.toContain('webcli_call')
-    expect(prompt).toContain('Claude Code 内置 Bash 已开放')
+    const nativeShell = process.platform === 'win32' ? 'PowerShell' : 'Bash'
+    expect(prompt).toContain(`Claude Code 内置 ${nativeShell} 已开放`)
     expect(prompt).toContain('不受 WeWorker 用户目录白名单、黑名单、绝对路径或命令类型限制')
     expect(prompt).toContain('webcli call <完整工具名> --参数名=参数值')
     expect(prompt).toContain('Extension Adapter 或 Toolkit Adapter')
     expect(prompt).toContain('Chrome 扩展 Bridge 或内嵌 Toolkit Runtime')
     expect(prompt).toContain('WeWorker Shell')
-    expect(prompt).toContain('必须使用 Claude Code 内置 Bash')
+    expect(prompt).toContain(`必须使用 Claude Code 内置 ${nativeShell}`)
     expect(prompt).toContain('不得使用 `weworker_powershell`')
-    expect(prompt).not.toContain('不要调用 Claude Code 内置 Bash')
+    expect(prompt).not.toContain(`不要调用 Claude Code 内置 ${nativeShell}`)
   })
 
   it('uses native PowerShell throughout the Windows full prompt', async () => {

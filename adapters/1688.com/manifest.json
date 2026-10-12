@@ -1,0 +1,176 @@
+{
+  "schema_version": 2,
+  "name": "1688.com",
+  "version": "0.1.0",
+  "description": "1688 批发：OpenCLI 对齐能力",
+  "homepage_url": "https://www.1688.com/",
+  "match": [
+    "1688.com",
+    "www.1688.com",
+    "login.1688.com",
+    "login.taobao.com",
+    "account.1688.com",
+    "s.1688.com",
+    "detail.1688.com",
+    "detail.m.1688.com",
+    "winport.m.1688.com",
+    "*.1688.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "1688",
+    "1688 批发"
+  ],
+  "runtime_allowed_hosts": [
+    "1688.com",
+    "www.1688.com",
+    "login.1688.com",
+    "login.taobao.com",
+    "account.1688.com",
+    "s.1688.com",
+    "detail.1688.com",
+    "detail.m.1688.com",
+    "winport.m.1688.com"
+  ],
+  "commands": [
+    {
+      "id": "assets",
+      "runtime": "extension",
+      "module": "extension/commands/assets.js",
+      "routeDomain": "www.1688.com",
+      "description": "列出 1688 商品页可提取的图片/视频素材",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "1688 商品 URL 或 offer ID（如 887904326744）"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "1688.com",
+      "description": "Show the current logged-in 1688 account",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "1688.com",
+      "description": "Open the 1688 login page; finish signing in on the page, then verify with whoami",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "download",
+      "runtime": "extension",
+      "module": "extension/commands/download.js",
+      "routeDomain": "www.1688.com",
+      "description": "列出 1688 商品页可提取的图片和视频素材（URL 与文件名，不落盘）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "1688 商品 URL 或 offer ID（如 887904326744）"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "item",
+      "runtime": "extension",
+      "module": "extension/commands/item.js",
+      "routeDomain": "www.1688.com",
+      "description": "1688 商品详情（公开商品字段、价格阶梯、卖家基础信息）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "1688 商品 URL 或 offer ID（如 887904326744）"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.1688.com",
+      "description": "1688 商品搜索（结果候选、卖家链接、价格/MOQ/销量文本）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词，如 \"置物架\""
+          },
+          "limit": {
+            "type": "integer",
+            "description": "结果数量上限（默认 20，最大 100）",
+            "default": 20
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "store",
+      "runtime": "extension",
+      "module": "extension/commands/store.js",
+      "routeDomain": "www.1688.com",
+      "description": "1688 店铺/供应商公开信息（联系方式、主营、入驻年限、公开服务信号）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "1688 店铺 URL 或 member ID（如 b2b-22154705262941f196）"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

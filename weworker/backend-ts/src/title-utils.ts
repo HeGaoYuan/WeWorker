@@ -6,8 +6,11 @@ import type { Settings } from './config.js'
 import { createLogger } from './logger.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls } from './provider-registry.js'
+import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
+import { loadPrompt, renderPrompt } from './prompt-loader.js'
 
 const log = createLogger('title')
+const TITLE_USER_PROMPT_SEPARATOR = '\n<!-- title-user-prompt -->\n'
 
 /** Generate a concise title from the user's first message (text truncation). */
 export function generateTitle(message: string): string {
@@ -21,6 +24,21 @@ export function generateTitle(message: string): string {
   return text.slice(0, 30) + (text.length > 30 ? '…' : '')
 }
 
+export function buildTitlePrompts(message: string): { system: string; user: string } {
+  const template = loadPrompt('title')
+  const templateSeparatorIndex = template.indexOf(TITLE_USER_PROMPT_SEPARATOR)
+  if (templateSeparatorIndex < 0 || template.indexOf(TITLE_USER_PROMPT_SEPARATOR, templateSeparatorIndex + 1) >= 0) {
+    throw new Error('Invalid title prompt sections')
+  }
+  const rendered = renderPrompt('title', { user_message: message.slice(0, 200) })
+  const prompt = rendered.endsWith('\n') ? rendered.slice(0, -1) : rendered
+  const separatorIndex = prompt.indexOf(TITLE_USER_PROMPT_SEPARATOR)
+  return {
+    system: prompt.slice(0, separatorIndex),
+    user: prompt.slice(separatorIndex + TITLE_USER_PROMPT_SEPARATOR.length),
+  }
+}
+
 /**
  * Call the configured LLM provider to generate a concise conversation title.
  * Returns null on failure (caller should keep the fallback title).
@@ -28,22 +46,23 @@ export function generateTitle(message: string): string {
 export async function generateTitleWithLLM(message: string, settings: Settings): Promise<string | null> {
   if (!settings.api_key) return null
   try {
+    const prompts = buildTitlePrompts(message)
     const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
     const endpoint = `${baseUrl}/v1/messages`
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'x-api-key': settings.api_key,
+        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
         model: settings.model,
         max_tokens: 30,
-        system: '你是一个标题生成器。你的唯一任务是为用户消息生成简短标题。不要回答、评价或拒绝用户的请求，不要判断请求是否合理，只需概括消息意图生成标题。',
+        system: prompts.system,
         messages: [{
           role: 'user',
-          content: `请用不超过15个字概括以下用户消息的核心意图，直接输出标题，不要加引号或标点：\n\n${message.slice(0, 200)}`,
+          content: prompts.user,
         }],
       }),
       signal: AbortSignal.timeout(20000),

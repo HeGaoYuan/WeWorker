@@ -1,0 +1,3 @@
+/* Adapted from jackwener/OpenCLI 24136945847afbfad266c6c46a8cd335377f9112, Apache-2.0.
+ * Modified for WeWorker v2 registration, direct page extraction and bounded host navigation. */
+(function(){__webcliRegisterCommand('whoami',async()=>{const c=window.__zhihu;if(!c.ready('https://www.zhihu.com/'))return c.navigate('https://www.zhihu.com/');const r=await c.safeFetch('https://www.zhihu.com/api/v4/me?include=url_token,name');if(!r.ok)throw new c.AuthRequiredError('zhihu','Server rejected identity query');const j=await r.json();if(!j.id||!j.url_token)throw new c.AuthRequiredError('zhihu','No verified identity');return {logged_in:true,id:String(j.id),url_token:j.url_token,name:j.name??null};});})();

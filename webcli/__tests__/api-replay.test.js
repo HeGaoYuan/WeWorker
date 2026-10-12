@@ -137,6 +137,27 @@ describe('api replay request', () => {
     expect(observed.headers['content-type']).toBe('application/json')
   })
 
+  it('does not follow redirects in curl fallback when manual handling is requested', async () => {
+    const visited = []
+    const server = http.createServer((req, res) => {
+      visited.push(req.url)
+      if (req.url === '/start') {
+        res.writeHead(302, { Location: '/target' })
+        res.end()
+      } else {
+        res.end('unexpected')
+      }
+    })
+    const port = await listen(server)
+    const result = await performApiReplayRequest(
+      { url: `http://127.0.0.1:${port}/start`, redirect: 'manual' },
+      { fetchImpl: async () => { throw new Error('fixture fetch failure') } },
+    )
+    expect(result.ok).toBe(true)
+    expect(result.response.status).toBe(302)
+    expect(visited).toEqual(['/start'])
+  })
+
   it('keeps Windows Schannel revocation checks from breaking curl fallback', () => {
     const bridgeSource = fs.readFileSync(new URL('../bridge.js', import.meta.url), 'utf8')
 

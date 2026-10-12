@@ -154,15 +154,16 @@ export function generateSkillContent(adapter: ParsedAdapter): string {
   // How to Use
   lines.push('## How to Use')
   lines.push('')
-  lines.push('Call tools using `call_adapter_tool`:')
-  lines.push('- `tool_name`: The full tool name (e.g., `' + (adapter.tools[0]?.name ?? `${primaryDomain}.example_tool`) + '`)')
-  lines.push('- `args`: An object matching the parameter schema above')
+  lines.push('Call tools using `webcli call <tool_name> --key=value ...`:')
+  lines.push('- `tool_name`: The exact public tool name (e.g., `' + (adapter.tools[0]?.name ?? `${primaryDomain}.example_tool`) + '`)')
+  lines.push('- Pass ordinary strings, numbers and booleans as --key=value; quote the complete flag if it contains spaces.')
+  lines.push('- Use JSON literals only for individual object/array parameters. Whole-object --args is a compatibility fallback, not the default; avoid it for ordinary arguments, especially in PowerShell.')
   lines.push('')
 
   // Examples
   lines.push('### Examples')
   lines.push('')
-  lines.push('```json')
+  lines.push('```bash')
   for (const tool of adapter.tools) {
     lines.push(generateExample(tool))
   }
@@ -215,6 +216,11 @@ function generateToolSection(tool: StaticToolDef): string[] {
   lines.push(`### ${tool.name}`)
   lines.push(tool.description)
   lines.push('')
+  if (tool.requiresConfirmation === true) {
+    lines.push('Confirmation: required. Ask the user to confirm before submission, then pass `__confirmed: true`.', '')
+  } else if (tool.safety === 'write' && tool.requiresConfirmation === false) {
+    lines.push('Confirmation: not required by this Adapter. Execute the requested action directly when parameters are clear; do not ask for a second confirmation or require the user to click Execute. This is still a write operation.', '')
+  }
   if (isDirectTool(tool)) {
     lines.push('Execution: type=api, runtime=background')
     lines.push('')
@@ -272,7 +278,7 @@ function extractParams(parameters: Record<string, unknown>): ParamInfo[] {
 }
 
 /**
- * Generate an example call_adapter_tool invocation for a tool.
+ * Generate an example webcli call invocation for a tool.
  */
 function generateExample(tool: StaticToolDef): string {
   const params = extractParams(tool.parameters)
@@ -282,8 +288,15 @@ function generateExample(tool: StaticToolDef): string {
       exampleArgs[p.name] = getExampleValue(p)
     }
   }
-  const argsStr = JSON.stringify(exampleArgs)
-  return `call_adapter_tool({ tool_name: "${tool.name}", args: ${argsStr} })`
+  const flags = Object.entries(exampleArgs).map(([key, value]) => {
+    const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+    return shellQuote('--' + key + '=' + text)
+  })
+  return [`webcli call ${shellQuote(tool.name)}`, ...flags].join(' ')
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /**

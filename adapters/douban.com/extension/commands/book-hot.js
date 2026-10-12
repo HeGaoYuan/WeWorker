@@ -1,0 +1,4 @@
+/* Adapted from jackwener/OpenCLI 24136945847afbfad266c6c46a8cd335377f9112, Apache-2.0.
+ * Modified for WeWorker v2 registration, direct page extraction and bounded host navigation. */
+(function(){const {CliError,ArgumentError,CommandExecutionError,AuthRequiredError,EmptyResultError,integer,navigate,same,guard,bool,loadDocument,getSelfUid,normalizeDoubanSubjectId,loadDoubanSubjectDetail,loadDoubanSubjectPhotos,loadDoubanBookHot,loadDoubanMovieHot,searchDouban}=window.__douban;
+const run=async (args={}) => loadDoubanBookHot(Number(args.limit) || 20);__webcliRegisterCommand("book-hot",async(params={})=>{const values={...{"limit":20},...params};values.limit=integer(values.limit,20,50);const target='https://book.douban.com/chart';if(!same(target))return navigate(target);guard();const result=await run(values);if(Array.isArray(result)&&!result.length)throw new CommandExecutionError("No data extracted; empty result versus page failure is unknown");return result;});})();

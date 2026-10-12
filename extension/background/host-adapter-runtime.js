@@ -1,0 +1,100 @@
+/** Serialize page replacement and calls so an update cannot replace a running command's globals. */
+export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
+  const queues = new Map();
+  const stamps = new Map();
+  const documents = new Map();
+  return {
+    invalidate(tabId) {
+      stamps.delete(tabId);
+      documents.set(tabId, (documents.get(tabId) || 0) + 1);
+    },
+    execute(tabId, manifest, url, operation = null, command = null) {
+      const deadline = now() + timeoutMs;
+      const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(async () => {
+        const policy = command && manifest.commands?.find(entry => entry.id === command.id);
+        let currentUrl = url;
+        for (let step = 0; ; step++) {
+          if (now() >= deadline) throw new Error('Adapter page execution timed out.');
+          for (let attempt = 0; ; attempt++) {
+            if (ready) currentUrl = await ready(tabId, manifest, Math.min(25000, deadline - now()));
+            if (now() >= deadline) throw new Error('Adapter page execution timed out.');
+            const stamp = JSON.stringify([manifest.name, manifest._hostSnapshot, currentUrl]);
+            const sources = await bundle(manifest);
+            if (stamps.get(tabId) === stamp) break;
+            const document = documents.get(tabId) || 0;
+            try {
+              await prepare(tabId);
+              await clear(tabId, manifest.name);
+              stamps.delete(tabId);
+              await inject(tabId, manifest, currentUrl, sources);
+              if ((documents.get(tabId) || 0) !== document) throw new Error('Adapter document changed during injection.');
+              stamps.set(tabId, stamp);
+              break;
+            } catch (error) {
+              stamps.delete(tabId);
+              // Registration has not invoked the business handler yet. Only
+              // recover document changes; never replay an operation exception.
+              const changed = (documents.get(tabId) || 0) !== document || /Adapter (document|target) changed/.test(error.message);
+              if (!ready || !changed || attempt >= 2) throw error;
+            }
+          }
+          if (now() >= deadline) throw new Error('Adapter page execution timed out.');
+          const result = operation ? await operation(Math.max(1, deadline - now())) : undefined;
+          const next = result?.__webcli_navigation;
+          if (!next) return result;
+          if (!policy || !navigate || next.version !== 1 || typeof next.resume !== 'boolean') throw new Error('Invalid Adapter navigation continuation.');
+          // Never replay writes, regardless of confirmation policy. A write may
+          // request terminal navigation only; errors and timeouts are never replayed.
+          if (next.resume && policy.safety !== 'read') throw new Error('Write commands cannot be replayed after navigation.');
+          if (step >= maxNavigations) throw new Error('Adapter navigation limit exceeded.');
+          const target = assertAdapterNavigationUrl(manifest, next.url, next.resume);
+          if (now() >= deadline) throw new Error('Adapter page execution timed out.');
+          stamps.delete(tabId);
+          currentUrl = await navigate(tabId, target, manifest, next.resume, Math.min(25000, deadline - now()));
+          assertAdapterNavigationUrl(manifest, currentUrl, next.resume);
+          if (now() >= deadline) throw new Error('Adapter page execution timed out.');
+          if (!next.resume) return next.result ?? { status: 'navigation_complete', url: currentUrl };
+        }
+      });
+      queues.set(tabId, task);
+      void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
+      return task;
+    },
+  };
+}
+
+/** Navigation is limited to declared page hosts; helper hosts allow terminal navigation only. */
+export function assertAdapterNavigationUrl(manifest, value, resume = true) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('Invalid Adapter navigation URL.'); }
+  const hosts = [...(manifest.match || []), ...(resume ? [] : (manifest.runtime_allowed_hosts || []))];
+  const allowed = hosts.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))));
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !allowed) {
+    throw new Error('Adapter navigation host is not allowed.');
+  }
+  return url.href;
+}
+
+/** Observe load events before initiating navigation, including same-URL reloads. */
+export async function navigateAdapterTab(api, tabId, url, manifest, resume, timeoutMs) {
+  assertAdapterNavigationUrl(manifest, url, resume);
+  let complete = false;
+  const listener = (id, change) => { if (id === tabId && change.status === 'complete') complete = true; };
+  api.tabs.onUpdated.addListener(listener);
+  const deadline = Date.now() + timeoutMs;
+  try {
+    const current = await api.tabs.get(tabId);
+    const reload = current.url === url;
+    if (reload) await api.tabs.reload(tabId);
+    else await api.tabs.update(tabId, { url });
+    while (Date.now() < deadline) {
+      const tab = await api.tabs.get(tabId);
+      if (!tab) throw new Error('Adapter tab was closed.');
+      if (tab.status === 'complete' && (complete || (!reload && tab.url === url))) {
+        return assertAdapterNavigationUrl(manifest, tab.url, resume);
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error('Adapter page navigation timed out.');
+  } finally { api.tabs.onUpdated.removeListener(listener); }
+}

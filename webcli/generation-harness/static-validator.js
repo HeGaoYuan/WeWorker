@@ -1,6 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { resolveAdapterDraftFile } from './draft-revision.js';
+import { isPackageDraft, generationEvidenceDir } from './package-inspection.js';
+import { validatePackageDraft } from './package-static-validator.js';
+
+function registeredToolNames(adapterDir, manifest) {
+  // Registration only: no handlers, timers, network or Node globals exposed.
+  const context = vm.createContext({}, { codeGeneration: { strings: false, wasm: false }, microtaskMode: 'afterEvaluate' });
+  vm.runInContext(`var window = { __registrations: [] };
+    window.__webmcpRegister = function(adapter) {
+      window.__registrations.push(...(adapter.tools || []).map(tool => tool.name));
+    };`, context, { timeout: 1000 });
+  for (const relativePath of [...new Set([...(manifest.support_files || []), 'index.js'])]) {
+    const { filePath } = resolveAdapterDraftFile(adapterDir, relativePath);
+    new vm.Script(fs.readFileSync(filePath, 'utf8')).runInContext(context, { timeout: 1000 });
+  }
+  return JSON.parse(vm.runInContext('JSON.stringify(window.__registrations)', context, { timeout: 1000 }));
+}
 
 function result(code, message, extra = {}) {
   return { code, message, severity: 'error', ...extra };
@@ -23,11 +40,25 @@ function walkFiles(rootDir) {
 }
 
 export function validateAdapterDraft({ adapterDir, expectedSiteKey = '', expectedToolNames = [] }) {
+  try {
+    if (isPackageDraft(adapterDir)) return validatePackageDraft({ adapterDir, expectedSiteKey, expectedToolNames });
+  } catch { /* Legacy validator reports malformed or missing manifests below. */ }
+  if (fs.existsSync(path.join(generationEvidenceDir(adapterDir), 'source.json'))) {
+    return { passed: false, validator: 'adapter_static_validator_v2', errors: [result('PACKAGE_FORMAT_CHANGED', 'A generated v2 draft cannot switch to the historical package format.')], warnings: [], checkedFiles: 0 };
+  }
   const errors = [];
   const warnings = [];
   const absoluteAdapterDir = path.resolve(adapterDir);
   const manifestPath = path.join(absoluteAdapterDir, 'manifest.json');
   const indexPath = path.join(absoluteAdapterDir, 'index.js');
+  let policySupportFiles = new Set();
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const policyManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      policySupportFiles = new Set((Array.isArray(policyManifest.support_files) ? policyManifest.support_files : [])
+        .map((item) => String(item || '').replace(/\\/g, '/')));
+    } catch {}
+  }
 
   if (!fs.existsSync(indexPath)) {
     errors.push(result('MISSING_ADAPTER_INDEX', 'adapter draft is missing index.js', { file: indexPath }));
@@ -37,13 +68,40 @@ export function validateAdapterDraft({ adapterDir, expectedSiteKey = '', expecte
   }
 
   for (const jsPath of walkFiles(absoluteAdapterDir).filter((filePath) => filePath.endsWith('.js'))) {
+    const source = fs.readFileSync(jsPath, 'utf8');
     try {
-      new vm.Script(fs.readFileSync(jsPath, 'utf8'), { filename: jsPath });
+      new vm.Script(source, { filename: jsPath });
     } catch (error) {
       errors.push(result('INVALID_JAVASCRIPT', error.message, {
         file: jsPath,
         line: Number(error.lineNumber || 0) || undefined,
       }));
+    }
+    const relativeJsPath = path.relative(absoluteAdapterDir, jsPath).replace(/\\/g, '/');
+    const isGeneratedTool = policySupportFiles.has(relativeJsPath)
+      && /webcli-generated[\\/]tools[\\/].+\.generated\.js$/i.test(jsPath);
+    if (!isGeneratedTool) continue;
+    const declaresWrite = /\baccess\s*:\s*['"]write['"]/.test(source);
+    const hasConfirmationMetadata = /x-webcli-requires-confirmation/.test(source);
+    if (hasConfirmationMetadata && !declaresWrite) {
+      errors.push(result('MISSING_WRITE_ACCESS', 'side-effecting generated tool must declare access: write', { file: jsPath }));
+    }
+    if (/\[truncated\]/i.test(source) || /\brequestBodyPreview\b/.test(source)) {
+      errors.push(result('RAW_CAPTURED_BODY_IN_GENERATED_TOOL', 'generated tool contains raw or truncated request-body evidence', { file: jsPath }));
+    }
+    if (/\bdefaultPayload\b/.test(source)) {
+      errors.push(result('CAPTURED_WRITE_DEFAULT_PAYLOAD', 'generated tool must not contain a captured defaultPayload', { file: jsPath }));
+    }
+    if (declaresWrite) {
+      if (/AGENT_AUTHORED_WRITE_REQUIRED|x-webcli-agent-authored['"]?\s*:\s*false/.test(source)) {
+        errors.push(result('WRITE_AGENT_AUTHORING_REQUIRED', 'write skeleton must be replaced by an agent-authored semantic implementation', { file: jsPath }));
+      }
+      if (!/\b__confirmed\b/.test(source) || !hasConfirmationMetadata) {
+        errors.push(result('MISSING_WRITE_CONFIRMATION', 'write tool must enforce confirmation and expose confirmation metadata', { file: jsPath }));
+      }
+      if (!/\bwriteVerification\s*:/.test(source)) {
+        errors.push(result('MISSING_WRITE_VERIFICATION', 'write tool must include a focused writeVerification fixture', { file: jsPath }));
+      }
     }
   }
 
@@ -89,6 +147,23 @@ export function validateAdapterDraft({ adapterDir, expectedSiteKey = '', expecte
   for (const toolName of uniqueToolNames) {
     if (expectedSiteKey && !toolName.startsWith(`${expectedSiteKey}.`)) {
       errors.push(result('INVALID_TOOL_NAMESPACE', `tool must use ${expectedSiteKey} namespace: ${toolName}`));
+    }
+  }
+  if (toolNames.length && manifest && errors.length === 0) {
+    try {
+      const actual = registeredToolNames(absoluteAdapterDir, manifest);
+      for (const name of uniqueToolNames) {
+        if (!actual.includes(name)) errors.push(result('MISSING_PLANNED_TOOL', `planned tool is not registered: ${name}`));
+      }
+      for (const name of new Set(actual)) {
+        // Scaffold always includes this explicit infrastructure helper.
+        if (!uniqueToolNames.has(name) && name !== `${expectedSiteKey}.check_login_status`) {
+          errors.push(result('UNPLANNED_TOOL', `unplanned tool is registered: ${name}`));
+        }
+      }
+      if (new Set(actual).size !== actual.length) errors.push(result('DUPLICATE_REGISTERED_TOOL', 'registered tool names must be unique'));
+    } catch (cause) {
+      errors.push(result('TOOL_REGISTRATION_FAILED', `draft registration failed: ${cause.message}`));
     }
   }
   if (toolNames.length === 0) warnings.push({

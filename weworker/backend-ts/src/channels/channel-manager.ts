@@ -4,6 +4,7 @@ import * as store from '../works-store.js'
 import { generateAssistantStatusLine, streamChat } from '../agent.js'
 import { ensureAssistantStatusLine } from '../assistant-status.js'
 import { createLogger } from '../logger.js'
+import type { MemoryScope } from '../memory/memory-types.js'
 
 const log = createLogger('channel-manager')
 
@@ -67,6 +68,7 @@ export async function runChannelChat(
   settings: Settings,
   opts?: {
     channelPermissionMode?: ChannelPermissionMode
+    memoryScope?: MemoryScope
     /** Called when ask_user tool fires — channel should send options to user and wait for reply */
     askUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>
   },
@@ -80,7 +82,8 @@ export async function runChannelChat(
   // Per-turn timing (mirrors server.ts / task-executor.ts so channel turns are observable)
   const chatStartTime = Date.now()
   let lastStepEndTime = chatStartTime
-  let lastToolStartTime = 0
+  // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
+  const toolStartTimes = new Map<string, number>()
   let llmMsTotal = 0
   let execMsTotal = 0
   let stepIndex = 0
@@ -89,29 +92,41 @@ export async function runChannelChat(
   for await (const event of streamChat(messages, settings, undefined, {
     streaming: false,
     channelPermissionMode: opts?.channelPermissionMode ?? 'full',
+    memoryScope: opts?.memoryScope,
     channelAskUserHandler: opts?.askUserHandler,
   })) {
-    if (event.type === 'text_delta' && event.content) {
+    if (event.type === 'skill_context' && event.skillContext) {
+      toolCalls.push(event.skillContext)
+    } else if (event.type === 'text_delta' && event.content) {
       text += event.content
     } else if (event.type === 'tool_call_start' && event.id) {
       const isNew = !seenToolIds.has(event.id)
       let thinkMs: number | undefined
+      let startMs: number | undefined
       if (isNew) {
         seenToolIds.add(event.id)
         stepIndex++
-        lastToolStartTime = Date.now()
-        thinkMs = lastToolStartTime - lastStepEndTime
+        startMs = Date.now()
+        // Charge think only when no tool is outstanding (parallel starts' gaps are
+        // LLM arg streaming covered by each tool's own exec window)
+        thinkMs = toolStartTimes.size === 0 ? startMs - lastStepEndTime : 0
         llmMsTotal += thinkMs
+        toolStartTimes.set(event.id, startMs)
+      } else {
+        // Dedup re-emission: keep the original per-tool start instead of clobbering
+        // it with whatever tool started most recently
+        startMs = toolCallMap.get(event.id)?.startMs
       }
       toolCallMap.set(event.id, {
         name: event.name ?? '',
         args: event.args,
         ...(thinkMs !== undefined ? { thinkMs } : {}),
-        ...(lastToolStartTime ? { startMs: lastToolStartTime } : {}),
+        ...(startMs !== undefined ? { startMs } : {}),
       })
     } else if (event.type === 'tool_call_result' && event.id) {
       const started = toolCallMap.get(event.id)
       const toolDuration = started?.startMs ? Date.now() - started.startMs : 0
+      toolStartTimes.delete(event.id)
       execMsTotal += toolDuration
       lastStepEndTime = Date.now()
       toolCalls.push({
@@ -120,7 +135,7 @@ export async function runChannelChat(
         name: started?.name ?? '',
         args: started?.args ?? {},
         result: event.result ?? '',
-        status: 'done',
+        status: event.isError ? 'failed' : 'done',
         execMs: toolDuration,
         ...(started?.thinkMs !== undefined ? { thinkMs: started.thinkMs } : {}),
       })

@@ -639,6 +639,7 @@ export class WeixinChannel implements Channel {
     try {
       ;({ text: fullText, images, toolCalls, timing } = await runChannelChat(wm.messages, settings, {
         channelPermissionMode,
+        memoryScope: { user: `weixin:${fromUserId}` },
         askUserHandler: async (question, options) => {
           const lines = [`${question}`]
           options.forEach((opt, i) => {

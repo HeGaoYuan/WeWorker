@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
+import { calibrateCompactedContextSnapshot, calibrateContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
+import { leaveWebsiteExploration } from './website-exploration.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -18,6 +20,10 @@ export const useWorksStore = create((set, get) => ({
   works: [],
   activeWorkId: null,
   messages: {}, // workId -> Message[]
+  contextSnapshots: {}, // workId -> latest local context composition
+  contextTokenAnchors: {}, // workId -> provider total and calibrated non-conversation baseline
+  contextCompactionStatuses: {}, // workId -> compacting/completed/skipped/failed
+  memoryStatuses: {}, // workId -> latest explicit memory processing status
   healthCheckMeta: null, // { siteId, siteName, toolNames } | null
   streamingWorkIds: new Set(), // workIds currently streaming — don't overwrite their messages
   abortControllers: {}, // workId -> AbortController — for stopping streaming from any view
@@ -36,6 +42,7 @@ export const useWorksStore = create((set, get) => ({
   },
 
   createWork: async (opts = {}) => {
+    if (!await leaveWebsiteExploration()) return null
     const reuseEmptyWork = async (work) => {
       set({ activeWorkId: work.id })
       getScheduledTasksStore().then(s => s?.setState({ activeTaskId: null })).catch(() => {})
@@ -96,6 +103,7 @@ export const useWorksStore = create((set, get) => ({
   },
 
   selectWork: async (id) => {
+    if (!await leaveWebsiteExploration()) return
     set({ activeWorkId: id })
     try { getScheduledTasksStore().then(s => s?.setState({ activeTaskId: null })) } catch {}
     // If this work is currently streaming, don't overwrite in-memory messages with backend data
@@ -118,10 +126,19 @@ export const useWorksStore = create((set, get) => ({
       set((s) => {
         const works = s.works.filter((w) => w.id !== id)
         const messages = { ...s.messages }
+        const contextSnapshots = { ...s.contextSnapshots }
+        const contextTokenAnchors = { ...s.contextTokenAnchors }
+        const contextCompactionStatuses = { ...s.contextCompactionStatuses }
         delete messages[id]
+        delete contextSnapshots[id]
+        delete contextTokenAnchors[id]
+        delete contextCompactionStatuses[id]
         return {
           works,
           messages,
+          contextSnapshots,
+          contextTokenAnchors,
+          contextCompactionStatuses,
           activeWorkId: s.activeWorkId === id ? (works[0]?.id ?? null) : s.activeWorkId,
         }
       })
@@ -245,6 +262,81 @@ export const useWorksStore = create((set, get) => ({
           [workId]: nextMessages,
         },
       }
+    })
+  },
+
+  setContextSnapshot: (workId, snapshot) => {
+    if (!workId || !snapshot) return
+    set((s) => {
+      const current = s.contextSnapshots[workId]
+      const isCompactionSnapshot = snapshot.compaction?.mode === 'conversation_only'
+      const hasProviderUsage = snapshot.token_source === 'provider_calibrated'
+        && Number.isFinite(Number(snapshot.actual_input_tokens))
+      const nextSnapshot = !isCompactionSnapshot && !hasProviderUsage && snapshot.phase === 'request_start' && Number.isFinite(Number(current?.actual_input_tokens))
+        ? projectIncrementalContextSnapshot(snapshot, current.actual_input_tokens, current.estimated_total_tokens)
+        : snapshot
+      const nextAnchor = Number.isFinite(Number(snapshot.actual_input_tokens)) && snapshot.token_source === 'provider_calibrated'
+        ? createContextTokenAnchor(snapshot)
+        : s.contextTokenAnchors[workId]
+      return {
+        contextSnapshots: { ...s.contextSnapshots, [workId]: nextSnapshot },
+        contextTokenAnchors: { ...s.contextTokenAnchors, [workId]: nextAnchor },
+      }
+    })
+  },
+
+  setContextUsage: (workId, usage) => {
+    const actualInputTokens = Number(usage?.total_input_tokens)
+    if (!workId || !Number.isFinite(actualInputTokens)) return
+    set((s) => {
+      const current = s.contextSnapshots[workId]
+      if (!current) return s
+      const isPostCompactionProbe = usage?.kind === 'post_compaction_probe'
+      const nextSnapshot = isPostCompactionProbe
+        ? calibrateCompactedContextSnapshot(current, actualInputTokens, s.contextTokenAnchors[workId])
+        : calibrateContextSnapshot(current, actualInputTokens)
+      const nextAnchor = createContextTokenAnchor(nextSnapshot)
+      return {
+        contextSnapshots: {
+          ...s.contextSnapshots,
+          [workId]: nextSnapshot,
+        },
+        contextTokenAnchors: { ...s.contextTokenAnchors, [workId]: nextAnchor },
+      }
+    })
+  },
+
+  setContextCompactionStatus: (workId, status) => {
+    if (!workId) return
+    set((s) => {
+      const contextCompactionStatuses = { ...s.contextCompactionStatuses }
+      if (!status) delete contextCompactionStatuses[workId]
+      else contextCompactionStatuses[workId] = status
+      return { contextCompactionStatuses }
+    })
+  },
+
+  setMemoryStatus: (workId, status) => {
+    if (!workId || !status) return
+    set((s) => {
+      const current = s.memoryStatuses[workId]
+      const isStaleCompletion = status.status !== 'processing'
+        && current?.status === 'processing'
+        && current.eventId
+        && status.eventId
+        && current.eventId !== status.eventId
+      if (isStaleCompletion) return s
+      return { memoryStatuses: { ...s.memoryStatuses, [workId]: status } }
+    })
+  },
+
+  clearMemoryStatus: (workId) => {
+    if (!workId) return
+    set((s) => {
+      if (!(workId in s.memoryStatuses)) return s
+      const memoryStatuses = { ...s.memoryStatuses }
+      delete memoryStatuses[workId]
+      return { memoryStatuses }
     })
   },
 

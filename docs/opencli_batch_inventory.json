@@ -1,0 +1,3642 @@
+[
+  {
+    "site": "12306",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "whoami",
+    "access": "read",
+    "domain": "12306.cn",
+    "loginUrl": "https://kyfw.12306.cn/otn/resources/login.html",
+    "args": [],
+    "description": "Verify current identity",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "12306",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "login",
+    "access": "write",
+    "domain": "12306.cn",
+    "loginUrl": "https://kyfw.12306.cn/otn/resources/login.html",
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300
+      }
+    ],
+    "description": "Open official login; manual interaction",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "12306",
+    "file": "me.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "me",
+    "access": "read",
+    "description": "Show the logged-in 12306 account summary. Sensitive fields (real name, email, mobile, birth date) are masked by default; pass --include-sensitive to opt in.",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "include-sensitive",
+        "type": "boolean",
+        "default": false,
+        "help": "Reveal unmasked real name / email / mobile / birth date. The 12306 ID-number mask is server-side and never decoded."
+      }
+    ],
+    "columns": [
+      "username",
+      "real_name",
+      "email",
+      "mobile",
+      "birth_date",
+      "sex",
+      "country",
+      "user_type",
+      "member",
+      "active"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "12306",
+    "file": "orders.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "orders",
+    "access": "read",
+    "description": "List in-progress 12306 orders (not yet ridden, refunded, or completed) for the logged-in user",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "include-sensitive",
+        "type": "boolean",
+        "default": false,
+        "help": "Reveal unmasked passenger names in order rows. Masked by default."
+      }
+    ],
+    "columns": [
+      "order_id",
+      "order_date",
+      "train_code",
+      "from_station",
+      "to_station",
+      "departure",
+      "passengers",
+      "status",
+      "amount"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "12306",
+    "file": "passengers.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "passengers",
+    "access": "read",
+    "description": "List the logged-in user's saved 12306 passengers. Sensitive fields are masked by default; pass --include-sensitive to opt in.",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "`Max passengers to return (1-${MAX_PAGE_SIZE})`"
+      },
+      {
+        "name": "include-sensitive",
+        "type": "boolean",
+        "default": false,
+        "help": "Reveal unmasked real names and birth dates. The 12306 ID-number / mobile masks are server-side and never decoded."
+      }
+    ],
+    "columns": [
+      "name",
+      "sex",
+      "born_year",
+      "id_type",
+      "id_no",
+      "mobile",
+      "passenger_type",
+      "country"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "12306",
+    "file": "price.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "price",
+    "access": "read",
+    "description": "Look up 12306 ticket prices by seat class for one train on a given date and segment (anonymous, no login required)",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.PUBLIC",
+    "browser": false,
+    "args": [
+      {
+        "name": "train-no",
+        "positional": true,
+        "required": true,
+        "help": "Internal train_no from `12306 trains` (e.g. 24000000G10L)"
+      },
+      {
+        "name": "from",
+        "required": true,
+        "help": "Origin station (Chinese name, telecode, or pinyin) - must be a stop of this train"
+      },
+      {
+        "name": "to",
+        "required": true,
+        "help": "Destination station - must be a stop of this train"
+      },
+      {
+        "name": "date",
+        "required": true,
+        "help": "Departure date in YYYY-MM-DD"
+      },
+      {
+        "name": "seat-types",
+        "default": "OM9PA1A3A4FWZ",
+        "help": "Seat-type letters to query (default covers the common classes). Examples: OM9 (二等/一等/商务), A1A3A4 (硬座/硬卧/软卧)."
+      }
+    ],
+    "columns": [
+      "seat_code",
+      "seat_name",
+      "price",
+      "currency"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "passed_one_read_scenario",
+    "live_trace": "11e89322cde6"
+  },
+  {
+    "site": "12306",
+    "file": "stations.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "stations",
+    "access": "read",
+    "description": "Search 12306 (China Railway) stations by Chinese name, telecode, or pinyin keyword",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.PUBLIC",
+    "browser": false,
+    "args": [
+      {
+        "name": "keyword",
+        "positional": true,
+        "required": true,
+        "help": "Chinese substring (上海), telecode (AOH), or pinyin (shanghai)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "`Maximum results (1-${MAX_LIMIT})`"
+      }
+    ],
+    "columns": [
+      "name",
+      "code",
+      "pinyin",
+      "abbr",
+      "city"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "passed_one_read_scenario",
+    "live_trace": "7b7fd4865b48"
+  },
+  {
+    "site": "12306",
+    "file": "train.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "train",
+    "access": "read",
+    "description": "List every station a 12306 train calls at, with arrival / departure / stopover time (anonymous, no login required)",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.PUBLIC",
+    "browser": false,
+    "args": [
+      {
+        "name": "train-no",
+        "positional": true,
+        "required": true,
+        "help": "Internal train_no from `12306 trains` (e.g. 24000000G10L), not the public code (G1)"
+      },
+      {
+        "name": "from",
+        "required": true,
+        "help": "Origin station for the segment: Chinese name, telecode, or pinyin"
+      },
+      {
+        "name": "to",
+        "required": true,
+        "help": "Destination station for the segment"
+      },
+      {
+        "name": "date",
+        "required": true,
+        "help": "Departure date in YYYY-MM-DD"
+      }
+    ],
+    "columns": [
+      "station_no",
+      "station_name",
+      "arrive_time",
+      "start_time",
+      "stopover_time"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "passed_one_read_scenario",
+    "live_trace": "30852ff6de66"
+  },
+  {
+    "site": "12306",
+    "file": "trains.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "trains",
+    "access": "read",
+    "description": "List trains between two 12306 stations on a given date (anonymous, no login required)",
+    "domain": "kyfw.12306.cn",
+    "strategy": "Strategy.PUBLIC",
+    "browser": false,
+    "args": [
+      {
+        "name": "from",
+        "positional": true,
+        "required": true,
+        "help": "Origin station: Chinese name (北京), telecode (BJP), or pinyin (beijing)"
+      },
+      {
+        "name": "to",
+        "positional": true,
+        "required": true,
+        "help": "Destination station: same forms as <from>"
+      },
+      {
+        "name": "date",
+        "required": true,
+        "help": "Departure date in YYYY-MM-DD"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 50,
+        "help": "`Maximum rows (1-${MAX_LIMIT})`"
+      }
+    ],
+    "columns": [
+      "code",
+      "from_station",
+      "to_station",
+      "start_time",
+      "arrive_time",
+      "duration",
+      "available",
+      "business_seat",
+      "first_seat",
+      "second_seat",
+      "soft_sleeper",
+      "hard_sleeper",
+      "hard_seat",
+      "no_seat",
+      "train_no"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "12306.cn",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "官方 station_name.js / leftTicket / 账号 API；后台站名表，其余页面会话请求",
+    "live_status": "passed_one_read_scenario",
+    "live_trace": "e7567f019c29"
+  },
+  {
+    "site": "zhihu",
+    "file": "answer-comments.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./answer-target.js",
+      "./answer-comments-helpers.js"
+    ],
+    "name": "answer-comments",
+    "access": "read",
+    "description": "知乎回答评论列表（保留回复层级）",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "positional": true,
+        "help": "Answer ID, full Zhihu answer URL, or typed target (answer:<qid>:<aid>)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of top-level comments (max 1000)"
+      },
+      {
+        "name": "replies-limit",
+        "type": "int",
+        "default": 3,
+        "help": "Number of replies to include per top-level comment (max 100)"
+      },
+      {
+        "name": "order",
+        "default": "score",
+        "choices": [
+          "score",
+          "latest"
+        ],
+        "help": "Root comment order"
+      }
+    ],
+    "columns": [
+      "rank",
+      "comment_rank",
+      "reply_rank",
+      "depth",
+      "id",
+      "parent_id",
+      "author",
+      "reply_to",
+      "likes",
+      "created_at",
+      "url",
+      "content"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "answer-detail.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./answer-normalize.js",
+      "./answer-target.js"
+    ],
+    "name": "answer-detail",
+    "access": "read",
+    "description": "知乎单个回答完整内容（按 answer ID 获取）",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "positional": true,
+        "help": "Answer ID, full Zhihu answer URL, or typed target (answer:<qid>:<aid>)"
+      },
+      {
+        "name": "max-content",
+        "type": "int",
+        "default": 0,
+        "help": "Optional cap on stripped content length in characters (0 = no truncation, return the full answer)"
+      }
+    ],
+    "columns": [
+      "id",
+      "author",
+      "votes",
+      "comments",
+      "question_id",
+      "question_title",
+      "url",
+      "created_at",
+      "updated_at",
+      "content"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "answer.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/registry",
+      "./target.js",
+      "./write-shared.js"
+    ],
+    "name": "answer",
+    "access": "write",
+    "description": "Answer a Zhihu question",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "positional": true,
+        "required": true,
+        "help": "Zhihu question URL or typed target"
+      },
+      {
+        "name": "text",
+        "positional": true,
+        "help": "Answer text"
+      },
+      {
+        "name": "file",
+        "help": "Answer text file path"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "help": "Actually perform the write action"
+      }
+    ],
+    "columns": [
+      "status",
+      "outcome",
+      "message",
+      "target_type",
+      "target",
+      "created_target",
+      "created_url",
+      "author_identity"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "whoami",
+    "access": "read",
+    "domain": "www.zhihu.com",
+    "loginUrl": "https://www.zhihu.com/signin",
+    "args": [],
+    "description": "Verify current identity",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "login",
+    "access": "write",
+    "domain": "www.zhihu.com",
+    "loginUrl": "https://www.zhihu.com/signin",
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300
+      }
+    ],
+    "description": "Open official login; manual interaction",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "collection.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/logger",
+      "./text.js"
+    ],
+    "name": "collection",
+    "access": "read",
+    "description": "知乎收藏夹内容列表（需要登录）",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "id",
+        "positional": true,
+        "required": true,
+        "help": "收藏夹 ID (数字，可从收藏夹 URL 中获取)"
+      },
+      {
+        "name": "offset",
+        "type": "int",
+        "default": 0,
+        "help": "起始偏移量（用于分页）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "每页数量（最大 20）"
+      }
+    ],
+    "columns": [
+      "rank",
+      "type",
+      "title",
+      "author",
+      "votes",
+      "excerpt",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "collections.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/logger"
+    ],
+    "name": "collections",
+    "access": "read",
+    "description": "知乎收藏夹列表（需要登录）",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "每页数量（最大 20）"
+      }
+    ],
+    "columns": [
+      "rank",
+      "title",
+      "item_count",
+      "description",
+      "collection_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "comment.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/registry",
+      "./target.js",
+      "./write-shared.js"
+    ],
+    "name": "comment",
+    "access": "write",
+    "description": "Create a top-level comment on a Zhihu answer or article",
+    "domain": "zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "positional": true,
+        "required": true,
+        "help": "Zhihu target URL or typed target"
+      },
+      {
+        "name": "text",
+        "positional": true,
+        "help": "Comment text"
+      },
+      {
+        "name": "file",
+        "help": "Comment text file path"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "help": "Actually perform the write action"
+      }
+    ],
+    "columns": [
+      "status",
+      "outcome",
+      "message",
+      "target_type",
+      "target",
+      "author_identity",
+      "created_url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "download.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/download/article-download",
+      "@jackwener/opencli/errors",
+      "./download-helpers.js"
+    ],
+    "name": "download",
+    "access": "read",
+    "description": "导出知乎专栏文章或回答为 Markdown 格式",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "url",
+        "required": true,
+        "help": "Column article URL, answer ID, typed target, or answer URL"
+      },
+      {
+        "name": "output",
+        "default": "./zhihu-articles",
+        "help": "Output directory"
+      },
+      {
+        "name": "download-images",
+        "type": "boolean",
+        "default": false,
+        "help": "Download images locally"
+      }
+    ],
+    "columns": [
+      "title",
+      "author",
+      "publish_time",
+      "status",
+      "size"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "passed_one_file_download_scenario",
+    "live_trace": "610c948c0109"
+  },
+  {
+    "site": "zhihu",
+    "file": "favorite.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/registry",
+      "./target.js",
+      "./write-shared.js"
+    ],
+    "name": "favorite",
+    "access": "write",
+    "description": "Favorite a Zhihu answer or article into a specific collection",
+    "domain": "zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "positional": true,
+        "required": true,
+        "help": "Zhihu target URL or typed target"
+      },
+      {
+        "name": "collection",
+        "help": "Collection name"
+      },
+      {
+        "name": "collection-id",
+        "help": "Stable collection id"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "help": "Actually perform the write action"
+      }
+    ],
+    "columns": [
+      "status",
+      "outcome",
+      "message",
+      "target_type",
+      "target",
+      "collection_name",
+      "collection_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "follow.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/registry",
+      "./target.js",
+      "./write-shared.js"
+    ],
+    "name": "follow",
+    "access": "write",
+    "description": "Follow a Zhihu user or question",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "positional": true,
+        "required": true,
+        "help": "Zhihu target URL or typed target"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "help": "Actually perform the write action"
+      }
+    ],
+    "columns": [
+      "status",
+      "outcome",
+      "message",
+      "target_type",
+      "target"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "followers.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./user-arg.js",
+      "./paginate.js"
+    ],
+    "name": "followers",
+    "access": "read",
+    "description": "知乎某用户的粉丝列表",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "user",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "User url_token or people URL"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of followers to return (max 1000)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "name",
+      "url_token",
+      "headline",
+      "followers",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "following.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./user-arg.js",
+      "./paginate.js"
+    ],
+    "name": "following",
+    "access": "read",
+    "description": "知乎某用户关注的人列表",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "user",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "User url_token or people URL"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of followees to return (max 1000)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "name",
+      "url_token",
+      "headline",
+      "followers",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "hot.js",
+    "imports": [
+      "@jackwener/opencli/registry"
+    ],
+    "name": "hot",
+    "access": "read",
+    "description": "知乎热榜",
+    "domain": "www.zhihu.com",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of items to return"
+      }
+    ],
+    "columns": [
+      "rank",
+      "title",
+      "heat",
+      "answers"
+    ],
+    "pipeline": [
+      {
+        "navigate": "https://www.zhihu.com"
+      },
+      {
+        "evaluate": "(async () => {\n  const res = await fetch('https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50', {\n    credentials: 'include'\n  });\n  const text = await res.text();\n  const d = JSON.parse(\n    text.replace(/(\"id\"\\s*:\\s*)(\\d{16,})/g, '$1\"$2\"')\n  );\n  return (d?.data || []).map((item) => {\n    const t = item.target || {};\n    const questionId = t.id == null ? '' : String(t.id);\n    return {\n      title: t.title,\n      url: 'https://www.zhihu.com/question/' + questionId,\n      answer_count: t.answer_count,\n      follower_count: t.follower_count,\n      heat: item.detail_text || '',\n    };\n  });\n})()\n"
+      },
+      {
+        "map": {
+          "rank": "${{ index + 1 }}",
+          "title": "${{ item.title }}",
+          "heat": "${{ item.heat }}",
+          "answers": "${{ item.answer_count }}",
+          "url": "${{ item.url }}"
+        }
+      },
+      {
+        "limit": "${{ args.limit }}"
+      }
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "like.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/registry",
+      "./target.js",
+      "./write-shared.js"
+    ],
+    "name": "like",
+    "access": "write",
+    "description": "Like a Zhihu answer or article",
+    "domain": "zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "positional": true,
+        "required": true,
+        "help": "Zhihu target URL or typed target"
+      },
+      {
+        "name": "execute",
+        "type": "boolean",
+        "help": "Actually perform the write action"
+      }
+    ],
+    "columns": [
+      "status",
+      "outcome",
+      "message",
+      "target_type",
+      "target"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "pins.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./user-arg.js",
+      "./paginate.js"
+    ],
+    "name": "pins",
+    "access": "read",
+    "description": "知乎某用户的想法（短内容）列表",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "user",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "User url_token or people URL"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of pins to return (max 1000)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "excerpt",
+      "type",
+      "likes",
+      "comments",
+      "reposts",
+      "created",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "question.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./text.js"
+    ],
+    "name": "question",
+    "access": "read",
+    "description": "知乎问题详情和回答",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "positional": true,
+        "help": "Question ID (numeric)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 5,
+        "help": "Number of answers (max 1000; use normal-sized requests)"
+      },
+      {
+        "name": "sort",
+        "default": "default",
+        "choices": [
+          "default",
+          "created"
+        ],
+        "help": "Answer order: default or created"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "author",
+      "votes",
+      "url",
+      "content"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "recommend.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "recommend",
+    "access": "read",
+    "description": "知乎首页推荐",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of items to return (max 1000; use normal-sized requests)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "type",
+      "title",
+      "author",
+      "votes",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "search.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./text.js"
+    ],
+    "name": "search",
+    "access": "read",
+    "description": "知乎搜索",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "query",
+        "required": true,
+        "positional": true,
+        "help": "Search query"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10,
+        "help": "Number of results (max 1000; use normal-sized requests)"
+      },
+      {
+        "name": "type",
+        "default": "all",
+        "choices": "TYPES",
+        "help": "Result type: all, answer, article, or question"
+      }
+    ],
+    "columns": [
+      "rank",
+      "title",
+      "type",
+      "author",
+      "votes",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "user-answers.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./user-arg.js",
+      "./paginate.js"
+    ],
+    "name": "user-answers",
+    "access": "read",
+    "description": "知乎某用户的回答列表",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "user",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "User url_token or people URL"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of answers to return (max 1000)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "question",
+      "votes",
+      "comments",
+      "created",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "user-articles.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./user-arg.js",
+      "./paginate.js"
+    ],
+    "name": "user-articles",
+    "access": "read",
+    "description": "知乎某用户的文章/专栏列表",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "user",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "User url_token or people URL"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of articles to return (max 1000)"
+      }
+    ],
+    "columns": [
+      "rank",
+      "title",
+      "votes",
+      "comments",
+      "created",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "zhihu",
+    "file": "user.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./user-arg.js",
+      "./paginate.js"
+    ],
+    "name": "user",
+    "access": "read",
+    "description": "知乎用户主页资料（粉丝/关注/回答/文章/获赞数）",
+    "domain": "www.zhihu.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "user",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "User url_token or people URL, e.g. wen-jie-16-47"
+      }
+    ],
+    "columns": [
+      "url_token",
+      "name",
+      "headline",
+      "followers",
+      "following",
+      "answers",
+      "articles",
+      "voteup",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhihu.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "知乎 v4 API、页面登录态；写入使用来源 API",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "youdao",
+    "file": "note.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "note",
+    "access": "read",
+    "description": "Read a public shared Youdao Note",
+    "domain": "share.note.youdao.com",
+    "strategy": "Strategy.PUBLIC",
+    "browser": true,
+    "args": [
+      {
+        "name": "url",
+        "positional": true,
+        "required": true,
+        "help": "Full share URL of the Youdao Note"
+      }
+    ],
+    "columns": [
+      "title",
+      "content",
+      "summary",
+      "keywords",
+      "created_at",
+      "file_size",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "note.youdao.com",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "公开分享页 React store：全文、摘要及元数据",
+    "live_status": "passed_one_read_scenario",
+    "live_trace": "9cb6c694b27d"
+  },
+  {
+    "site": "51job",
+    "file": "company.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "company",
+    "access": "read",
+    "description": "51job 公司简介 + 在招职位（按 encCoId）",
+    "domain": "jobs.51job.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "encCoId",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "加密公司 ID（search 返回的 encCoId）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "返回职位数（1-50）"
+      }
+    ],
+    "columns": [
+      "rank",
+      "jobId",
+      "title",
+      "salary",
+      "city",
+      "workYear",
+      "degree",
+      "funcType",
+      "issueDate",
+      "url",
+      "companyName",
+      "companyType",
+      "companySize",
+      "companyIndustry",
+      "companyIntro",
+      "companyUrl"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "51job.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "we.51job.com 页面 API + jobs.51job.com SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "51job",
+    "file": "detail.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "detail",
+    "access": "read",
+    "description": "51job 职位详情（按 jobId）",
+    "domain": "jobs.51job.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "jobId",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "职位 ID（search 返回的 jobId）"
+      }
+    ],
+    "columns": [
+      "jobId",
+      "title",
+      "salary",
+      "location",
+      "workYear",
+      "degree",
+      "category",
+      "address",
+      "ageRequirement",
+      "description",
+      "welfare",
+      "company",
+      "companyType",
+      "companySize",
+      "companyIndustry",
+      "companyUrl",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "51job.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "we.51job.com 页面 API + jobs.51job.com SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "51job",
+    "file": "hot.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "hot",
+    "access": "read",
+    "description": "51job 推荐职位（按城市/行业/排序浏览）",
+    "domain": "we.51job.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "area",
+        "type": "string",
+        "default": "全国",
+        "help": "城市名或 6 位城市码（默认 \"全国\"）"
+      },
+      {
+        "name": "sort",
+        "type": "string",
+        "default": "综合",
+        "help": "排序：综合 / 最新 / 薪资 / 距离"
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "help": "页码（1-based）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "返回条数（1-50）"
+      }
+    ],
+    "columns": "SEARCH_COLUMNS",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "51job.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "we.51job.com 页面 API + jobs.51job.com SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "51job",
+    "file": "search.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "search",
+    "access": "read",
+    "description": "51job 前程无忧关键词职位搜索",
+    "domain": "we.51job.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "keyword",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "搜索关键词（岗位名 / 技能 / 公司）"
+      },
+      {
+        "name": "area",
+        "type": "string",
+        "default": "全国",
+        "help": "城市名或 6 位城市码（如 \"杭州\" / \"080200\" / \"全国\"）"
+      },
+      {
+        "name": "salary",
+        "type": "string",
+        "default": "",
+        "help": "薪资区间（如 \"10-15k\" / \"1-1.5万\" / \"20-30k\"）"
+      },
+      {
+        "name": "experience",
+        "type": "string",
+        "default": "",
+        "help": "工作年限（如 \"应届\" / \"1-3年\" / \"3-5年\" / \"5-7年\"）"
+      },
+      {
+        "name": "degree",
+        "type": "string",
+        "default": "",
+        "help": "学历要求（如 \"本科\" / \"大专\" / \"硕士\"）"
+      },
+      {
+        "name": "companyType",
+        "type": "string",
+        "default": "",
+        "help": "公司性质（如 \"外资\" / \"国企\" / \"民营\"）"
+      },
+      {
+        "name": "companySize",
+        "type": "string",
+        "default": "",
+        "help": "公司规模（如 \"50-150\" / \"1000-5000\"）"
+      },
+      {
+        "name": "sort",
+        "type": "string",
+        "default": "综合",
+        "help": "排序：综合 / 最新 / 薪资 / 距离"
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "help": "页码（1-based）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "返回条数（1-50）"
+      }
+    ],
+    "columns": "SEARCH_COLUMNS",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "51job.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "we.51job.com 页面 API + jobs.51job.com SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "whoami",
+    "access": "read",
+    "domain": "zhipin.com",
+    "loginUrl": "https://login.zhipin.com/",
+    "args": [],
+    "description": "Verify current identity",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "login",
+    "access": "write",
+    "domain": "zhipin.com",
+    "loginUrl": "https://login.zhipin.com/",
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300
+      }
+    ],
+    "description": "Open official login; manual interaction",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "batchgreet.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "batchgreet",
+    "access": "write",
+    "description": "BOSS直聘批量向推荐候选人发送招呼",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "job-id",
+        "default": "",
+        "help": "Filter by encrypted job ID (greet all jobs if empty)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 5,
+        "help": "Max candidates to greet"
+      },
+      {
+        "name": "text",
+        "default": "",
+        "help": "Custom greeting message (uses default if empty)"
+      }
+    ],
+    "columns": [
+      "name",
+      "status",
+      "detail"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "chatlist.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "chatlist",
+    "access": "read",
+    "description": "BOSS直聘查看聊天列表（招聘端/求职端）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "help": "Page number"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of results"
+      },
+      {
+        "name": "job-id",
+        "default": "0",
+        "help": "Filter by job ID (0=all, boss side only)"
+      },
+      {
+        "name": "side",
+        "default": "auto",
+        "choices": [
+          "auto",
+          "boss",
+          "geek"
+        ],
+        "help": "Identity side: auto (default), boss (recruiter), or geek (job-seeker)"
+      }
+    ],
+    "columns": [
+      "name",
+      "company",
+      "job",
+      "title",
+      "last_msg",
+      "last_time",
+      "uid",
+      "security_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "chatmsg.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "chatmsg",
+    "access": "read",
+    "description": "BOSS直聘查看聊天消息历史（招聘端/求职端）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "required": true,
+        "positional": true,
+        "help": "Encrypted UID (from chatlist)"
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "help": "Page number"
+      },
+      {
+        "name": "side",
+        "default": "auto",
+        "choices": [
+          "auto",
+          "boss",
+          "geek"
+        ],
+        "help": "Identity side: auto (default), boss (recruiter), or geek (job-seeker)"
+      }
+    ],
+    "columns": [
+      "from",
+      "type",
+      "text",
+      "time"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "detail.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "detail",
+    "access": "read",
+    "description": "BOSS直聘查看职位详情",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.UI",
+    "navigateBefore": false,
+    "browser": true,
+    "defaultWindowMode": "background",
+    "siteSession": "persistent",
+    "args": [
+      {
+        "name": "security-id",
+        "positional": true,
+        "required": true,
+        "help": "Security ID from search results (security_id field)"
+      }
+    ],
+    "columns": [
+      "name",
+      "salary",
+      "experience",
+      "degree",
+      "city",
+      "address",
+      "description",
+      "skills",
+      "welfare",
+      "boss_name",
+      "boss_title",
+      "active_time",
+      "company",
+      "industry",
+      "scale",
+      "stage",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "exchange.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "exchange",
+    "access": "write",
+    "description": "BOSS直聘交换联系方式（请求手机/微信）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "required": true,
+        "positional": true,
+        "help": "Encrypted UID of the candidate"
+      },
+      {
+        "name": "type",
+        "default": "phone",
+        "choices": [
+          "phone",
+          "wechat"
+        ],
+        "help": "Exchange type: phone or wechat"
+      }
+    ],
+    "columns": [
+      "status",
+      "detail"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "greet.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "greet",
+    "access": "write",
+    "description": "BOSS直聘向新候选人发送招呼（开始聊天）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "positional": true,
+        "required": true,
+        "help": "Encrypted UID of the candidate (from recommend)"
+      },
+      {
+        "name": "security-id",
+        "required": true,
+        "help": "Security ID of the candidate"
+      },
+      {
+        "name": "job-id",
+        "required": true,
+        "help": "Encrypted job ID"
+      },
+      {
+        "name": "text",
+        "default": "",
+        "help": "Custom greeting message (uses default template if empty)"
+      }
+    ],
+    "columns": [
+      "status",
+      "detail"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "invite.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "invite",
+    "access": "write",
+    "description": "BOSS直聘发送面试邀请",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "positional": true,
+        "required": true,
+        "help": "Encrypted UID of the candidate"
+      },
+      {
+        "name": "time",
+        "required": true,
+        "help": "Interview time (e.g. 2025-04-01 14:00)"
+      },
+      {
+        "name": "address",
+        "default": "",
+        "help": "Interview address (uses saved address if empty)"
+      },
+      {
+        "name": "contact",
+        "default": "",
+        "help": "Contact person name (uses saved contact if empty)"
+      }
+    ],
+    "columns": [
+      "status",
+      "detail"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "joblist.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "joblist",
+    "access": "read",
+    "description": "BOSS直聘查看我发布的职位列表",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [],
+    "columns": [
+      "job_name",
+      "salary",
+      "city",
+      "status",
+      "encrypt_job_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "mark.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "mark",
+    "access": "write",
+    "description": "BOSS直聘给候选人添加标签",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "positional": true,
+        "required": true,
+        "help": "Encrypted UID of the candidate"
+      },
+      {
+        "name": "label",
+        "required": true,
+        "help": "Label name (新招呼/沟通中/已约面/已获取简历/已交换电话/已交换微信/不合适/收藏) or label ID"
+      },
+      {
+        "name": "remove",
+        "type": "boolean",
+        "default": false,
+        "help": "Remove the label instead of adding"
+      }
+    ],
+    "columns": [
+      "status",
+      "detail"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "recommend.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "recommend",
+    "access": "read",
+    "description": "BOSS直聘查看推荐候选人（新招呼列表）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "Number of results to return"
+      }
+    ],
+    "columns": [
+      "name",
+      "job_name",
+      "last_time",
+      "labels",
+      "encrypt_uid",
+      "security_id",
+      "encrypt_job_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "resume.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "resume",
+    "access": "read",
+    "description": "BOSS直聘查看候选人简历（招聘端）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "required": true,
+        "positional": true,
+        "help": "Encrypted UID of the candidate (from chatlist)"
+      }
+    ],
+    "columns": [
+      "name",
+      "gender",
+      "age",
+      "experience",
+      "degree",
+      "active_time",
+      "work_history",
+      "education",
+      "job_chatting",
+      "expect"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "search.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js"
+    ],
+    "name": "search",
+    "access": "read",
+    "description": "BOSS直聘搜索职位（不带关键词时返回为你推荐职位）",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.INTERCEPT",
+    "navigateBefore": false,
+    "browser": true,
+    "defaultWindowMode": "background",
+    "siteSession": "persistent",
+    "args": [
+      {
+        "name": "query",
+        "positional": true,
+        "help": "Search keyword (optional, empty = recommended jobs)"
+      },
+      {
+        "name": "city",
+        "default": "北京",
+        "help": "City name or code (e.g. 杭州, 上海, 101010100)"
+      },
+      {
+        "name": "experience",
+        "default": "",
+        "help": "Experience: 在校生(实习)/应届生(校招)/经验不限/1年以内/1-3年/3-5年/5-10年/10年以上"
+      },
+      {
+        "name": "degree",
+        "default": "",
+        "help": "Degree: 大专/本科/硕士/博士"
+      },
+      {
+        "name": "salary",
+        "default": "",
+        "help": "Salary: 3K以下/3-5K/5-10K/10-15K/15-20K/20-30K/30-50K/50K以上"
+      },
+      {
+        "name": "industry",
+        "default": "",
+        "help": "Industry code or name (e.g. 100020, 互联网)"
+      },
+      {
+        "name": "jobType",
+        "default": "",
+        "help": "Job type: 全职/兼职/实习（不传=不限，混合校招与实习）"
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "help": "Page number"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 15,
+        "help": "Number of results"
+      }
+    ],
+    "columns": [
+      "name",
+      "salary",
+      "company",
+      "area",
+      "experience",
+      "degree",
+      "skills",
+      "boss",
+      "bossOnline",
+      "security_id",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "send.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "send",
+    "access": "write",
+    "description": "BOSS直聘发送聊天消息",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "uid",
+        "positional": true,
+        "required": true,
+        "help": "Encrypted UID of the candidate (from chatlist)"
+      },
+      {
+        "name": "text",
+        "required": true,
+        "positional": true,
+        "help": "Message text to send"
+      }
+    ],
+    "columns": [
+      "status",
+      "detail"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "boss",
+    "file": "stats.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "stats",
+    "access": "read",
+    "description": "BOSS直聘职位数据统计",
+    "domain": "www.zhipin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "browser": true,
+    "args": [
+      {
+        "name": "job-id",
+        "default": "",
+        "help": "Encrypted job ID (show all if empty)"
+      }
+    ],
+    "columns": [
+      "job_name",
+      "salary",
+      "city",
+      "status",
+      "total_chats",
+      "encrypt_job_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "zhipin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "页面 XHR API；search 受限网络捕获；send/batchgreet 为 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "dianping",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "whoami",
+    "access": "read",
+    "domain": "dianping.com",
+    "loginUrl": "https://account.dianping.com/pclogin",
+    "args": [],
+    "description": "Verify current identity",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "dianping.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "PC 商户页面 DOM + 同源城市 SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "dianping",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "login",
+    "access": "write",
+    "domain": "dianping.com",
+    "loginUrl": "https://account.dianping.com/pclogin",
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300
+      }
+    ],
+    "description": "Open official login; manual interaction",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "dianping.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "PC 商户页面 DOM + 同源城市 SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "dianping",
+    "file": "search.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./utils.js",
+      "./cityResolver.js"
+    ],
+    "name": "search",
+    "access": "read",
+    "description": "大众点评店铺搜索（按关键词 + 城市）",
+    "domain": "www.dianping.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "keyword",
+        "required": true,
+        "positional": true,
+        "help": "搜索关键词，例如 \"火锅\""
+      },
+      {
+        "name": "city",
+        "help": "城市名（北京/上海/汕头/beijing/shantou/...）或 cityId 数字。未在静态表中的城市会通过 dianping.com 在线解析。不传则使用 cookie 默认城市"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 15,
+        "help": "返回的店铺数量（最多 15，dianping 单页固定 15 条）"
+      }
+    ],
+    "columns": "SEARCH_COLUMNS",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "dianping.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "PC 商户页面 DOM + 同源城市 SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "dianping",
+    "file": "shop.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "shop",
+    "access": "read",
+    "aliases": [
+      "detail"
+    ],
+    "description": "大众点评店铺详情（按 shop_id）",
+    "domain": "www.dianping.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "shop_id",
+        "required": true,
+        "positional": true,
+        "help": "店铺 ID（来自 search 的 shop_id 列，或 https://www.dianping.com/shop/<id> URL 段）"
+      }
+    ],
+    "columns": "SHOP_COLUMNS",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "dianping.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "PC 商户页面 DOM + 同源城市 SSR",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "whoami",
+    "access": "read",
+    "domain": "douban.com",
+    "loginUrl": "https://accounts.douban.com/passport/login",
+    "args": [],
+    "description": "Verify current identity",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js"
+    ],
+    "name": "login",
+    "access": "write",
+    "domain": "douban.com",
+    "loginUrl": "https://accounts.douban.com/passport/login",
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300
+      }
+    ],
+    "description": "Open official login; manual interaction",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "book-hot.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "book-hot",
+    "access": "read",
+    "description": "豆瓣图书热门榜单",
+    "domain": "book.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "返回的图书数量"
+      }
+    ],
+    "columns": [
+      "rank",
+      "title",
+      "rating",
+      "quote",
+      "author",
+      "publisher",
+      "year",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "download.js",
+    "imports": [
+      "node:fs",
+      "node:path",
+      "@jackwener/opencli/download/progress",
+      "@jackwener/opencli/download",
+      "@jackwener/opencli/errors",
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "download",
+    "access": "read",
+    "description": "下载电影海报/剧照图片",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "id",
+        "positional": true,
+        "required": true,
+        "help": "电影 subject ID"
+      },
+      {
+        "name": "type",
+        "default": "Rb",
+        "help": "豆瓣 photos 的 type 参数，默认 Rb（海报）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 120,
+        "help": "最多下载多少张图片"
+      },
+      {
+        "name": "photo-id",
+        "help": "只下载指定 photo_id 的图片"
+      },
+      {
+        "name": "output",
+        "default": "./douban-downloads",
+        "help": "输出目录"
+      }
+    ],
+    "columns": [
+      "index",
+      "title",
+      "status",
+      "size"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "passed_one_file_download_scenario",
+    "live_trace": "6bd96b41defc"
+  },
+  {
+    "site": "douban",
+    "file": "marks.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "marks",
+    "access": "read",
+    "description": "导出个人观影标记",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "status",
+        "default": "collect",
+        "choices": [
+          "collect",
+          "wish",
+          "do",
+          "all"
+        ],
+        "help": "标记类型: collect(看过), wish(想看), do(在看), all(全部)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 50,
+        "help": "导出数量， 0 表示全部"
+      },
+      {
+        "name": "uid",
+        "help": "用户ID，不填则使用当前登录账号"
+      }
+    ],
+    "columns": [
+      "title",
+      "year",
+      "myRating",
+      "myStatus",
+      "myDate",
+      "myComment",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "movie-hot.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "movie-hot",
+    "access": "read",
+    "description": "豆瓣电影热门榜单",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "返回的电影数量"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "rating",
+      "votes",
+      "year",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "photos.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "photos",
+    "access": "read",
+    "description": "获取电影海报/剧照图片列表",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "id",
+        "positional": true,
+        "required": true,
+        "help": "电影 subject ID"
+      },
+      {
+        "name": "type",
+        "default": "Rb",
+        "help": "豆瓣 photos 的 type 参数，默认 Rb（海报）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 120,
+        "help": "最多返回多少张图片"
+      }
+    ],
+    "columns": [
+      "index",
+      "photo_id",
+      "subject_id",
+      "title",
+      "image_url",
+      "detail_url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "reviews.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "reviews",
+    "access": "read",
+    "description": "导出个人影评",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "导出数量"
+      },
+      {
+        "name": "uid",
+        "help": "用户ID，不填则使用当前登录账号"
+      },
+      {
+        "name": "full",
+        "type": "bool",
+        "default": false,
+        "help": "获取完整影评内容"
+      }
+    ],
+    "columns": [
+      "movieTitle",
+      "title",
+      "myRating",
+      "votes",
+      "content",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "search.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "search",
+    "access": "read",
+    "description": "搜索豆瓣电影、图书或音乐",
+    "domain": "search.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "type",
+        "default": "movie",
+        "choices": [
+          "movie",
+          "book",
+          "music"
+        ],
+        "help": "搜索类型（movie=电影, book=图书, music=音乐）"
+      },
+      {
+        "name": "keyword",
+        "required": true,
+        "positional": true,
+        "help": "搜索关键词"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "返回结果数量"
+      }
+    ],
+    "columns": [
+      "rank",
+      "title",
+      "rating",
+      "abstract",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "subject.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./utils.js"
+    ],
+    "name": "subject",
+    "access": "read",
+    "description": "获取豆瓣条目详情",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "positional": true,
+        "help": "豆瓣条目 ID"
+      },
+      {
+        "name": "type",
+        "default": "movie",
+        "choices": [
+          "movie",
+          "book"
+        ],
+        "help": "条目类型（movie=电影, book=图书）"
+      }
+    ],
+    "columns": [
+      "id",
+      "type",
+      "title",
+      "subtitle",
+      "originalTitle",
+      "authors",
+      "translators",
+      "publisher",
+      "publishDate",
+      "publishYear",
+      "pageCount",
+      "binding",
+      "price",
+      "series",
+      "isbn10",
+      "isbn13",
+      "year",
+      "rating",
+      "ratingCount",
+      "genres",
+      "directors",
+      "casts",
+      "country",
+      "duration",
+      "summary",
+      "url"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douban",
+    "file": "top250.js",
+    "imports": [
+      "@jackwener/opencli/registry"
+    ],
+    "name": "top250",
+    "access": "read",
+    "description": "豆瓣电影 Top250",
+    "domain": "movie.douban.com",
+    "strategy": "Strategy.COOKIE",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 250,
+        "help": "返回结果数量"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "rating",
+      "url"
+    ],
+    "pipeline": [
+      {
+        "navigate": "https://movie.douban.com/top250"
+      },
+      {
+        "evaluate": "async () => {\n  const results = [];\n  const limit = ${{ args.limit }};\n\n  const parsePage = (doc) => {\n    const items = doc.querySelectorAll('.item');\n    for (const item of items) {\n      if (results.length >= limit) break;\n\n      const rankEl = item.querySelector('.pic em');\n      const linkEl = item.querySelector('a');\n      const titleEl = item.querySelector('.title');\n      const ratingEl = item.querySelector('.rating_num');\n\n      const href = linkEl?.href || '';\n      const matchResult = href.match(/subject\\/(\\d+)/);\n      const id = matchResult ? matchResult[1] : '';\n\n      const title = titleEl?.textContent?.trim() || '';\n      const rank = parseInt(rankEl?.textContent || '0', 10);\n      const rating = ratingEl?.textContent?.trim() || '';\n\n      if (id && title) {\n        results.push({\n          rank: rank || results.length + 1,\n          id,\n          title,\n          rating: rating ? parseFloat(rating) : 0,\n          url: href\n        });\n      }\n    }\n  };\n\n  parsePage(document);\n\n  for (let start = 25; start < 250 && results.length < limit; start += 25) {\n    const resp = await fetch(`https://movie.douban.com/top250?start=${start}`);\n    if (!resp.ok) break;\n    const html = await resp.text();\n    if (!html) break;\n\n    const doc = new DOMParser().parseFromString(html, 'text/html');\n    parsePage(doc);\n    await new Promise(r => setTimeout(r, 150));\n  }\n\n  return results;\n}\n"
+      },
+      {
+        "limit": "${{ args.limit }}"
+      }
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douban.com",
+    "migration_status": "implemented_partial_live_validation",
+    "blocker": null,
+    "data_source": "电影/图书/音乐页面 DOM/SSR + 同源分页",
+    "live_status": "passed_one_read_scenario",
+    "live_trace": "874463744c81"
+  },
+  {
+    "site": "douyin",
+    "file": "activities.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "activities",
+    "access": "read",
+    "description": "官方活动列表",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [],
+    "columns": [
+      "activity_id",
+      "title",
+      "end_time"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "whoami",
+    "access": "read",
+    "domain": "creator.douyin.com",
+    "loginUrl": "https://creator.douyin.com/",
+    "args": [],
+    "description": "Verify current identity",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "auth.js",
+    "imports": [
+      "@jackwener/opencli/errors",
+      "../_shared/site-auth.js",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "login",
+    "access": "write",
+    "domain": "creator.douyin.com",
+    "loginUrl": "https://creator.douyin.com/",
+    "args": [
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 300
+      }
+    ],
+    "description": "Open official login; manual interaction",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "collections.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "collections",
+    "access": "read",
+    "description": "合集列表",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20
+      }
+    ],
+    "columns": [
+      "mix_id",
+      "name",
+      "item_count"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "delete.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./_shared/browser-fetch.js",
+      "./_shared/evaluate-result.js"
+    ],
+    "name": "delete",
+    "access": "write",
+    "description": "删除作品（优先使用创作者后台作品管理；找不到时回退到旧删除接口）",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "siteSession": "persistent",
+    "args": [
+      {
+        "name": "aweme_id",
+        "required": true,
+        "positional": true,
+        "help": "作品 ID / item_id"
+      }
+    ],
+    "columns": [
+      "status"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "draft.js",
+    "imports": [
+      "node:fs",
+      "node:path",
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "draft",
+    "access": "write",
+    "description": "上传视频并保存为草稿",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "navigateBefore": false,
+    "args": [
+      {
+        "name": "video",
+        "required": true,
+        "positional": true,
+        "help": "视频文件路径"
+      },
+      {
+        "name": "title",
+        "required": true,
+        "help": "视频标题（≤30字）"
+      },
+      {
+        "name": "caption",
+        "default": "",
+        "help": "正文内容（≤1000字，支持 #话题）"
+      },
+      {
+        "name": "cover",
+        "default": "",
+        "help": "封面图片路径"
+      },
+      {
+        "name": "visibility",
+        "default": "public",
+        "choices": [
+          "public",
+          "friends",
+          "private"
+        ]
+      }
+    ],
+    "columns": [
+      "status",
+      "draft_id"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "pending",
+    "blocker": "待实现：官方上传页 set_file_input、封面、表单及保存证据；上传跨页面会销毁页面调用，尚缺经验证的分阶段续执行方案，写操作不能重放。",
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "drafts.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "drafts",
+    "access": "read",
+    "description": "获取草稿列表",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20
+      }
+    ],
+    "columns": [
+      "aweme_id",
+      "title",
+      "create_time"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "hashtag.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./_shared/browser-fetch.js",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "hashtag",
+    "access": "read",
+    "description": "话题搜索 / AI推荐 / 热点词",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "action",
+        "required": true,
+        "positional": true,
+        "choices": [
+          "search",
+          "suggest",
+          "hot"
+        ],
+        "help": "search=关键词搜索 (--keyword 必填), suggest=AI推荐 (--cover 必填), hot=热点词 (--keyword 可选)"
+      },
+      {
+        "name": "keyword",
+        "default": "",
+        "help": "搜索关键词. search 必填; hot 可选; suggest 不使用 (传 --cover)"
+      },
+      {
+        "name": "cover",
+        "default": "",
+        "help": "封面 URI (cover_uri). suggest 必填; 其它 action 不使用"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10
+      }
+    ],
+    "columns": [
+      "name",
+      "id",
+      "view_count"
+    ],
+    "validateArgs": "validateHashtagArgs",
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "location.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "location",
+    "access": "read",
+    "description": "地理位置 POI 搜索",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "query",
+        "required": true,
+        "positional": true,
+        "help": "地名关键词"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20
+      }
+    ],
+    "columns": [
+      "poi_id",
+      "name",
+      "address",
+      "city"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "profile.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "./_shared/browser-fetch.js",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "profile",
+    "access": "read",
+    "description": "获取账号信息",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [],
+    "columns": [
+      "uid",
+      "nickname",
+      "follower_count",
+      "following_count",
+      "aweme_count"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "publish.js",
+    "imports": [
+      "node:fs",
+      "node:path",
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./_shared/vod-upload.js",
+      "./_shared/tos-upload.js",
+      "./_shared/imagex-upload.js",
+      "./_shared/browser-fetch.js",
+      "./_shared/evaluate-result.js",
+      "./_shared/creation-id.js",
+      "./_shared/timing.js",
+      "./_shared/text-extra.js"
+    ],
+    "name": "publish",
+    "access": "write",
+    "description": "定时发布视频到抖音（必须设置 2h ~ 14天后的发布时间）",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "video",
+        "required": true,
+        "positional": true,
+        "help": "视频文件路径"
+      },
+      {
+        "name": "title",
+        "required": true,
+        "help": "视频标题（≤30字）"
+      },
+      {
+        "name": "schedule",
+        "required": true,
+        "help": "定时发布时间（ISO8601 或 Unix 秒，2h ~ 14天后）"
+      },
+      {
+        "name": "caption",
+        "default": "",
+        "help": "正文内容（≤1000字，支持 #话题）"
+      },
+      {
+        "name": "cover",
+        "default": "",
+        "help": "封面图片路径（不提供时使用视频截帧）"
+      },
+      {
+        "name": "visibility",
+        "default": "public",
+        "choices": [
+          "public",
+          "friends",
+          "private"
+        ]
+      },
+      {
+        "name": "allow_download",
+        "type": "bool",
+        "default": false,
+        "help": "允许下载"
+      },
+      {
+        "name": "collection",
+        "default": "",
+        "help": "合集 ID"
+      },
+      {
+        "name": "activity",
+        "default": "",
+        "help": "活动 ID"
+      },
+      {
+        "name": "poi_id",
+        "default": "",
+        "help": "地理位置 ID"
+      },
+      {
+        "name": "poi_name",
+        "default": "",
+        "help": "地理位置名称"
+      },
+      {
+        "name": "hotspot",
+        "default": "",
+        "help": "关联热点词"
+      },
+      {
+        "name": "no_safety_check",
+        "type": "bool",
+        "default": false,
+        "help": "跳过内容安全检测"
+      },
+      {
+        "name": "sync_toutiao",
+        "type": "bool",
+        "default": false,
+        "help": "同步发布到头条"
+      }
+    ],
+    "columns": [
+      "status",
+      "aweme_id",
+      "url",
+      "publish_time"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "pending",
+    "blocker": "待实现：视频/封面二进制、TOS 分块上传与签名、转码、安全检查、合集/活动/地点、2小时至14天定时与发布回执。来源可等待5分钟，当前宿主单次预算105秒；不能仅增超时或用 draft/update 替代。",
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "search.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors"
+    ],
+    "name": "search",
+    "access": "read",
+    "description": "关键词搜索抖音视频",
+    "domain": "www.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "query",
+        "required": true,
+        "positional": true,
+        "help": "搜索关键词"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10,
+        "help": "`结果数量 (1-${MAX_SEARCH_LIMIT})`"
+      }
+    ],
+    "columns": [
+      "rank",
+      "desc",
+      "author",
+      "url",
+      "plays",
+      "likes",
+      "comments",
+      "shares"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "stats.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "stats",
+    "access": "read",
+    "description": "获取单个作品的创作者中心深层指标",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "aweme_id",
+        "required": true,
+        "positional": true,
+        "help": "抖音作品 ID（aweme_id，可从作品 URL 末尾获取）"
+      }
+    ],
+    "columns": [
+      "metric",
+      "value"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "update.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./_shared/browser-fetch.js",
+      "./_shared/timing.js"
+    ],
+    "name": "update",
+    "access": "write",
+    "description": "更新视频信息",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "aweme_id",
+        "required": true,
+        "positional": true,
+        "help": "抖音作品 ID（aweme_id，可从作品 URL 末尾获取）"
+      },
+      {
+        "name": "reschedule",
+        "default": "",
+        "help": "新的发布时间（ISO8601 或 Unix 秒）"
+      },
+      {
+        "name": "caption",
+        "default": "",
+        "help": "新的正文内容"
+      }
+    ],
+    "columns": [
+      "status"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "user-videos.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./_shared/public-api.js"
+    ],
+    "name": "user-videos",
+    "access": "read",
+    "description": "获取指定用户的视频列表（含下载地址和热门评论）",
+    "domain": "www.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "sec_uid",
+        "type": "string",
+        "required": true,
+        "positional": true,
+        "help": "用户 sec_uid（个人主页 URL 末尾部分，也可直接传整条主页 URL）"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "获取数量（最大 20）"
+      },
+      {
+        "name": "with_comments",
+        "type": "bool",
+        "default": true,
+        "help": "包含热门评论（默认: true）"
+      },
+      {
+        "name": "comment_limit",
+        "type": "int",
+        "default": 10,
+        "help": "每个视频获取多少条评论（最大 10）"
+      }
+    ],
+    "columns": [
+      "index",
+      "aweme_id",
+      "title",
+      "duration",
+      "digg_count",
+      "play_url",
+      "top_comments"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  },
+  {
+    "site": "douyin",
+    "file": "videos.js",
+    "imports": [
+      "@jackwener/opencli/registry",
+      "@jackwener/opencli/errors",
+      "./_shared/browser-fetch.js"
+    ],
+    "name": "videos",
+    "access": "read",
+    "description": "获取作品列表",
+    "domain": "creator.douyin.com",
+    "strategy": "Strategy.COOKIE",
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "help": "最多返回多少个作品（跨页自动收集）",
+        "default_expression": "DEFAULT_LIMIT"
+      },
+      {
+        "name": "status",
+        "default": "all",
+        "choices": [
+          "all",
+          "published",
+          "reviewing",
+          "scheduled"
+        ]
+      }
+    ],
+    "columns": [
+      "aweme_id",
+      "title",
+      "status",
+      "play_count",
+      "digg_count",
+      "comment_count",
+      "collect_count",
+      "share_count",
+      "duration",
+      "create_time"
+    ],
+    "source_commit": "24136945847afbfad266c6c46a8cd335377f9112",
+    "package": "douyin.com",
+    "migration_status": "implemented_unaccepted",
+    "blocker": null,
+    "data_source": "创作者与公开视频 API；delete 为目标卡片 UI",
+    "live_status": "not_passed_or_not_run"
+  }
+]

@@ -46,6 +46,32 @@ describe('backend runtime helpers', () => {
     }))
   })
 
+  it('keeps a direct API request on its original URL when redirects are disallowed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', {
+      status: 302,
+      headers: { location: 'https://example.org/redirected' },
+    })))
+    const result = await handleBackendRuntimeFetch({
+      url: 'https://example.com/api',
+      options: { method: 'POST', redirect: 'manual', body: '{}' },
+    })
+    expect(result.status).toBe(302)
+    expect(fetch).toHaveBeenCalledWith('https://example.com/api', expect.objectContaining({ redirect: 'manual' }))
+  })
+
+  it('omits direct API query and response bodies from trace output when requested', async () => {
+    const output = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"result":"private fixture"}', { status: 200 })))
+    await handleBackendRuntimeFetch({
+      url: 'https://example.com/api',
+      redactBodyInTrace: true,
+      options: { method: 'POST', body: '{"query":"private fixture"}' },
+    }, 'fixture-trace')
+    const trace = output.mock.calls.map(([chunk]) => String(chunk)).join('')
+    expect(trace).toContain('[redacted]')
+    expect(trace).not.toContain('private fixture')
+  })
+
   it('sends base64 backend fetch bodies as binary buffers', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('ok', { status: 200 })))
 

@@ -392,6 +392,7 @@ export class QQChannel implements Channel {
     try {
       ;({ text: fullText, images, toolCalls, timing } = await runChannelChat(wm.messages, settings, {
         channelPermissionMode,
+        memoryScope: { user: `${channelType}:${userId}` },
         askUserHandler: async (question, options) => {
           // Format as numbered text
           const lines = [`${question}`]

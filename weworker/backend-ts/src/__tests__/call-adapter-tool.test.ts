@@ -42,6 +42,8 @@ vi.mock('../file-tools.js', () => ({
 }))
 
 describe('Adapter command boundary', () => {
+  const nativeShell = process.platform === 'win32' ? 'PowerShell' : 'Bash'
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.registeredTools.clear()
@@ -64,7 +66,7 @@ describe('Adapter command boundary', () => {
 
     expect(mocks.registeredTools.has('webcli_call')).toBe(false)
     expect(mocks.registeredTools.has('call_adapter_tool')).toBe(false)
-    expect(mocks.toolDescriptions.get('weworker_powershell')).toContain('webcli must use Claude Code native Bash')
+    expect(mocks.toolDescriptions.get('weworker_powershell')).toContain(`webcli must use Claude Code native ${nativeShell}`)
   })
 
   it('rejects webcli through WeWorker Shell in full mode', async () => {
@@ -81,7 +83,7 @@ describe('Adapter command boundary', () => {
       content: [{
         type: 'text',
         text: JSON.stringify({
-          error: 'Adapter commands must run with Claude Code native Bash instead of WeWorker Shell.',
+          error: `Adapter commands must run with Claude Code native ${nativeShell} instead of WeWorker Shell.`,
         }),
       }],
     })

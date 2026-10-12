@@ -1,0 +1,347 @@
+{
+  "schema_version": 2,
+  "name": "douyin.com",
+  "version": "0.1.0",
+  "description": "抖音公开视频查询与创作者中心管理",
+  "match": [
+    "creator.douyin.com",
+    "www.douyin.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "抖音",
+    "douyin",
+    "创作者中心"
+  ],
+  "commands": [
+    {
+      "id": "profile",
+      "runtime": "extension",
+      "module": "extension/commands/profile.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "获取账号信息",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "videos",
+      "runtime": "extension",
+      "module": "extension/commands/videos.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "获取作品列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "最多返回多少个作品（跨页自动收集）",
+            "default": 20
+          },
+          "status": {
+            "type": "string",
+            "default": "all",
+            "enum": [
+              "all",
+              "published",
+              "reviewing",
+              "scheduled"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "drafts",
+      "runtime": "extension",
+      "module": "extension/commands/drafts.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "获取草稿列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "collections",
+      "runtime": "extension",
+      "module": "extension/commands/collections.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "合集列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "activities",
+      "runtime": "extension",
+      "module": "extension/commands/activities.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "官方活动列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "location",
+      "runtime": "extension",
+      "module": "extension/commands/location.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "地理位置 POI 搜索",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "地名关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hashtag",
+      "runtime": "extension",
+      "module": "extension/commands/hashtag.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "话题搜索 / AI推荐 / 热点词",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "search=关键词搜索 (--keyword 必填), suggest=AI推荐 (--cover 必填), hot=热点词 (--keyword 可选)",
+            "enum": [
+              "search",
+              "suggest",
+              "hot"
+            ]
+          },
+          "keyword": {
+            "type": "string",
+            "description": "搜索关键词. search 必填; hot 可选; suggest 不使用 (传 --cover)",
+            "default": ""
+          },
+          "cover": {
+            "type": "string",
+            "description": "封面 URI (cover_uri). suggest 必填; 其它 action 不使用",
+            "default": ""
+          },
+          "limit": {
+            "type": "integer",
+            "default": 10
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "stats",
+      "runtime": "extension",
+      "module": "extension/commands/stats.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "获取单个作品的创作者中心深层指标",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "aweme_id": {
+            "type": "string",
+            "description": "抖音作品 ID（aweme_id，可从作品 URL 末尾获取）"
+          }
+        },
+        "required": [
+          "aweme_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "update",
+      "runtime": "extension",
+      "module": "extension/commands/update.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "更新视频信息",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "aweme_id": {
+            "type": "string",
+            "description": "抖音作品 ID（aweme_id，可从作品 URL 末尾获取）"
+          },
+          "reschedule": {
+            "type": "string",
+            "description": "新的发布时间（ISO8601 或 Unix 秒）",
+            "default": ""
+          },
+          "caption": {
+            "type": "string",
+            "description": "新的正文内容",
+            "default": ""
+          }
+        },
+        "required": [
+          "aweme_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "user-videos",
+      "runtime": "extension",
+      "module": "extension/commands/user-videos.js",
+      "routeDomain": "www.douyin.com",
+      "description": "获取指定用户的视频列表（含下载地址和热门评论）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "sec_uid": {
+            "type": "string",
+            "description": "用户 sec_uid（个人主页 URL 末尾部分，也可直接传整条主页 URL）"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "获取数量（最大 20）",
+            "default": 20
+          },
+          "with_comments": {
+            "type": "boolean",
+            "description": "包含热门评论（默认: true）",
+            "default": true
+          },
+          "comment_limit": {
+            "type": "integer",
+            "description": "每个视频获取多少条评论（最大 10）",
+            "default": 10
+          }
+        },
+        "required": [
+          "sec_uid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.douyin.com",
+      "description": "关键词搜索抖音视频",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "`结果数量 (1-${MAX_SEARCH_LIMIT})`",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "Verify current identity",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "Open official login; manual interaction",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "delete",
+      "runtime": "extension",
+      "module": "extension/commands/delete.js",
+      "routeDomain": "creator.douyin.com",
+      "description": "删除作品（优先使用创作者后台作品管理；找不到时回退到旧删除接口）",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "aweme_id": {
+            "type": "string",
+            "description": "作品 ID / item_id"
+          }
+        },
+        "required": [
+          "aweme_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

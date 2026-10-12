@@ -81,9 +81,9 @@ export class GenerationWorkerController extends EventEmitter {
     this.activeWorkers = new Map();
   }
 
-  async start(payload) {
+  async start(payload, { modelConfig = null } = {}) {
     const runId = randomUUID();
-    const session = this.#spawn('start', { ...payload, runId });
+    const session = this.#spawn('start', { ...payload, runId }, { modelConfig });
     session.runId = runId;
     this.activeWorkers.set(runId, session);
     try {
@@ -95,14 +95,14 @@ export class GenerationWorkerController extends EventEmitter {
       ]);
       const failed = this.store.load(runId);
       if (failed && !WORKER_ACTIVE_STATUSES.has(failed.status)) {
-        return createGenerationRunTransportSnapshot(failed);
+        return createGenerationRunTransportSnapshot(failed, { rootDir: this.store.rootDir });
       }
       throw error;
     }
     cleanupWorkerPayload(session);
     const run = this.store.load(runId);
     if (!run) throw new Error(`generation worker did not persist run: ${runId}`);
-    return createGenerationRunTransportSnapshot(run);
+    return createGenerationRunTransportSnapshot(run, { rootDir: this.store.rootDir });
   }
 
   get(runId) {
@@ -110,13 +110,13 @@ export class GenerationWorkerController extends EventEmitter {
     const snapshot = this.store.load(id);
     if (!snapshot) return null;
     if (this.activeWorkers.has(id) || !WORKER_ACTIVE_STATUSES.has(snapshot.status)) {
-      return createGenerationRunTransportSnapshot(snapshot);
+      return createGenerationRunTransportSnapshot(snapshot, { rootDir: this.store.rootDir });
     }
     return createGenerationRunTransportSnapshot(this.#failPersistedRun(
       id,
       'GENERATION_WORKER_INTERRUPTED',
       'generation run was interrupted because its Harness worker is no longer running',
-    ));
+    ), { rootDir: this.store.rootDir });
   }
 
   getTrace(runId) {
@@ -136,7 +136,7 @@ export class GenerationWorkerController extends EventEmitter {
           session.closedSignal.promise,
           new Promise((resolve) => setTimeout(resolve, 1_000)),
         ]);
-        return createGenerationRunTransportSnapshot(this.#cancelPersistedRun(id, reason));
+        return createGenerationRunTransportSnapshot(this.#cancelPersistedRun(id, reason), { rootDir: this.store.rootDir });
       }
       const killTimer = setTimeout(() => {
         if (!session.closed) {
@@ -144,12 +144,12 @@ export class GenerationWorkerController extends EventEmitter {
         }
       }, 2_000);
       killTimer.unref?.();
-      return createGenerationRunTransportSnapshot(this.store.load(id));
+      return createGenerationRunTransportSnapshot(this.store.load(id), { rootDir: this.store.rootDir });
     }
-    return createGenerationRunTransportSnapshot(this.#cancelPersistedRun(id, reason));
+    return createGenerationRunTransportSnapshot(this.#cancelPersistedRun(id, reason), { rootDir: this.store.rootDir });
   }
 
-  async publish(runId) {
+  async publish(runId, approval) {
     const id = String(runId || '');
     if (this.activeWorkers.has(id)) throw new Error(`generation run is still active: ${id}`);
     const snapshot = this.store.load(id);
@@ -157,7 +157,7 @@ export class GenerationWorkerController extends EventEmitter {
     if (snapshot.status !== GENERATION_STATUSES.AWAITING_APPROVAL) {
       throw new Error(`generation run is not awaiting approval: ${snapshot.status}`);
     }
-    const session = this.#spawn('publish', { runId: id });
+    const session = this.#spawn('publish', { runId: id, approval });
     session.runId = id;
     this.activeWorkers.set(id, session);
     await session.command.promise;
@@ -165,10 +165,30 @@ export class GenerationWorkerController extends EventEmitter {
     await session.completion.promise;
     const run = this.store.load(id);
     if (!run) throw new Error(`generation run not found: ${id}`);
-    return createGenerationRunTransportSnapshot(run);
+    return createGenerationRunTransportSnapshot(run, { rootDir: this.store.rootDir });
   }
 
-  #spawn(command, payload) {
+  async resume(runId, answer, { modelConfig = null } = {}) {
+    const id = String(runId || '');
+    if (this.activeWorkers.has(id)) throw new Error(`generation run is still active: ${id}`);
+    const snapshot = this.store.load(id);
+    if (!snapshot) throw new Error(`generation run not found: ${id}`);
+    if (snapshot.status !== GENERATION_STATUSES.NEEDS_USER_INPUT) {
+      throw new Error(`generation run is not awaiting user input: ${snapshot.status}`);
+    }
+    const session = this.#spawn('resume', { runId: id, answer: String(answer || '') }, modelConfig ? { modelConfig } : {});
+    session.runId = id;
+    this.activeWorkers.set(id, session);
+    await session.command.promise;
+    cleanupWorkerPayload(session);
+    // Match start(): acknowledge the resumed run, then let the client poll.
+    // Waiting for the entire model loop here exceeds the Bridge RPC deadline.
+    const run = this.store.load(id);
+    if (!run) throw new Error(`generation run not found: ${id}`);
+    return createGenerationRunTransportSnapshot(run, { rootDir: this.store.rootDir });
+  }
+
+  #spawn(command, payload, { modelConfig = null } = {}) {
     if (!this.workerScript) throw new Error('generation worker entry script is unavailable');
     fs.mkdirSync(this.reportDir, { recursive: true });
     const { tempDir, payloadPath } = writeWorkerPayload(payload);
@@ -187,6 +207,7 @@ export class GenerationWorkerController extends EventEmitter {
         ELECTRON_RUN_AS_NODE: '1',
         WEBCLI_GENERATION_WORKER: '1',
         WEBCLI_GENERATION_RUNS_DIR: this.store.rootDir,
+        WEBCLI_GENERATION_LEGACY_RUNS_DIR: this.store.legacyRootDir || '',
         WEBCLI_AI_REPORT_DIR: this.reportDir,
       },
     });
@@ -220,7 +241,13 @@ export class GenerationWorkerController extends EventEmitter {
     }, 25_000);
     session.commandTimer.unref?.();
     try {
-      child.send({ type: 'command', requestId, command, payloadPath });
+      child.send({
+        type: 'command',
+        requestId,
+        command,
+        payloadPath,
+        ...(modelConfig ? { modelConfig } : {}),
+      });
     } catch (error) {
       session.pendingCommands.delete(requestId);
       session.command.reject(error);
@@ -265,7 +292,13 @@ export class GenerationWorkerController extends EventEmitter {
     if (message?.type === 'event') {
       const runId = String(message.event?.runId || session.runId || '');
       const snapshot = runId ? this.store.load(runId) : null;
-      if (snapshot) this.emit('event', message.event, createGenerationRunTransportSnapshot(snapshot));
+      if (snapshot) {
+        this.emit(
+          'event',
+          message.event,
+          createGenerationRunTransportSnapshot(snapshot, { rootDir: this.store.rootDir }),
+        );
+      }
       return;
     }
     if (message?.type === 'extension_request') {
@@ -275,7 +308,7 @@ export class GenerationWorkerController extends EventEmitter {
     if (message?.type === 'finished') {
       session.finished = true;
       session.runId = message.runId || session.runId;
-      if (session.runId) this.activeWorkers.delete(session.runId);
+      if (this.activeWorkers.get(session.runId) === session) this.activeWorkers.delete(session.runId);
       session.completion.resolve(this.store.load(session.runId));
     }
   }
@@ -320,8 +353,9 @@ export class GenerationWorkerController extends EventEmitter {
       pending.reject(new Error(`Harness worker exited: ${formatProcessExitCode(code, signal)}`));
     }
     session.pendingCommands.clear();
-    if (session.runId) this.activeWorkers.delete(session.runId);
-    if (!session.finished && !session.cancelRequested && session.runId) {
+    const ownsRun = this.activeWorkers.get(session.runId) === session;
+    if (ownsRun) this.activeWorkers.delete(session.runId);
+    if (!session.finished && !session.cancelRequested && session.runId && ownsRun) {
       const exit = formatProcessExitCode(code, signal);
       process.stderr.write(
         `[HarnessWorker] exited unexpectedly (${exit}); Bridge remains active; fatal reports: ${this.reportDir}\n`,
@@ -354,7 +388,7 @@ export class GenerationWorkerController extends EventEmitter {
         this.emit(
           'event',
           createGenerationEventTransport(event),
-          createGenerationRunTransportSnapshot(nextSnapshot),
+          createGenerationRunTransportSnapshot(nextSnapshot, { rootDir: this.store.rootDir }),
         );
       },
     });
@@ -375,7 +409,7 @@ export class GenerationWorkerController extends EventEmitter {
         this.emit(
           'event',
           createGenerationEventTransport(event),
-          createGenerationRunTransportSnapshot(nextSnapshot),
+          createGenerationRunTransportSnapshot(nextSnapshot, { rootDir: this.store.rootDir }),
         );
       },
     });
