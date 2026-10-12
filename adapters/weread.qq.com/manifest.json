@@ -1,0 +1,301 @@
+{
+  "schema_version": 2,
+  "name": "weread.qq.com",
+  "version": "0.1.0",
+  "description": "微信读书：OpenCLI 对齐能力",
+  "match": [
+    "weread.qq.com",
+    "i.weread.qq.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "weread",
+    "微信读书"
+  ],
+  "runtime_allowed_hosts": [
+    "i.weread.qq.com"
+  ],
+  "commands": [
+    {
+      "id": "ai-outline",
+      "runtime": "extension",
+      "module": "extension/commands/ai-outline.js",
+      "routeDomain": "weread.qq.com",
+      "description": "Get AI-generated outline for a book",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "book-id": {
+            "type": "string",
+            "description": "Book ID (from shelf or search results)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max outline items to return",
+            "default": 200
+          },
+          "depth": {
+            "type": "integer",
+            "description": "Max outline depth (2=topics, 3=key points, 4=details)",
+            "default": 4
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Output structured rows (chapter/idx/level/text) for programmatic use",
+            "default": false
+          }
+        },
+        "required": [
+          "book-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "weread.qq.com",
+      "description": "Show the current logged-in weread account",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "weread.qq.com",
+      "description": "Open the weread login page; finish signing in on the page, then verify with whoami",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "book",
+      "runtime": "extension",
+      "module": "extension/commands/book.js",
+      "routeDomain": "weread.qq.com",
+      "description": "View book details on WeRead",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "book-id": {
+            "type": "string",
+            "description": "Book ID from search or shelf results"
+          }
+        },
+        "required": [
+          "book-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "book-search",
+      "runtime": "extension",
+      "module": "extension/commands/book-search.js",
+      "routeDomain": "weread.qq.com",
+      "description": "Search within a WeRead book after resolving it by title",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "book": {
+            "type": "string",
+            "description": "Book title keyword, numeric bookId, or reader URL"
+          },
+          "query": {
+            "type": "string",
+            "description": "Keyword to search inside the selected book"
+          },
+          "book-rank": {
+            "type": "integer",
+            "description": "Which book search result to use when book is a title keyword",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max in-book matches to return (1-100)",
+            "default": 20
+          },
+          "fragment-size": {
+            "type": "integer",
+            "description": "Snippet length around each match (1-500)",
+            "default": 150
+          },
+          "raw": {
+            "type": "boolean",
+            "description": "Output structured rows instead of markdown text",
+            "default": false
+          }
+        },
+        "required": [
+          "book",
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "highlights",
+      "runtime": "extension",
+      "module": "extension/commands/highlights.js",
+      "routeDomain": "weread.qq.com",
+      "description": "List your highlights (underlines) in a book",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "book-id": {
+            "type": "string",
+            "description": "Book ID (from shelf or search results)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results",
+            "default": 20
+          }
+        },
+        "required": [
+          "book-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "notebooks",
+      "runtime": "extension",
+      "module": "extension/commands/notebooks.js",
+      "routeDomain": "weread.qq.com",
+      "description": "List books that have highlights or notes",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "notes",
+      "runtime": "extension",
+      "module": "extension/commands/notes.js",
+      "routeDomain": "weread.qq.com",
+      "description": "List your notes (thoughts) on a book",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "book-id": {
+            "type": "string",
+            "description": "Book ID (from shelf or search results)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results",
+            "default": 20
+          }
+        },
+        "required": [
+          "book-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "ranking",
+      "runtime": "extension",
+      "module": "extension/commands/ranking.js",
+      "routeDomain": "weread.qq.com",
+      "description": "WeRead book rankings by category",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category: all (default), rising, or numeric category ID",
+            "default": "all"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "weread.qq.com",
+      "description": "Search books on WeRead",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keyword"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "shelf",
+      "runtime": "extension",
+      "module": "extension/commands/shelf.js",
+      "routeDomain": "weread.qq.com",
+      "description": "List books on your WeRead bookshelf",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Max results",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
