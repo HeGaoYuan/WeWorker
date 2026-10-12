@@ -11,8 +11,7 @@
 - 提供统一的 `webcli call <adapter-id>.<tool-id>` 命令入口。
 - 提供网站探索agent，用于探索网站并辅助开发网站工具。
 - 提供定时任务、站点记忆和多渠道通知能力。
-- 首批公开 Profile 提供 32 个 Adapter 包：QQ 邮箱、163 邮箱、京东、闲鱼、1688、GitHub、Gitee、小红书、微博、Twitter/X、B 站、知乎、掘金、贴吧、V2EX、豆瓣、36氪、微信读书、雪球、BOSS 直聘，以及携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票。
-- 浏览器扩展兼容目录保留 B 站、GitHub、京东、掘金、QQ 邮箱、163 邮箱、Gmail、诺诺网发票和小红书 Adapter。
+- 首次公开版本内置 QQ 邮箱、163 邮箱、Gmail、京东、闲鱼、1688、GitHub、Gitee、小红书、微博、Twitter/X、B 站、知乎、掘金、贴吧、V2EX、豆瓣、36氪、微信读书、雪球、BOSS 直聘、携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票等网站 Adapter。
 
 ### 安全与隐私
 

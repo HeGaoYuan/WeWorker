@@ -8,8 +8,6 @@
 
 WeWorker 是一个 AI 驱动的桌面端网页自动化工具。它将自然语言任务交给 AI Agent，通过浏览器扩展或内置 Toolkit Adapter 调用网站能力，并在涉及登录、提交、下单、支付等关键步骤时保留用户确认环节。
 
-> WeWorker 仍在持续开发。网站页面变化可能导致 Adapter 暂时失效；执行发送邮件、下单、支付、发布内容等操作前，请核对页面和参数。
-
 ## 功能
 
 - **自然语言操作网站**：通过桌面端对话描述任务，由 AI 选择并调用网站工具。
@@ -20,22 +18,24 @@ WeWorker 是一个 AI 驱动的桌面端网页自动化工具。它将自然语�
 - **消息通知**：支持将任务结果发送到已配置的通知渠道。
 - **多模型配置**：支持 Anthropic、智谱、DeepSeek 和兼容接口的自定义模型配置。
 
-## 网站支持状态
+## Adapter 支持
 
-当前公开 Profile 已覆盖原定 20 个目标网站，并额外提供 12 个补充 Adapter 包。Adapter 分为两类来源：
+WeWorker 初次开源版本已内置一批常用网站 Adapter。常用示例：
 
-- `adapters/`：当前公开 Profile 的 v2 Adapter 包，随桌面端构建进入默认包。
-- `extension/adapters/`：浏览器扩展内置兼容 Adapter，主要保留早期扩展直注入实现和补充集成。
+| 网站 | Adapter ID | 当前能力 |
+| --- | --- | --- |
+| QQ 邮箱 | `mail.qq.com` | 邮件搜索、未读读取、邮件详情、附件和发票下载 |
+| 163 邮箱 | `mail.163.com` | 邮件搜索、未读读取、邮件详情、附件下载、写邮件 |
+| 京东 | `jd.com` | 商品搜索、购物车、订单、商品详情、购买与支付流程 |
+| 小红书 | `xiaohongshu.com` | 笔记搜索、笔记详情、评论读取、点赞、收藏、发布与草稿 |
+| B 站 | `bilibili.com` | 视频搜索、视频详情、评论读取、点赞、收藏 |
+| 知乎 | `zhihu.com` | 搜索、问题、回答、评论、热榜、点赞、收藏 |
+| GitHub | `github.com` | Trending 仓库读取 |
+| Gitee | `gitee.com` | 搜索、趋势榜、用户信息 |
+| 豆瓣 | `douban.com` | 条目搜索、详情、影评、Top250、相册、标记 |
+| 微博 | `weibo.com` | 热榜、搜索、信息流、用户主页、评论、发布 |
 
-| 范围 | 数量 | 说明 |
-| --- | ---: | --- |
-| 原定目标网站 | 20 | QQ 邮箱、163 邮箱、京东、小红书、B 站、知乎、GitHub、Gitee、掘金、贴吧、闲鱼、1688、微信读书、豆瓣、36氪、微博、V2EX、雪球、BOSS 直聘、Twitter/X |
-| 补充 Adapter 包 | 12 | 携程、12306、前程无忧、有道云笔记、大众点评、抖音、Hacker News、Wikipedia、今日头条、什么值得买、arXiv、诺诺网发票 |
-| 扩展兼容 Adapter | 9 | B 站、GitHub、京东、掘金、QQ 邮箱、163 邮箱、Gmail、诺诺网发票、小红书 |
-
-典型能力包括邮件搜索与附件下载、电商搜索与订单/购物车查询、内容社区搜索与详情/评论读取、代码托管趋势榜、招聘/出行/阅读/资讯类公开查询，以及部分需要用户确认的点赞、收藏、发布、购买、支付等写操作。
-
-完整网站、Adapter ID、能力范围和验证状态见 [Adapter 状态清单](docs/ADAPTERS.md)。“已实现”表示仓库中存在可打包的 Adapter，不代表目标网站在所有账号、地区和时间均保持兼容。
+更多已支持网站、Adapter ID 和能力范围见 [Adapter 清单](docs/ADAPTERS.md)。
 
 ## 快速开始
 
@@ -167,7 +167,7 @@ npm run build:mac
 
 ## 贡献
 
-欢迎提交 Bug、文档、测试、新功能和新网站 Adapter。请先阅读 [贡献指南](CONTRIBUTING.md)、[社区行为准则](CODE_OF_CONDUCT.md)、[支持说明](SUPPORT.md) 和 [Git 工作流](docs/GIT_WORKFLOW.md)。新增或完成 Adapter 时，需要在同一个 PR 中更新 [Adapter 状态清单](docs/ADAPTERS.md)。
+欢迎提交 Bug、文档、测试、新功能和新网站 Adapter。请先阅读 [贡献指南](CONTRIBUTING.md)、[社区行为准则](CODE_OF_CONDUCT.md)、[支持说明](SUPPORT.md) 和 [Git 工作流](docs/GIT_WORKFLOW.md)。新增或完成 Adapter 时，需要在同一个 PR 中更新 [Adapter 清单](docs/ADAPTERS.md)。
 
 ## 版本
 
