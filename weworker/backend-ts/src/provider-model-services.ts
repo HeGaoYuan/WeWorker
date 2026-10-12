@@ -44,6 +44,11 @@ export interface ProtocolProbeResult {
 }
 
 type FetchLike = typeof fetch
+type ProviderProtocolProbeInput = ProviderConnectionInput & {
+  target: ProbeTarget
+  verifyResponse?: boolean
+  forceAnthropicTextProbe?: boolean
+}
 
 function uniqueModels(values: unknown[]): string[] {
   return [...new Set(values
@@ -151,8 +156,15 @@ function shouldProbeWithAnthropicToolChoice(input: ProviderConnectionInput & { t
   return input.provider.weworker.protocol === 'anthropic_messages'
 }
 
+function shouldRetryAnthropicTextProbe(input: ProviderProtocolProbeInput, detail: string): boolean {
+  if (input.forceAnthropicTextProbe) return false
+  if (input.provider.id !== 'custom') return false
+  if (!shouldProbeWithAnthropicToolChoice(input)) return false
+  return /\btool_choice\b|\btool choice\b|\btools?\b|\bthinking\b|\breasoning\b/i.test(detail)
+}
+
 export async function probeProviderProtocol(
-  input: ProviderConnectionInput & { target: ProbeTarget; verifyResponse?: boolean },
+  input: ProviderProtocolProbeInput,
   fetchImpl: FetchLike = fetch,
 ): Promise<ProtocolProbeResult> {
   const config = input.target === 'weworker' ? input.provider.weworker : input.provider.webwright
@@ -170,7 +182,7 @@ export async function probeProviderProtocol(
     ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
-  const useAnthropicToolProbe = isAnthropic && shouldProbeWithAnthropicToolChoice(input)
+  const useAnthropicToolProbe = isAnthropic && !input.forceAnthropicTextProbe && shouldProbeWithAnthropicToolChoice(input)
   const body = isAnthropic
     ? {
         model: input.model,
@@ -223,6 +235,9 @@ export async function probeProviderProtocol(
       return { ok: true, target: input.target, protocol, model: input.model }
     }
     const detail = (await readRemoteResponse(response)).detail.split(input.apiKey).join('[已隐藏]')
+    if (isAnthropic && shouldRetryAnthropicTextProbe(input, detail)) {
+      return probeProviderProtocol({ ...input, forceAnthropicTextProbe: true }, fetchImpl)
+    }
     return { ok: false, target: input.target, protocol, model: input.model, error: classifyProbeFailure(response.status, detail), detail }
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')

@@ -67,6 +67,25 @@ describe('main model onboarding', () => {
     expect(body).not.toHaveProperty('tool_choice')
     expect(body).not.toHaveProperty('tools')
   })
+
+  it('falls back to a text probe when a custom Anthropic endpoint rejects tool_choice', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        error: {
+          message: 'Thinking mode does not support this tool_choice',
+          type: 'invalid_request_error',
+        },
+      }, { status: 400 }))
+      .mockResolvedValueOnce(anthropicTextResponse())
+
+    expect(await probeMainConnection(mainInput(), fetchMock)).toMatchObject({ ok: true, auth_type: 'auth_token' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string)
+    expect(firstBody.tool_choice).toEqual({ type: 'tool', name: 'connection_check' })
+    expect(secondBody).not.toHaveProperty('tool_choice')
+    expect(secondBody).not.toHaveProperty('tools')
+  })
 })
 
 describe('exploration connection preparation', () => {
