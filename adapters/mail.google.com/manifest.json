@@ -1,0 +1,180 @@
+{
+  "schema_version": 2,
+  "name": "mail.google.com",
+  "version": "1.0.8",
+  "description": "Gmail：读取邮件列表、搜索邮件、查看邮件详情、下载附件",
+  "match": [
+    "mail.google.com"
+  ],
+  "requires_auth": true,
+  "commands": [
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "检测 Gmail 是否已登录。打开 Gmail 后应首先调用此工具确认登录状态，未登录时需提醒用户先登录。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ]
+    },
+    {
+      "id": "navigate-to-inbox",
+      "runtime": "extension",
+      "module": "extension/commands/navigate-to-inbox.js",
+      "description": "Navigate to the Gmail inbox homepage. Use this before multi-step operations to ensure a clean starting state.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "navigate_to_inbox"
+      ]
+    },
+    {
+      "id": "search-emails",
+      "runtime": "extension",
+      "module": "extension/commands/search-emails.js",
+      "description": "Search Gmail by keyword and return matching email threads",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "Search term, e.g. \"invoice\", \"meeting\", \"receipt\""
+          }
+        },
+        "required": [
+          "keyword"
+        ]
+      },
+      "aliases": [
+        "search_emails"
+      ]
+    },
+    {
+      "id": "get-unread-emails",
+      "runtime": "extension",
+      "module": "extension/commands/get-unread-emails.js",
+      "description": "Get unread emails from the Gmail inbox",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of emails to return. Default: 20"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "get_unread_emails"
+      ]
+    },
+    {
+      "id": "open-email",
+      "runtime": "extension",
+      "module": "extension/commands/open-email.js",
+      "description": "Open a Gmail email thread and return its full content including body and attachments. Use the email ID from search_emails or get_unread_emails.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "emailId": {
+            "type": "string",
+            "description": "Thread ID returned by search_emails or get_unread_emails"
+          }
+        },
+        "required": [
+          "emailId"
+        ]
+      },
+      "aliases": [
+        "open_email"
+      ]
+    },
+    {
+      "id": "download-attachment",
+      "runtime": "extension",
+      "module": "extension/commands/download-attachment.js",
+      "description": "Download an attachment from the currently open Gmail email. You must call open_email first.",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "attachmentName": {
+            "type": "string",
+            "description": "Exact filename to download (e.g. \"invoice.pdf\"), or \"all\" to download all attachments as a zip"
+          }
+        },
+        "required": [
+          "attachmentName"
+        ]
+      },
+      "aliases": [
+        "download_attachment"
+      ]
+    },
+    {
+      "id": "get-current-page-info",
+      "runtime": "extension",
+      "module": "extension/commands/get-current-page-info.js",
+      "description": "Get the current Gmail page state — useful for checking whether you are in the inbox, reading an email, or composing.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "get_current_page_info"
+      ]
+    }
+  ],
+  "homepage_url": "https://mail.google.com/",
+  "auth_check_tool": "mail.google.com.check-login-status",
+  "icon": "mail",
+  "scenarios": [
+    {
+      "id": "inbox",
+      "title": "查收邮件",
+      "summary": "查看 Gmail 收件箱与未读邮件",
+      "prompts": [
+        {
+          "text": "帮我看看有没有未读邮件",
+          "reply": "我会打开 Gmail，先查看收件箱和未读状态。\n如果有未读邮件，我会整理发件人、主题和时间；需要打开某封邮件确认内容时会先告诉你。"
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "title": "搜索下载",
+      "summary": "按关键词搜索邮件并下载附件（如发票）",
+      "prompts": [
+        {
+          "text": "搜索最近收到的${发票}邮件",
+          "reply": "我会在 Gmail 中搜索最近收到的发票邮件，并检查匹配结果。\n如果找到附件，会帮你下载并说明文件位置；需要你确认时会停下来。"
+        }
+      ]
+    }
+  ],
+  "test_prompts": [
+    "打开 Gmail，查看收件箱邮件列表，然后搜索关键词'test'，打开搜索结果中的第一封邮件查看详情"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "Gmail",
+      "description": "Gmail：读取邮件列表、搜索邮件、查看邮件详情、下载附件"
+    }
+  },
+  "verified_on": "2026-02-24"
+}

@@ -11,18 +11,14 @@ extension/
 │   └── service-worker.js  Service Worker：后台进程
 ├── content/
 │   └── injector.js        Content Script：页面注入脚本
-├── adapters/              扩展内置兼容适配器目录
-│   ├── index.json         已注册的域名列表
-│   └── <domain>/
-│       ├── index.js       适配器代码
-│       ├── manifest.json  适配器元数据
-│       └── SKILL.md       Skill 描述文件
+├── adapters/              构建后运行资源目录
+│   └── index.json         旧版兼容 Adapter 清单
 ├── popup/                 扩展弹窗 UI
 ├── sidepanel/             侧边栏 UI
 └── icons/                 扩展图标
 ```
 
-当前内置 Adapter 包位于仓库根目录 `adapters/<domain>/`，并由 `weworker/build-profile.json` 控制是否进入默认构建。`extension/adapters/` 保留浏览器扩展直注入运行所需的 Adapter 资源。
+当前内置 Adapter 包源码位于仓库根目录 `adapters/<domain>/`，并由 `weworker/build-profile.json` 控制是否进入默认构建。构建时会生成扩展运行所需的 Adapter 资源；不要在根 `adapters/` 与 `extension/adapters/` 同时维护同名 Adapter。
 
 ## Chrome 扩展的运行模型
 
@@ -143,7 +139,17 @@ Chrome 会在空闲时挂起 Service Worker，内存中的注册表会丢失。�
 
 ## 适配器格式
 
-每个适配器位于 `adapters/<domain>/index.js`，通过 `window.__webmcpRegister()` 注册：
+当前内置 Adapter 使用根目录 v2 包结构：
+
+```
+adapters/<domain>/
+├── manifest.json
+└── extension/
+    ├── commands/
+    └── internal/
+```
+
+历史单文件适配器通过 `window.__webmcpRegister()` 注册；迁移到 v2 包后，每个命令由 `manifest.json` 的 `commands[].module` 指向对应模块。
 
 ```javascript
 window.__webmcpRegister({
@@ -192,9 +198,9 @@ window.__webmcpRegister({
 
 ## 添加自定义适配器
 
-1. 创建 `adapters/mysite.com/index.js`，编写 `__webmcpRegister` 调用
-2. 创建 `adapters/mysite.com/manifest.json`，填写元数据
-3. 在 `adapters/index.json` 中添加域名 `"mysite.com"`
-4. 在 `chrome://extensions/` 重新加载扩展，然后在目标网站刷新页面
+1. 创建 `adapters/mysite.com/manifest.json`，使用 `schema_version: 2` 声明命令、运行时、参数和安全边界。
+2. 在 `adapters/mysite.com/extension/commands/` 与 `extension/internal/` 中实现命令逻辑。
+3. 在 `weworker/build-profile.json` 中添加域名 `"mysite.com"`，决定是否进入默认桌面端构建。
+4. 运行配置/构建检查后，在 `chrome://extensions/` 重新加载构建后的扩展运行目录，并刷新目标网站页面。
 
 可参考现有公开适配器（如 `jd.com`、`mail.163.com`、`xiaohongshu.com`）的实现。
