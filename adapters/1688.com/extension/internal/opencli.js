@@ -495,6 +495,14 @@ var __wave5 = (() => {
       return readPageState(page);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Site redirected the requested page")) {
+        try {
+          const redirectedState = await readPageState(page);
+          assertAuthenticatedState(redirectedState, action);
+        } catch (stateError) {
+          if (stateError instanceof AuthRequiredError) throw stateError;
+        }
+      }
       if (message.includes("Inspected target navigated or closed") || message.includes("Cannot find context with specified id") || message.includes("Target closed")) {
         throw new CommandExecutionError(`1688 ${action} navigation lost the current browser target`, `${buildCaptchaHint(action)} If CDP is attached to a stale or blocked tab, open a fresh 1688 tab and point OPENCLI_CDP_TARGET at that tab.`);
       }
@@ -1285,9 +1293,52 @@ var __wave5 = (() => {
       return `url:${row.item_url}`;
     return null;
   }
+  async function submitHomepageSearch(page, query) {
+    const submitted = await page.evaluateWithArgs(`
+      (async () => {
+        const keyword = String(query || '').trim();
+        const input = document.querySelector('#alisearch-input, textarea[name="keywords"], input[name="keywords"]');
+        if (!keyword || !input) return false;
+        input.focus();
+        const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(input, keyword);
+        else input.value = keyword;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const form = input.closest('form');
+        const button = document.querySelector('button.searchBtn--bnk9giWe, button[type="submit"], input[type="submit"]');
+        if (button) {
+          button.click();
+          return true;
+        }
+        if (form) {
+          form.requestSubmit ? form.requestSubmit() : form.submit();
+          return true;
+        }
+        return false;
+      })()
+    `, { query });
+    if (!submitted) {
+      throw new CommandExecutionError("1688 homepage search box was not found", "Open https://www.1688.com/ and verify the search box is visible before retrying.");
+    }
+    await page.wait(3);
+  }
   async function readSearchPayload(page, url) {
     const state = await gotoAndReadState(page, url, 2500, "search");
     assertAuthenticatedState(state, "search");
+    const query = (() => {
+      try {
+        return new URL(url).searchParams.get("keywords") || "";
+      } catch {
+        return "";
+      }
+    })();
+    if (query && /^https:\/\/www\.1688\.com\/?$/i.test(state.href)) {
+      await submitHomepageSearch(page, query);
+      const afterSubmit = await readPageState(page);
+      assertAuthenticatedState(afterSubmit, "search");
+    }
     const payload = await page.evaluate(`
     (() => {
       const normalizeText = (value) => (value || '').replace(/\\s+/g, ' ').trim();

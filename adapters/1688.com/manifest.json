@@ -3,15 +3,34 @@
   "name": "1688.com",
   "version": "0.1.0",
   "description": "1688 批发：OpenCLI 对齐能力",
+  "homepage_url": "https://www.1688.com/",
   "match": [
     "1688.com",
     "www.1688.com",
-    "login.1688.com"
+    "login.1688.com",
+    "login.taobao.com",
+    "account.1688.com",
+    "s.1688.com",
+    "detail.1688.com",
+    "detail.m.1688.com",
+    "winport.m.1688.com",
+    "*.1688.com"
   ],
   "requires_auth": false,
   "discovery_terms": [
     "1688",
     "1688 批发"
+  ],
+  "runtime_allowed_hosts": [
+    "1688.com",
+    "www.1688.com",
+    "login.1688.com",
+    "login.taobao.com",
+    "account.1688.com",
+    "s.1688.com",
+    "detail.1688.com",
+    "detail.m.1688.com",
+    "winport.m.1688.com"
   ],
   "commands": [
     {
