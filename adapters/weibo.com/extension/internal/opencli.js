@@ -1060,9 +1060,14 @@ ${item.time}`;
       const keyword = encodeURIComponent(String(kwargs.keyword ?? "").trim());
       await page.goto(`https://s.weibo.com/weibo?q=${keyword}`);
       await page.wait(2);
-      const data = requireArrayEvaluateResult(unwrapEvaluateResult(await page.evaluate(`
+      const extracted = unwrapEvaluateResult(await page.evaluate(`
       (() => {
         const clean = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+        const pageText = clean(document.body && document.body.innerText);
+        const title = clean(document.title);
+        if (/Sina Visitor System/i.test(title) || /访客|验证|登录|visitor/i.test(pageText)) {
+          return { error: 'auth', detail: 'Weibo search requires login or visitor verification' };
+        }
         const absoluteUrl = (href) => {
           if (!href) return '';
           if (href.startsWith('http://') || href.startsWith('https://')) return href;
@@ -1106,7 +1111,11 @@ ${item.time}`;
 
         return rows;
       })()
-    `)), "weibo search");
+    `));
+      if (extracted && !Array.isArray(extracted) && extracted.error === "auth") {
+        throw new AuthRequiredError("weibo.com", extracted.detail || "Weibo search requires login or visitor verification");
+      }
+      const data = requireArrayEvaluateResult(extracted, "weibo search");
       if (data.length === 0) {
         throw new CliError("NOT_FOUND", "No Weibo search results found", "Try a different keyword or ensure you are logged into weibo.com");
       }
