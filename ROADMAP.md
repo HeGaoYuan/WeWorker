@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-12：发布流程改为正式版本 Tag `v<major>.<minor>.<patch>` 推送后自动构建 Windows x64、macOS arm64 与 macOS x64 安装包，并创建 Draft Release；普通代码 push 不再触发 CI，代码检查保留在 PR 与手动触发。新增 `docs/RELEASE.md` 固化发布步骤。桌面端、安装包、浏览器扩展与官网图标统一替换为项目 logo。已完成配置静态检查、Release workflow YAML 解析、图标资源尺寸校验；完整 GitHub Actions 构建需推送 PR/Tag 后在远端验证。
+
 - 2026-10-08（wave4提交）：整理头条0.1.1、什么值得买/arXiv 0.1.0及协作交接文档提交至codex/opencli-wave4，目标develop。8项真实数据/身份样例及头条文章空态通过；专项130项、相关回归148项、构建与包校验通过。无关文章未纳入，未合并或发版。
 
 - 2026-10-08（协作交接）：核对17个已迁入来源目录、4个有包未对齐、158个无根v2包；整理站点范围、验收缺口、wave4未提交状态、开放PR重叠及建议分工，见docs/opencli_migration_handoff_20261008.md。未向同事发消息或分派任务。
