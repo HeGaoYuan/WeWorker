@@ -3,6 +3,7 @@
   "name": "goofish.com",
   "version": "0.1.0",
   "description": "闲鱼：OpenCLI 对齐能力",
+  "homepage_url": "https://www.goofish.com/",
   "match": [
     "goofish.com",
     "www.goofish.com"
@@ -11,6 +12,10 @@
   "discovery_terms": [
     "xianyu",
     "闲鱼"
+  ],
+  "runtime_allowed_hosts": [
+    "goofish.com",
+    "www.goofish.com"
   ],
   "commands": [
     {
