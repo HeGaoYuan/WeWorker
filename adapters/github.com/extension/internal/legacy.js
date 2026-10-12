@@ -1,3 +1,12 @@
+/* v2 compatibility implementation for github.com; preserves the tracked legacy executable logic. */
+(function () {
+  var captured = [];
+  var previousRegister = window.__webmcpRegister;
+  window.__webmcpRegister = function (adapter) { captured.push(adapter || {}); };
+  window.__webmcpGeneratedSupport = window.__webmcpGeneratedSupport || {};
+  window.__webmcpGeneratedLegacyHandlers = window.__webmcpGeneratedLegacyHandlers || {};
+  try {
+/* embedded legacy source: index.js */
 /**
  * GitHub Adapter Script
  *
@@ -381,3 +390,31 @@ window.__webmcpRegister({
     },
   ],
 });
+
+  } finally {
+    window.__webmcpRegister = previousRegister;
+  }
+  var tools = [];
+  for (var i = 0; i < captured.length; i++) {
+    var list = Array.isArray(captured[i].tools) ? captured[i].tools : [];
+    for (var j = 0; j < list.length; j++) if (list[j] && typeof list[j].handler === 'function') tools.push(list[j]);
+  }
+  var support = window.__webmcpGeneratedSupport["github.com"];
+  if (support && Array.isArray(support.tools)) {
+    for (var k = 0; k < support.tools.length; k++) if (support.tools[k] && typeof support.tools[k].handler === 'function') tools.push(support.tools[k]);
+  }
+  var byName = Object.create(null);
+  for (var n = 0; n < tools.length; n++) {
+    var tool = tools[n];
+    var names = [tool.publicName, tool.name, tool.handlerName];
+    for (var z = 0; z < names.length; z++) if (typeof names[z] === 'string' && names[z] && !byName[names[z]]) byName[names[z]] = tool;
+  }
+  window["__github_com_internal"] = {
+    invoke: async function (publicName, params) {
+      var tool = byName[publicName];
+      if (!tool || typeof tool.handler !== 'function') throw new Error('Legacy handler unavailable for ' + "github.com" + '.' + publicName);
+      return tool.handler(params || {});
+    },
+    names: Object.keys(byName)
+  };
+})();

@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "name": "github.com",
-  "version": "0.1.0",
-  "description": "GitHub Trending 公开趋势榜（仅 repos，不代表 GitHub 其他命令已迁移）",
+  "version": "1.0.0",
+  "description": "GitHub：Trending 仓库读取、登录检查、仓库搜索、仓库详情、Issue/PR 详情和 Star 仓库",
   "match": [
     "github.com"
   ],
@@ -10,7 +10,12 @@
   "discovery_terms": [
     "GitHub Trending",
     "热门代码仓库",
-    "趋势榜"
+    "趋势榜",
+    "GitHub",
+    "仓库搜索",
+    "Issue",
+    "Pull Request",
+    "Star 仓库"
   ],
   "commands": [
     {
@@ -51,6 +56,169 @@
         "required": [],
         "additionalProperties": false
       }
+    },
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "检查当前 GitHub 浏览器会话是否已登录，并返回登录状态。不会返回 Cookie、Token、邮箱等敏感信息。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ]
+    },
+    {
+      "id": "search-repositories",
+      "runtime": "extension",
+      "module": "extension/commands/search-repositories.js",
+      "description": "根据关键词搜索 GitHub 仓库，并返回仓库名称、描述、语言、星标数和链接。首次调用可能会跳转搜索页，页面加载后再次调用可读取结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "number",
+            "description": "返回数量，1-10"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "search_repositories"
+      ]
+    },
+    {
+      "id": "get-repository-detail",
+      "runtime": "extension",
+      "module": "extension/commands/get-repository-detail.js",
+      "description": "打开或读取 GitHub 仓库详情页，返回仓库名称、简介、README 摘要、语言、star/fork/watch 信息和关键链接。首次调用可能会跳转仓库页，页面加载后再次调用可读取详情。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "repository_url": {
+            "type": "string",
+            "description": "仓库 URL 或 owner/repo；为空时使用当前页"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "get_repository_detail"
+      ]
+    },
+    {
+      "id": "get-issue-or-pr-detail",
+      "runtime": "extension",
+      "module": "extension/commands/get-issue-or-pr-detail.js",
+      "description": "打开或读取 GitHub Issue/Pull Request 详情页，返回标题、状态、作者、正文摘要、标签、评论摘要和链接。传列表页时会进入第一条详情，页面加载后再次调用可读取详情。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "issue_url": {
+            "type": "string",
+            "description": "Issue/PR URL；为空时使用当前页"
+          },
+          "max_comments": {
+            "type": "number",
+            "description": "最多返回评论摘要数量，0-10"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "get_issue_or_pr_detail"
+      ]
+    },
+    {
+      "id": "star-current-repository",
+      "runtime": "extension",
+      "module": "extension/commands/star-current-repository.js",
+      "description": "对当前 GitHub 仓库执行 Star；如果已经 Star 则返回已 Star，不执行取消。必须显式传入 confirm=true 才会修改当前账号状态。",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "repository_url": {
+            "type": "string",
+            "description": "仓库 URL 或 owner/repo；为空时使用当前页"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "必须显式为 true 才执行 Star"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "star_current_repository"
+      ]
     }
-  ]
+  ],
+  "homepage_url": "https://github.com/",
+  "icon": "code",
+  "scenarios": [
+    {
+      "id": "trending",
+      "title": "查看趋势仓库",
+      "summary": "读取 GitHub Trending 公开仓库列表"
+    },
+    {
+      "id": "search-repository",
+      "title": "搜索仓库",
+      "summary": "按关键词搜索 GitHub 仓库并整理结果",
+      "prompts": [
+        {
+          "text": "帮我在 GitHub 搜索${playwright}相关仓库"
+        }
+      ]
+    },
+    {
+      "id": "repository-detail",
+      "title": "查看仓库",
+      "summary": "读取仓库简介、README 摘要、语言和关键链接",
+      "prompts": [
+        {
+          "text": "帮我查看 GitHub 仓库${microsoft/playwright}的信息"
+        }
+      ]
+    },
+    {
+      "id": "issue-pr-detail",
+      "title": "查看 Issue/PR",
+      "summary": "读取 Issue 或 Pull Request 的标题、状态、正文摘要和评论摘要",
+      "prompts": [
+        {
+          "text": "帮我查看这个 GitHub Issue 的内容"
+        }
+      ]
+    },
+    {
+      "id": "star-repository",
+      "title": "Star 仓库",
+      "summary": "在用户确认后对指定 GitHub 仓库执行 Star"
+    }
+  ],
+  "test_prompts": [
+    "打开 GitHub Trending 查看本周热门仓库",
+    "打开 GitHub，搜索 playwright 仓库，查看 microsoft/playwright 的仓库详情，再打开一个 Issue 查看摘要"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "GitHub",
+      "description": "GitHub：Trending 仓库读取、登录检查、仓库搜索、仓库详情、Issue/PR 详情和 Star 仓库"
+    }
+  },
+  "verified_on": "2026-09-17"
 }

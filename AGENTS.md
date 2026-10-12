@@ -15,8 +15,8 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 - `weworker/renderer/`：React Renderer，负责桌面端用户界面和交互。
 - `weworker/electron/`：Electron 主进程、窗口生命周期、IPC、资源路径和应用退出清理。
 - `weworker/scripts/`：构建、打包、配置生成、校验和开发辅助脚本。
-- `extension/`：浏览器扩展、页面注入、Bridge、Adapter manifest 和扩展权限配置。
-- `extension/adapters/`：Adapter 定义与站点能力描述；新增或修改 Adapter 时必须同步清单、权限、文档和对应验证。
+- `extension/`：浏览器扩展、页面注入、Bridge、扩展权限配置和构建后 Adapter 运行资源。
+- `adapters/`：内置公开 Adapter v2 包源码；新增或修改 Adapter 时必须同步 build profile、能力文档和对应验证。
 - `webcli/`：WebCLI 命令入口与 Adapter 调用层；统一对外提供 `webcli call <adapter-id>.<tool-id>`。
 - `components/webwright/`：网站探索agent实现源码目录。源码中可以沿用既有包名和路径，用户侧文案、UI、文档统一使用「网站探索agent」。
 - `docs/`：设计、构建、贡献、工作流和维护文档。
@@ -25,8 +25,8 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 ## 关键配置与依赖关系
 
 - `weworker/build-profile.json` 是桌面端构建 profile 基线；新增 Provider、Adapter 打包范围或构建元数据时必须同步验证。
-- `extension/manifest.json` 是浏览器扩展 manifest 基线；新增权限、host 权限或扩展能力时必须确认不会引入私有域名、私网 IP 或过宽权限。
-- `extension/adapters/index.json` 是 Adapter 注册清单；新增、删除或重命名 Adapter 时必须与实际目录、manifest、WebCLI 调用路径保持一致。
+- `extension/manifest.json` 是浏览器扩展 manifest 基线；新增权限、host 权限或扩展能力时必须确认不会引入私有域名、非公开网络地址或过宽权限。
+- `extension/adapters/index.json` 仅保留旧版兼容清单；公开内置 Adapter 源码应放在根 `adapters/<domain>/`，不得同时在根 `adapters/` 与 `extension/adapters/` 维护同名 Adapter。
 - `weworker/scripts/build-profile-overlay.cjs` 负责按 profile/overlay 生成构建配置；修改构建配置时必须验证生成结果和最终构建入口一致。
 - 构建产物、本地配置、缓存、真实用户数据和运行时临时文件不得提交。
 - 修改依赖时必须同步 lockfile，并说明新增依赖的用途。
@@ -47,8 +47,8 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 
 ## 敏感信息约束
 
-- 不得提交真实密码、Token、API Key、Cookie、个人账号、真实用户数据、真实会话数据、非公开系统名称、私有域名或私网 IP。
-- 示例地址使用 `example.com`、`example.org`、`localhost` 或 `127.0.0.1`。
+- 不得提交真实密码、Token、API Key、Cookie、个人账号、真实用户数据、真实会话数据、非公开系统名称、私有域名或非公开网络地址。
+- 示例地址使用 `example.com`、`example.org` 或 `localhost`。
 - 测试中的密钥、Token、账号必须使用明显占位值。
 - 测试、Fixture、示例和文档中的本地路径不得包含真实用户名、真实组织名或真实机器路径。需要覆盖 Windows 绝对路径逻辑时，使用中性虚构路径，例如 `C:/weworker-fixtures/user-files` 或 `C:/Users/weworker-test/.weworker/user-files`；不得使用来自开发者电脑的 `C:/Users/<真实用户名>/...`、`D:/workspace/<真实项目>/...` 等路径。
 - 不在日志记录模型 Key、Token、密钥或用户数据路径。
