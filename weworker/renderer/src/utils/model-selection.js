@@ -49,3 +49,8 @@ export function buildProbeResultRows(results) {
     }
   })
 }
+
+export function buildProviderProbeTargets(providerId, openAiBaseUrl) {
+  if (providerId === 'custom' && !String(openAiBaseUrl || '').trim()) return ['weworker']
+  return ['weworker', 'webwright']
+}

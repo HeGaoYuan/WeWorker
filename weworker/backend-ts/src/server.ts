@@ -1,11 +1,15 @@
-﻿import express from 'express'
+import express from 'express'
 import cors from 'cors'
+import { createWebsiteExplorationRouter } from './website-exploration.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { createLogger } from './logger.js'
 import { z } from 'zod'
 import { bridgeStatus } from './bridge-status.js'
+import { createAdapterStateRefreshHandler } from './adapter-state-refresh.js'
+import { bridgeRpcClient } from './bridge-rpc-client.js'
+import { explorationAgentCoordinator } from './exploration-agent.js'
 import {
   expandHomePath,
   getSettings,
@@ -49,12 +53,16 @@ import {
   buildRuntimeAllowedLlmBaseUrls,
   getProvider,
 } from './provider-registry.js'
-import { listProviderModels, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { registerExplorationModelRoutes } from './exploration-model-settings.js'
+import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
+import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
 import { normalizeOwnerPermissionLevel, validateOwnerUserId } from './channels/channel-permissions.js'
-import { getRegistryDefaultIcon, getRegistryIconById, parseAllAdapters } from './adapter-parser.js'
+import { clearAdapterCache, getRegistryDefaultIcon, getRegistryIconById, parseAllAdapters } from './adapter-parser.js'
 import type { StaticToolDef } from './adapter-parser.js'
+import { refreshDesktopAdapterSkills, toggleDesktopAdapter } from '../../../webcli/adapter-desktop.js'
 import { findAdaptersDirectory, resolveToolsForAdapter } from './adapter-tool-list.js'
 import { getOfficialScenarioDefs, resolveSiteScenarios } from './site-scenarios.js'
 import { createUserScenario, deleteUserScenario, getCustomScenariosForSite, hasOfficialScenario, resetUserScenario, saveUserScenario } from './user-scenarios.js'
@@ -70,7 +78,6 @@ import {
   saveSkillDirectoryResources,
   DuplicateSkillNameError,
 } from './custom-skills.js'
-import { writeScaffoldFromSiteMemory } from '../../../webcli/adapter-scaffold.js'
 import { resolveWebcliEntry } from './webcli-path.js'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
@@ -79,6 +86,7 @@ import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, generateAssistantStatusLine, streamChat } from './agent.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
+import { renderPrompt } from './prompt-loader.js'
 import {
   configureAdapterRuntimeReload,
   scheduleAdapterRuntimeReload,
@@ -96,6 +104,13 @@ import {
   type ZcfLang,
 } from './zcf-sync.js'
 import { appendAssistantStatusLine, extractAssistantStatusLine, finalizeAssistantTextWithStatus } from './assistant-status.js'
+import { processMemoryEvent } from './memory/memory-lifecycle.js'
+import { buildMemoryEventContext } from './memory/memory-event-context.js'
+import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
+import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
+import type { MemoryParseOutcome } from './memory/memory-extractor.js'
+import { getMemoryStore } from './memory/memory-store.js'
+import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
 import { inferTerminalShell, onTerminalEvent, runWeWorkerPowerShell, stopTerminalSession } from './powershell-runner.js'
@@ -104,7 +119,7 @@ import { QQChannel } from './channels/qq-channel.js'
 import { WeixinChannel, fetchQRCode, pollQRStatus } from './channels/weixin-channel.js'
 import { WecomChannel } from './channels/wecom-channel.js'
 import { scheduler, Scheduler } from './scheduler.js'
-import { registerSSEClient, unregisterSSEClient } from './notifier.js'
+import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
   createUserFile,
   createUserFolder,
@@ -204,6 +219,13 @@ bridgeStatus.onAdapterScaffoldGenerated(({ siteKey }) => {
     log.error(`Failed to hot-reload generated adapter ${siteKey}: ${e instanceof Error ? e.message : String(e)}`)
   })
 })
+const handleAdapterStateRefresh = createAdapterStateRefreshHandler({
+  clearCache: clearAdapterCache,
+  refreshSkills: () => refreshDesktopAdapterSkills(SKILLS_DIR),
+  broadcast: (event) => broadcastSSE(event),
+})
+
+bridgeStatus.onAdapterStateChanged(handleAdapterStateRefresh)
 
 const app = express()
 const HTTP_AUTH_TOKEN = process.env.WEWORKER_HTTP_TOKEN || ''
@@ -255,6 +277,7 @@ app.get('/internal/webwright/model-config', (req, res) => {
 })
 app.use(requireHttpAuth)
 app.use(express.json({ limit: '50mb' }))
+app.use('/api/website-exploration', createWebsiteExplorationRouter())
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   const detail = err instanceof Error ? err.message : String(err || '')
   const status = typeof (err as { status?: unknown })?.status === 'number'
@@ -303,7 +326,7 @@ function hostToOpenBrowserOrigins(rawHost: string): string[] {
 function buildDefaultOpenBrowserAllowedOrigins(): string[] {
   const origins = new Set<string>()
   for (const [adapterId, adapter] of parseAllAdapters()) {
-    if (!getSiteEnabled(adapterId, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(adapterId, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     const homepageOrigin = normalizeOpenBrowserAllowedOrigin(adapter.homepageUrl)
     if (homepageOrigin) origins.add(homepageOrigin)
     for (const match of adapter.match || []) {
@@ -330,12 +353,13 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     open_browser_allowed_origins: getOpenBrowserAllowedOrigins(),
     base_url: s.base_url,
     model: s.model,
+    context_limit: s.context_limit,
     has_api_key: !!s.api_key,
     providers: {
-      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic },
-      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm },
-      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek },
-      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom },
+      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic },
+      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm },
+      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek },
+      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom, auth_type: s.custom_auth_type },
     },
     zcf_default_role: s.zcf_default_role,
     zcf_default_mode: s.zcf_default_mode,
@@ -494,8 +518,8 @@ app.post('/settings/zcf-roles', (req, res) => {
 
 // Save config for a specific provider (does NOT switch active provider)
 app.post('/settings/provider', (req, res) => {
-  const { provider, api_key, model, base_url, openai_base_url } = req.body as {
-    provider: string; api_key?: string; model?: string; base_url?: string; openai_base_url?: string
+  const { provider, api_key, model, context_limit, base_url, openai_base_url, auth_type } = req.body as {
+    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; openai_base_url?: string; auth_type?: unknown
   }
   if (!ALLOWED_PROVIDER_IDS.has(provider)) {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
@@ -519,6 +543,15 @@ app.post('/settings/provider', (req, res) => {
       return
     }
   }
+  if (provider === 'custom' && auth_type !== undefined && !isAnthropicAuthType(auth_type)) {
+    res.status(400).json({ detail: "auth_type must be 'auth_token' or 'api_key'" })
+    return
+  }
+  const parsedContextLimit = context_limit === undefined ? undefined : parseContextLimit(context_limit)
+  if (context_limit !== undefined && parsedContextLimit === null) {
+    res.status(400).json({ detail: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
+    return
+  }
   const updates: Partial<ReturnType<typeof getSettings>> = {}
   if (api_key) {
     if (provider === 'anthropic') updates.api_key_anthropic = api_key
@@ -532,13 +565,21 @@ app.post('/settings/provider', (req, res) => {
     else if (provider === 'deepseek') updates.model_deepseek = model
     else if (provider === 'custom') updates.model_custom = model
   }
+  if (parsedContextLimit !== undefined && parsedContextLimit !== null) {
+    if (provider === 'anthropic') updates.context_limit_anthropic = parsedContextLimit
+    else if (provider === 'glm') updates.context_limit_glm = parsedContextLimit
+    else if (provider === 'deepseek') updates.context_limit_deepseek = parsedContextLimit
+    else if (provider === 'custom') updates.context_limit_custom = parsedContextLimit
+  }
   if (provider === 'custom' && base_url !== undefined) updates.base_url_custom = allowedBaseUrl
   if (provider === 'custom' && openai_base_url !== undefined) updates.openai_base_url_custom = allowedOpenAiBaseUrl
+  if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.custom_auth_type = auth_type
   // If this provider is currently active, also update the active key/model/url
   const current = getSettings()
   if (current.active_provider === provider) {
     if (api_key) updates.api_key = api_key
     if (model) updates.model = model
+    if (parsedContextLimit !== undefined && parsedContextLimit !== null) updates.context_limit = parsedContextLimit
     if (provider === 'custom' && base_url !== undefined) updates.base_url = allowedBaseUrl
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
@@ -562,6 +603,11 @@ app.post('/settings/provider/activate', (req, res) => {
     provider === 'glm'       ? current.model_glm :
     provider === 'deepseek'  ? current.model_deepseek :
     provider === 'custom'    ? current.model_custom : ''
+  const contextLimit =
+    provider === 'anthropic' ? current.context_limit_anthropic :
+    provider === 'glm'       ? current.context_limit_glm :
+    provider === 'deepseek'  ? current.context_limit_deepseek :
+    provider === 'custom'    ? current.context_limit_custom : current.context_limit
   const baseUrl =
     provider === 'custom' ? current.base_url_custom : (PROVIDER_BASE_URLS[provider] ?? '')
   try {
@@ -574,6 +620,7 @@ app.post('/settings/provider/activate', (req, res) => {
     active_provider: provider,
     api_key: key,
     model,
+    context_limit: contextLimit,
     base_url: baseUrl,
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
@@ -585,7 +632,9 @@ type ProviderRequestBody = {
   model?: string
   base_url?: string
   openai_base_url?: string
+  auth_type?: unknown
   target?: ProbeTarget
+  auto_auth?: boolean
 }
 
 function resolveProviderAccess(body: ProviderRequestBody) {
@@ -609,6 +658,13 @@ function resolveProviderAccess(body: ProviderRequestBody) {
     openaiBaseUrl: provider.id === 'custom'
       ? normalizeOptionalBaseUrl(body.openai_base_url === undefined ? settings.openai_base_url_custom : body.openai_base_url)
       : provider.webwright.baseUrl,
+    anthropicAuthType: provider.id === 'custom'
+      ? (body.auth_type === undefined
+          ? settings.custom_auth_type
+          : isAnthropicAuthType(body.auth_type)
+            ? body.auth_type
+            : (() => { throw new Error("auth_type must be 'auth_token' or 'api_key'") })())
+      : undefined,
   }
 }
 
@@ -642,11 +698,15 @@ app.post('/settings/provider/probe', async (req, res) => {
       return
     }
     const input = resolveProviderRequest(body)
-    res.json(await probeProviderProtocol({ ...input, target: body.target }))
+    res.json(body.target === 'weworker'
+      ? await probeMainConnection({ ...input, autoAuth: body.auto_auth === true })
+      : await probeProviderProtocol({ ...input, target: body.target, verifyResponse: true }))
   } catch (error) {
     res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
   }
 })
+
+registerExplorationModelRoutes(app, { getSettings, updateSettings })
 
 app.get('/settings/channels', (_req, res) => {
   const s = getSettings()
@@ -1094,7 +1154,7 @@ app.get('/sites', (_req, res) => {
   const settings = getSettings()
   const customTP = settings.custom_test_prompts || {}
   const sites = [...allAdapters.values()].map(a => {
-    const enabled = getSiteEnabled(a.id, a.defaultEnabled)
+    const enabled = getSiteEnabled(a.id, a.defaultEnabled, a.managed?.enabled)
     // Visibility: user setting takes precedence; if no user setting, use registry default
     const userToggle = settings.site_toggles[a.id]
     const visible = userToggle === undefined
@@ -1123,8 +1183,9 @@ app.get('/sites', (_req, res) => {
     customSkillCount: customSkills.length,
     scenarioCount: scenarios.length,
     enabled,
-    visible,
+    visible: enabled && visible,
     hidden: a.hidden,
+    managed: a.managed,
     testPrompts: customTP[a.id] != null ? customTP[a.id] : a.testPrompts,
     customSkills,
     scenarios: scenarios.map((sc) => ({
@@ -1142,18 +1203,19 @@ app.get('/sites', (_req, res) => {
   res.json(sites)
 })
 
-app.post('/sites/:id/toggle', (req, res) => {
+app.post('/sites/:id/toggle', async (req, res) => {
   const adapterId = req.params.id
-  const allAdapters = parseAllAdapters()
-  if (!allAdapters.has(adapterId)) {
-    res.status(404).json({ detail: 'Site not found' })
+  let enabled: boolean
+  try {
+    if (!parseAllAdapters().has(adapterId)) {
+      res.status(404).json({ detail: 'Site not found' })
+      return
+    }
+    enabled = toggleDesktopAdapter(adapterId) ?? toggleSite(adapterId)
+    await scheduleAdapterRuntimeReload(adapterId)
+  } catch (error) {
+    res.status(409).json({ detail: error instanceof Error ? error.message : 'Adapter selection could not be refreshed' })
     return
-  }
-  const enabled = toggleSite(adapterId)
-  const adapter = allAdapters.get(adapterId)
-  if (adapter) {
-    // Re-install skills for this adapter via webcli
-    runWebcli(['install', '--skills', adapterId, '--target', SKILLS_DIR])
   }
   res.json({ id: adapterId, enabled })
 })
@@ -1164,7 +1226,8 @@ app.post('/sites/welcome-visibility', (req, res) => {
   const adapterIds = Array.isArray(ids)
     ? ids.filter((id) => allAdapters.has(id))
     : [...allAdapters.keys()]
-  setAllEnabledSitesWelcomeVisibility(adapterIds, visible === true)
+  const managedStates = new Map([...allAdapters.values()].filter(a => a.managed).map(a => [a.id, a.managed!.enabled]))
+  setAllEnabledSitesWelcomeVisibility(adapterIds, visible === true, managedStates)
   res.json({ ok: true, visible: visible === true, ids: adapterIds })
 })
 
@@ -1176,7 +1239,7 @@ app.post('/sites/:id/visibility', (req, res) => {
     res.status(404).json({ detail: 'Site not found' })
     return
   }
-  setSiteVisibility(adapterId, visible)
+  setSiteVisibility(adapterId, visible, allAdapters.get(adapterId)?.managed?.enabled)
   res.json({ id: adapterId, visible })
 })
 
@@ -1419,7 +1482,7 @@ app.get('/tools', (_req, res) => {
   const allAdapters = parseAllAdapters()
   const adaptersDir = findAdaptersDirectory()
   const tools = [...allAdapters.values()]
-    .filter(a => getSiteEnabled(a.id, a.defaultEnabled))
+    .filter(a => getSiteEnabled(a.id, a.defaultEnabled, a.managed?.enabled))
     .flatMap(a => resolveToolsForAdapter(a, adaptersDir))
   res.json({ tools })
 })
@@ -1444,6 +1507,244 @@ app.get('/system-tools', (_req, res) => {
 })
 
 // 鈹€鈹€ Explore APIs (deprecated 鈥?use webcli call directly) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+app.get('/exploration/capabilities', (_req, res) => {
+  const state = bridgeRpcClient.getCapabilities()
+  res.json({
+    ...state,
+    passiveExploration: state.capabilities.includes('passive_exploration_v1'),
+    safeApiProbe: state.capabilities.includes('safe_api_probe_v1'),
+    apiReplay: state.capabilities.includes('api_replay_v1'),
+    actionCapture: state.capabilities.includes('action_capture_v1'),
+    clientAgent: true,
+    generationHarness: state.capabilities.includes('generation_harness_v1'),
+  })
+})
+
+app.get('/exploration/tabs', async (_req, res) => {
+  try {
+    const state = bridgeRpcClient.getCapabilities()
+    if (!state.bridgeConnected) {
+      res.status(503).json({ detail: 'BRIDGE_DISCONNECTED' })
+      return
+    }
+    if (!state.extensionConnected) {
+      res.status(503).json({ detail: 'EXTENSION_DISCONNECTED' })
+      return
+    }
+    if (!state.capabilities.includes('passive_exploration_v1')) {
+      res.status(409).json({ detail: 'EXTENSION_CAPABILITY_MISSING' })
+      return
+    }
+    res.json({ tabs: await bridgeRpcClient.listExplorableTabs() })
+  } catch (error) {
+    res.status(502).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+const explorationRunInputSchema = z.object({
+  goal: z.string().trim().min(1).max(2_000),
+  tabId: z.number().int().nonnegative(),
+})
+
+app.post('/exploration/runs', async (req, res) => {
+  const parsed = explorationRunInputSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ detail: parsed.error.issues[0]?.message || 'Invalid exploration request' })
+    return
+  }
+  try {
+    const tabs = await bridgeRpcClient.listExplorableTabs()
+    const tab = tabs.find((item) => item.id === parsed.data.tabId)
+    if (!tab) {
+      res.status(404).json({ detail: 'TARGET_TAB_NOT_FOUND' })
+      return
+    }
+    res.status(202).json(explorationAgentCoordinator.start(parsed.data.goal, tab))
+  } catch (error) {
+    res.status(502).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.get('/exploration/runs/:taskId', (req, res) => {
+  const run = explorationAgentCoordinator.get(req.params.taskId)
+  if (!run) {
+    res.status(404).json({ detail: 'EXPLORATION_RUN_NOT_FOUND' })
+    return
+  }
+  res.json(run)
+})
+
+app.post('/exploration/runs/:taskId/cancel', (req, res) => {
+  const run = explorationAgentCoordinator.cancel(req.params.taskId)
+  if (!run) {
+    res.status(404).json({ detail: 'EXPLORATION_RUN_NOT_FOUND' })
+    return
+  }
+  res.json(run)
+})
+
+app.post('/exploration/runs/:taskId/save', (req, res) => {
+  try {
+    res.json(explorationAgentCoordinator.saveMemory(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/scaffold', async (req, res) => {
+  try {
+    const run = await explorationAgentCoordinator.startGeneration(req.params.taskId, undefined, 'quick')
+    res.status(202).json({ run })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+const explorationGenerationInputSchema = z.object({
+  goal: z.string().trim().min(1).max(2_000).optional(),
+  mode: z.enum(['agent', 'classic', 'quick']).optional(),
+})
+
+const explorationGenerationResumeInputSchema = z.object({
+  answer: z.string().trim().min(1).max(4_000),
+})
+
+const explorationActionCaptureInputSchema = z.object({
+  actionName: z.string().trim().min(1).max(200),
+  mode: z.enum(['observe', 'intercept']).optional(),
+  timeoutSeconds: z.number().int().min(5).max(300).optional(),
+  pattern: z.string().max(500).optional(),
+})
+
+app.post('/exploration/runs/:taskId/action-capture', async (req, res) => {
+  const parsed = explorationActionCaptureInputSchema.safeParse(req.body || {})
+  if (!parsed.success) {
+    res.status(400).json({ detail: parsed.error.issues[0]?.message || 'Invalid action capture request' })
+    return
+  }
+  try {
+    res.status(202).json(await explorationAgentCoordinator.startActionCapture(req.params.taskId, parsed.data))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.get('/exploration/runs/:taskId/action-capture', async (req, res) => {
+  try {
+    res.json(await explorationAgentCoordinator.getActionCapture(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/action-capture/analyze', async (req, res) => {
+  try {
+    res.status(202).json(await explorationAgentCoordinator.retryActionCaptureAnalysis(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/action-capture/stop', async (req, res) => {
+  try {
+    res.json(await explorationAgentCoordinator.stopActionCapture(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+const explorationActionCandidateSchema = z.object({
+  candidateIndex: z.number().int().min(0),
+})
+
+app.post('/exploration/runs/:taskId/action-capture/select', async (req, res) => {
+  const parsed = explorationActionCandidateSchema.safeParse(req.body || {})
+  if (!parsed.success) {
+    res.status(400).json({ detail: parsed.error.issues[0]?.message || 'Invalid candidate selection' })
+    return
+  }
+  try {
+    res.json(await explorationAgentCoordinator.selectActionCaptureCandidate(req.params.taskId, parsed.data.candidateIndex))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/action-capture/clear', async (req, res) => {
+  try {
+    res.json(await explorationAgentCoordinator.clearActionCapture(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/generation', async (req, res) => {
+  const parsed = explorationGenerationInputSchema.safeParse(req.body || {})
+  if (!parsed.success) {
+    res.status(400).json({ detail: parsed.error.issues[0]?.message || 'Invalid generation request' })
+    return
+  }
+  try {
+    res.status(202).json(await explorationAgentCoordinator.startGeneration(req.params.taskId, parsed.data.goal, parsed.data.mode))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/generation/resume', async (req, res) => {
+  const parsed = explorationGenerationResumeInputSchema.safeParse(req.body || {})
+  if (!parsed.success) {
+    res.status(400).json({ detail: parsed.error.issues[0]?.message || 'Invalid generation resume request' })
+    return
+  }
+  try {
+    res.status(202).json(await explorationAgentCoordinator.resumeGeneration(req.params.taskId, parsed.data.answer))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.get('/exploration/runs/:taskId/generation', async (req, res) => {
+  try {
+    res.json(await explorationAgentCoordinator.getGeneration(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/generation/cancel', async (req, res) => {
+  try {
+    res.json(await explorationAgentCoordinator.cancelGeneration(req.params.taskId))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
+
+app.post('/exploration/runs/:taskId/generation/publish', async (req, res) => {
+  try {
+    const approval = z.object({ reviewId: z.string().regex(/^[a-f0-9]{64}$/).optional(), acceptChanges: z.boolean().optional() }).strict().parse(req.body || {})
+    const run = await explorationAgentCoordinator.publishGeneration(req.params.taskId, approval)
+    const siteKey = typeof run.generationRun?.siteKey === 'string' ? run.generationRun.siteKey : ''
+    if (siteKey && run.generationRun?.status === 'completed') await scheduleAdapterRuntimeReload(siteKey)
+    res.json(run)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
+  }
+})
 
 app.post('/explore/state', (_req, res) => {
   res.status(410).json({ detail: 'Use `webcli call inspect_page_state` instead' })
@@ -1495,9 +1796,8 @@ app.post('/explore/scaffold', async (req, res) => {
       res.status(404).json({ detail: 'site memory not found' })
       return
     }
-    const result = writeScaffoldFromSiteMemory(memory)
-    await scheduleAdapterRuntimeReload(memory.siteKey || site)
-    res.json(result)
+    const run = await bridgeRpcClient.startGenerationRun({ siteKey: memory.siteKey, memory: memory as unknown as Record<string, unknown>, goal: '快速生成并验证查询工具', tabId: null, mode: 'quick' })
+    res.status(202).json({ run, pendingInstallation: true })
   } catch (e) {
     res.status(500).json({ detail: e instanceof Error ? e.message : String(e) })
   }
@@ -1515,9 +1815,11 @@ app.post('/works', (req, res) => {
   if (zcf_role !== undefined || zcf_mode !== undefined) {
     const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
     const updated = store.updateWorkZcfPrefs(work.id, prefs)
+    broadcastSSE({ type: 'works_changed', workId: work.id })
     res.json(updated ?? work)
     return
   }
+  broadcastSSE({ type: 'works_changed', workId: work.id })
   res.json(work)
 })
 
@@ -1807,7 +2109,7 @@ app.get('/health-check/test-prompts', (_req, res) => {
   const customTP = settings.custom_test_prompts || {}
   const prompts: Array<{ siteId: string; siteName: string; prompt: string; toolCount: number; toolNames: string[] }> = []
   for (const [id, adapter] of allAdapters) {
-    if (!getSiteEnabled(id, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(id, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     const testPrompts = customTP[id] != null ? customTP[id]! : adapter.testPrompts
     if (testPrompts.length === 0) continue
     // Return all test prompts for each site
@@ -2010,16 +2312,8 @@ app.post('/terminal/assist', async (req, res) => {
     return
   }
 
-  const system = [
-    '你是 WeWorker Shell 内置的终端 AI 助手。',
-    '用户会在终端输入自然语言。你需要判断意图，并给出终端内可展示的简短中文回复。',
-    '你的回复必须基于用户输入、当前目录、shell 和最近上下文动态生成，不要使用固定模板或硬编码式回答。',
-    '如果用户意图明确且适合用一条本地命令完成，请给出 command；如果不明确，请不要给 command，而是提出澄清。',
-    '命令必须适配当前 shell。bash 使用 POSIX 语法，powershell 使用 PowerShell 语法。',
-    '不要编造已经执行过的结果；你只能建议或解释命令。',
-    '只输出 JSON，不要输出 Markdown。',
-    'JSON 格式：{"title":"一句主要回复","message":"补充说明，可为空","bullets":["最多6条"],"command":"建议执行的单行命令，可为空"}',
-  ].join('\n')
+  const terminalPrompt = renderPrompt('terminal', {})
+  const system = terminalPrompt.endsWith('\n') ? terminalPrompt.slice(0, -1) : terminalPrompt
   const user = [
     `当前 shell: ${inferTerminalShell('', shell)}`,
     `当前目录: ${cwd || getUserDirectory()}`,
@@ -2031,7 +2325,7 @@ app.post('/terminal/assist', async (req, res) => {
     const response = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
-        'x-api-key': settings.api_key,
+        ...buildAnthropicAuthHeaders(settings.api_key, settings.active_provider, settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -2066,13 +2360,76 @@ app.post('/terminal/assist', async (req, res) => {
 
 import { generateTitle, generateTitleWithLLM } from './title-utils.js'
 
+async function streamConversationCompaction(
+  workId: string,
+  messages: store.Message[],
+  settings: ReturnType<typeof getSettings>,
+  send: (event: object) => void,
+): Promise<{ status: 'completed' | 'skipped'; reason?: string }> {
+  let completed = false
+  let skipped = false
+  let skipReason = ''
+  let failureReason = ''
+  for await (const event of streamChat(messages, settings, undefined, {
+    workId,
+    forceCompaction: true,
+    compactionOnly: true,
+  })) {
+    if (event.type === 'context_compaction_start' || event.type === 'context_compaction_end') {
+      send(event)
+      if (event.type === 'context_compaction_end' && event.compaction?.status === 'completed') completed = true
+      if (event.type === 'context_compaction_end' && event.compaction?.status === 'skipped') {
+        skipped = true
+        skipReason = event.compaction.reason || 'no_droppable_history'
+      }
+      if (event.type === 'context_compaction_end' && event.compaction?.status === 'failed') {
+        failureReason = event.compaction.error || '摘要器未完成压缩'
+      }
+    }
+    if (event.type === 'context_snapshot') send(event)
+    if (event.type === 'usage') send(event)
+    if (event.type === 'error') {
+      failureReason = event.content || '压缩请求返回错误'
+      break
+    }
+  }
+  if (completed) return { status: 'completed' }
+  if (skipped) return { status: 'skipped', reason: skipReason }
+  const detail = failureReason || '对话压缩未完成'
+  chatLog.error('conversation compaction failed', { workId, detail })
+  throw new Error(detail)
+}
+
+app.post('/works/:id/compact', async (req, res) => {
+  const workId = req.params.id
+  const work = store.getWorkWithMessages(workId)
+  if (!work) {
+    res.status(404).json({ detail: 'Work not found' })
+    return
+  }
+  const settings = getSettings()
+  const events: object[] = []
+  try {
+    const result = await streamConversationCompaction(workId, work.messages, settings, (event) => {
+      events.push(event)
+    })
+    res.json({ ok: true, ...result, events })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    chatLog.error('conversation compaction route failed', { workId, detail })
+    res.status(500).json({ ok: false, detail })
+    return
+  }
+})
+
 
 app.post('/works/:id/chat', async (req, res) => {
   const workId = req.params.id
-  const { message, modelMessage, attachments } = req.body as {
+  const { message, modelMessage, attachments, retryCompaction } = req.body as {
     message: string;
     modelMessage?: string;
     attachments?: Array<{ path?: string; name?: string }>;
+    retryCompaction?: boolean;
   }
 
   if (!message?.trim() && (!Array.isArray(attachments) || attachments.length === 0)) {
@@ -2088,24 +2445,39 @@ app.post('/works/:id/chat', async (req, res) => {
 
   let userContent: store.ContentBlock[] = []
   let importedAttachments: store.ContentBlock[] = []
-  try {
-    importedAttachments = Array.isArray(attachments) ? importChatAttachments(attachments) : []
-    userContent = [
-      ...importedAttachments,
-      ...(message?.trim() ? [{ type: 'text' as const, text: message }] : []),
-    ]
-  } catch (e) {
-    res.status(400).json({ detail: e instanceof Error ? e.message : 'failed to import attachments' })
-    return
-  }
+  let savedUserMessage: store.Message | null = null
+  if (retryCompaction === true) {
+    const existingWork = store.getWorkWithMessages(workId)
+    if (!existingWork) {
+      res.status(404).json({ detail: 'Work not found' })
+      return
+    }
+    savedUserMessage = [...existingWork.messages].reverse().find((msg) => msg.role === 'user') ?? null
+    if (!savedUserMessage) {
+      res.status(400).json({ detail: '没有可重试的用户消息' })
+      return
+    }
+    userContent = savedUserMessage.content
+  } else {
+    try {
+      importedAttachments = Array.isArray(attachments) ? importChatAttachments(attachments) : []
+      userContent = [
+        ...importedAttachments,
+        ...(message?.trim() ? [{ type: 'text' as const, text: message }] : []),
+      ]
+    } catch (e) {
+      res.status(400).json({ detail: e instanceof Error ? e.message : 'failed to import attachments' })
+      return
+    }
 
-  // Save user message
-  const savedUserMessage = store.appendMessage(workId, 'user', userContent)
+    // Save user message
+    savedUserMessage = store.appendMessage(workId, 'user', userContent)
+  }
 
   // Auto-title from first message: immediate fallback, then async LLM refinement
   const isFirstMessage = !work.title
   const titleSource = message?.trim() || importedAttachments.map((block) => block.type === 'file_attachment' ? block.name : '').filter(Boolean).join(', ')
-  if (isFirstMessage) {
+  if (isFirstMessage && retryCompaction !== true) {
     store.updateTitle(workId, generateTitle(titleSource))
   }
 
@@ -2154,12 +2526,26 @@ app.post('/works/:id/chat', async (req, res) => {
   const assistantContent: store.ContentBlock[] = []
   let currentText = ''
   const toolCallMap = new Map<string, { name: string; args: unknown }>()
+  let memoryCandidateIndex = 0
+  const memoryCandidates: MemoryUpdateCandidate[] = []
 
   const send = (event: object) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
 
-  send({ type: 'user_message_saved', message: savedUserMessage })
+  const processMemoryCandidate = (candidate: MemoryUpdateCandidate) => {
+    memoryCandidateIndex += 1
+    memoryCandidates.push(candidate)
+    chatLog.info(`${tag} memory_candidate_received`, {
+      candidate_index: memoryCandidateIndex,
+      candidate_action: candidate.action,
+      candidate_memory_type: candidate.memory_type,
+    })
+  }
+
+  if (retryCompaction !== true) {
+    send({ type: 'user_message_saved', message: savedUserMessage })
+  }
 
   // Fire async LLM title generation (non-blocking)
   if (isFirstMessage) {
@@ -2167,6 +2553,7 @@ app.post('/works/:id/chat', async (req, res) => {
       if (llmTitle) {
         store.updateTitle(workId, llmTitle)
         send({ type: 'title_update', title: llmTitle, workId })
+        broadcastSSE({ type: 'works_changed', workId })
       }
     })
   }
@@ -2188,6 +2575,7 @@ app.post('/works/:id/chat', async (req, res) => {
   if (await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
     finished = true
     res.off('close', onClose)
+    broadcastSSE({ type: 'works_changed', workId })
     res.end()
     return
   }
@@ -2197,25 +2585,53 @@ app.post('/works/:id/chat', async (req, res) => {
     send({ type: 'terminal_event', data: event })
   })
 
+  let turnSucceeded = false
+  let streamFailed = false
+  // Each assistant response owns an independent memory decision. Keep every
+  // decision; a later response must not overwrite an earlier one.
+  const memoryParseOutcomes: MemoryParseOutcome[] = []
+  let memoryAdapters: Array<{ id: string; name: string; match: string[] }> = []
+  let enabledAdapterIds = new Set<string>()
+  let initialMemoryScope = { user: 'local' }
   try {
     chatLog.info(`${tag} 鈻?turn start`)
     // Send turnId to frontend so users can correlate logs
     send({ type: 'turn_start', turnId, workId })
     // Build the set of enabled adapter IDs from config
     const allAdapters = parseAllAdapters()
-    const enabledAdapterIds = new Set(
-      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled)).map(([id]) => id)
+    enabledAdapterIds = new Set(
+      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled, a.managed?.enabled)).map(([id]) => id)
     )
+    memoryAdapters = [...allAdapters.values()].map((adapter) => ({
+      id: adapter.id,
+      name: adapter.name,
+      match: adapter.match,
+    }))
+    initialMemoryScope = buildMemoryEventContext({
+      baseScope: { user: 'local' },
+      userMessage: message,
+      adapters: memoryAdapters,
+      toolCalls: [],
+    }).scope as { user: string }
     for await (const ev of streamChat(modelMessages, settings, abortController, {
       enabledAdapterIds,
       workId,
       zcfRole: zcfPrefs.zcfRole,
       zcfMode: zcfPrefs.zcfMode,
+      memoryScope: initialMemoryScope,
       onAskUser: (event) => send(event),
     })) {
-      if (ev.type === 'text_delta' && ev.content) {
+      if (ev.type === 'skill_context' && ev.skillContext) {
+        assistantContent.push(ev.skillContext)
+      } else if (ev.type === 'text_delta' && ev.content) {
         send(ev)
         currentText += ev.content
+      } else if (ev.type === 'memory_candidate' && ev.candidate) {
+        processMemoryCandidate(ev.candidate)
+      } else if (ev.type === 'memory_parse' && ev.memoryParse) {
+        memoryParseOutcomes.push(ev.memoryParse.outcome)
+      } else if (ev.type === 'context_compaction_start' || ev.type === 'context_compaction_end') {
+        send(ev)
       } else if (ev.type === 'tool_call_start' && ev.id) {
         // Deduplicate: streaming mode sends tool_call_start twice (stream_event + assistant message)
         const isUpdate = toolCallMap.has(ev.id)
@@ -2258,22 +2674,25 @@ app.post('/works/:id/chat', async (req, res) => {
         send({ ...ev, execMs: toolDuration })
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
-          assistantContent[idx] = { ...(assistantContent[idx] as object), result: ev.result, status: 'done', execMs: toolDuration } as store.ContentBlock
+          assistantContent[idx] = { ...(assistantContent[idx] as object), result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration } as store.ContentBlock
         } else {
-          assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: 'done', execMs: toolDuration })
+          assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration })
         }
       } else if (ev.type === 'tool_call_image' && ev.id) {
         send(ev)
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
-          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: 'done' } as store.ContentBlock
+          const currentStatus = (assistantContent[idx] as Extract<store.ContentBlock, { type: 'tool_use' }>).status
+          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: currentStatus === 'failed' ? 'failed' : 'done' } as store.ContentBlock
         } else {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done' })
         }
       } else {
+        if (ev.type === 'error') streamFailed = true
         send(ev)
       }
     }
+    turnSucceeded = !streamFailed && !abortController.signal.aborted
   } catch (e) {
     // Silently ignore abort errors (user cancelled)
     const isAbort = e instanceof Error && (
@@ -2348,7 +2767,123 @@ app.post('/works/:id/chat', async (req, res) => {
     store.appendMessage(workId, 'assistant', assistantContent)
   }
 
+  const toolCallsForMemory = assistantContent
+    .filter((block): block is Extract<store.ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
+    .map((block) => ({ name: block.name, args: block.args, status: block.status }))
+  const memoryParseOutcome = memoryParseOutcomes.length > 0
+    ? memoryParseOutcomes.includes('present_parse_error')
+      ? 'present_parse_error'
+      : memoryParseOutcomes.includes('present_ok')
+        ? 'present_ok'
+        : memoryParseOutcomes.includes('present_ignore')
+          ? 'present_ignore'
+          : 'missing'
+    : 'missing' as MemoryParseOutcome
+  const plannedMemoryEvents = memoryCandidates.flatMap((candidate, index) => {
+    const planned = planCompletedChatMemoryEvents({
+      baseEventId: `${savedUserMessage.id}:model-${index + 1}`,
+      baseScope: { user: 'local' },
+      userMessage: message,
+      adapters: memoryAdapters,
+      enabledAdapterIds,
+      toolCalls: toolCallsForMemory,
+      turnSucceeded,
+      candidate,
+    })
+    chatLog.info(`${tag} memory_candidate_plan`, {
+      candidate_index: index + 1,
+      candidate_action: candidate.action,
+      candidate_memory_type: candidate.memory_type,
+      admit_reason: planned.admitReason,
+      event_count: planned.events.length,
+    })
+    return planned.events.map((event) => ({ event, candidate }))
+  })
+
+  const protocolCheck = isMemoryProtocolFailure({
+    toolCalls: toolCallsForMemory,
+    parseOutcome: memoryParseOutcome,
+    aborted: abortController.signal.aborted,
+  })
+
+  chatLog.info(`${tag} memory_plan`, {
+    has_candidate: memoryCandidateIndex > 0,
+    candidate_count: memoryCandidateIndex,
+    parse_outcome: memoryParseOutcome,
+    turn_succeeded: turnSucceeded,
+    has_terminal_shell: protocolCheck.hasTerminalShell,
+    protocol_violation: protocolCheck.violated ? protocolCheck.code : undefined,
+  })
+
+  if (protocolCheck.violated) {
+    const protocolEventId = `${savedUserMessage.id}:protocol-${protocolCheck.code}`
+    chatLog.info(`${tag} memory_protocol_violation`, {
+      code: protocolCheck.code,
+      parse_outcome: memoryParseOutcome,
+    })
+    send({
+      type: 'memory_status',
+      status: 'failed',
+      workId,
+      eventId: protocolEventId,
+      error: protocolCheck.code === 'memory_block_parse_error'
+        ? 'AI 返回的长期记忆候选不符合协议，未写入长期记忆'
+        : '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
+    })
+    broadcastSSE({
+      type: 'memory_status',
+      status: 'failed',
+      workId,
+      eventId: protocolEventId,
+      error: protocolCheck.code === 'memory_block_parse_error'
+        ? 'AI 返回的长期记忆候选不符合协议，未写入长期记忆'
+        : '本回合执行了命令，但记忆协议未返回，未写入长期记忆',
+    })
+  }
+
+  if (plannedMemoryEvents.length > 0) {
+    for (const { event } of plannedMemoryEvents) {
+      send({ type: 'memory_status', status: 'processing', workId, eventId: event.eventId })
+    }
+    broadcastSSE({ type: 'works_changed', workId })
+    res.end()
+    setImmediate(() => {
+      let memoryStore: ReturnType<typeof getMemoryStore>
+      try {
+        memoryStore = getMemoryStore()
+      } catch (error) {
+        chatLog.info(`${tag} memory store unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        for (const { event } of plannedMemoryEvents) {
+          broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
+        }
+        return
+      }
+      for (const { event, candidate } of plannedMemoryEvents) {
+        const patched = applyAdmissionToCandidate(candidate, event)
+        void processMemoryEvent({
+          eventId: event.eventId,
+          scope: event.scope,
+          expectedMemoryType: event.expectedMemoryType,
+          store: memoryStore,
+          candidate: patched,
+        }).then((memoryResult) => {
+          broadcastSSE({
+            type: 'memory_status',
+            workId,
+            eventId: event.eventId,
+            status: memoryResult.status,
+            ...(memoryResult.status === 'failed' ? { error: memoryResult.error } : {}),
+          })
+        }).catch(() => {
+          broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
+        })
+      }
+    })
+    return
+  }
+
   chatLog.info(` sending res.end() for workId=${workId}`)
+  broadcastSSE({ type: 'works_changed', workId })
   res.end()
 })
 
@@ -2375,6 +2910,7 @@ app.get('/logs', (req, res) => {
 // 鈹€鈹€ Start 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 bridgeStatus.start()
+bridgeRpcClient.start()
 
 // Install adapter skills via webcli at startup
 runWebcli(['install', '--skills', '--target', SKILLS_DIR], (err) => {

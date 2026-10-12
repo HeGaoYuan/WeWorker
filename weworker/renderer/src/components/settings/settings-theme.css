@@ -1,3 +1,7 @@
+.settings-model-form { border: 0; margin: 0; min-width: 0; }
+.settings-model-form .settings-btn { white-space: nowrap; flex-shrink: 0; }
+.settings-model-advanced summary { cursor: pointer; margin-bottom: 12px; color: var(--text-secondary); }
+
 .settings-overlay {
   position: fixed;
   inset: 0;
@@ -996,6 +1000,19 @@
   box-shadow: 0 0 0 3px rgba(51, 156, 255, 0.12);
 }
 
+.settings-provider-auth-select {
+  width: 100%;
+}
+
+.settings-provider-auth-select .app-dropdown-select__trigger {
+  width: 100%;
+  max-width: none;
+  height: 34px;
+  background: var(--bg-primary);
+  border-color: var(--border-strong);
+  padding: 0 10px;
+}
+
 .settings-btn {
   border: none;
   border-radius: 8px;
@@ -1087,6 +1104,20 @@
   color: #fff;
   padding: 5px 12px;
 }
+
+.settings-card-builtin {
+  border-color: rgba(21, 153, 87, 0.35);
+  background: rgba(21, 153, 87, 0.05);
+}
+
+.settings-builtin-probe {
+  margin: 0 16px 14px 48px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.settings-builtin-probe .is-success { color: var(--success); }
+.settings-builtin-probe .is-error { color: var(--error); }
 
 .settings-btn-success {
   background: var(--success);

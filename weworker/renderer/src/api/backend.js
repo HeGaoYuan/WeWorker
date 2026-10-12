@@ -1,5 +1,15 @@
 import { backendFetch } from './http.js'
 
+let contextCompactionLifecycleHandler = null
+
+export function setContextCompactionLifecycleHandler(handler) {
+  contextCompactionLifecycleHandler = typeof handler === 'function' ? handler : null
+}
+
+function notifyContextCompactionLifecycle(workId, status) {
+  contextCompactionLifecycleHandler?.(workId, status)
+}
+
 function normalizeBackendError(message, maxChatAttachments = 60) {
   if (String(message || '').includes('too many attachments')) {
     return `一次最多发送 ${maxChatAttachments} 个附件`
@@ -7,27 +17,111 @@ function normalizeBackendError(message, maxChatAttachments = 60) {
   return message
 }
 
-export async function streamChat(workId, message, onEvent, signal, attachments = [], maxChatAttachments = 60, modelMessage = message) {
+export function isContextOverflowError(message) {
+  const text = String(message || '').toLowerCase()
+  return /context.{0,24}(length|limit|window|exceed|maximum)|too many tokens|prompt.{0,16}too long|token.{0,16}limit/.test(text)
+}
+
+export function shouldAutoCompactAfterTurn(contextSnapshot, retryCompaction = false, compactedDuringRequest = false) {
+  const contextLimit = Number(contextSnapshot?.context_limit)
+  if (retryCompaction || compactedDuringRequest || !Number.isFinite(contextLimit) || contextLimit <= 0) return false
+
+  const actualTokens = Number(contextSnapshot?.actual_input_tokens)
+  return Number.isFinite(actualTokens) && actualTokens / contextLimit >= 0.9
+}
+
+export async function compactConversation(workId) {
+  notifyContextCompactionLifecycle(workId, 'compacting')
+  try {
+    const res = await backendFetch(`/works/${workId}/compact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || '对话压缩失败')
+    }
+    const result = await res.json()
+    notifyContextCompactionLifecycle(workId, result?.status === 'skipped' ? 'skipped' : 'completed')
+    return result
+  } catch (error) {
+    notifyContextCompactionLifecycle(workId, 'failed')
+    throw error
+  }
+}
+
+export async function streamChat(workId, message, onEvent, signal, attachments = [], maxChatAttachments = 60, modelMessage = message, retryCompaction = false) {
   console.log(`[frontend] streamChat called, workId=${workId}, signal.aborted=${signal?.aborted}`)
-  const res = await backendFetch(`/works/${workId}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, modelMessage, attachments }),
-    signal,
-  })
+  let res
+  try {
+    res = await backendFetch(`/works/${workId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, modelMessage, attachments, retryCompaction }),
+      signal,
+    })
+  } catch (error) {
+    if (!retryCompaction && isContextOverflowError(error?.message)) {
+      onEvent({ type: 'context_compaction_start', compaction: { status: 'started' } })
+      try {
+        const result = await compactConversation(workId)
+        for (const event of result?.events || []) {
+          if (event.type !== 'context_compaction_start') onEvent(event)
+        }
+        if (result?.status === 'skipped') {
+          onEvent({ type: 'error', content: '上下文已超限，但当前没有可压缩的历史对话' })
+          return
+        }
+        return streamChat(workId, message, onEvent, signal, attachments, maxChatAttachments, modelMessage, true)
+      } catch (compactionError) {
+        onEvent({
+          type: 'context_compaction_end',
+          compaction: { status: 'failed', error: compactionError instanceof Error ? compactionError.message : String(compactionError) },
+        })
+        throw compactionError
+      }
+    }
+    throw error
+  }
 
   console.log(`[frontend] fetch response received, status=${res.status}`)
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(normalizeBackendError(err.detail || 'Request failed', maxChatAttachments))
+    const detail = err.detail || 'Request failed'
+    if (!retryCompaction && isContextOverflowError(detail)) {
+      onEvent({ type: 'context_compaction_start', compaction: { status: 'started' } })
+      try {
+        const result = await compactConversation(workId)
+        for (const event of result?.events || []) {
+          if (event.type !== 'context_compaction_start') onEvent(event)
+        }
+        if (result?.status === 'skipped') {
+          onEvent({ type: 'error', content: '上下文已超限，但当前没有可压缩的历史对话' })
+          return
+        }
+        return streamChat(workId, message, onEvent, signal, attachments, maxChatAttachments, modelMessage, true)
+      } catch (compactionError) {
+        onEvent({
+          type: 'context_compaction_end',
+          compaction: { status: 'failed', error: compactionError instanceof Error ? compactionError.message : String(compactionError) },
+        })
+        throw compactionError
+      }
+    }
+    throw new Error(normalizeBackendError(detail, maxChatAttachments))
   }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let overflowDetected = false
+  let contextSnapshot = null
+  let compactedDuringRequest = false
 
   try {
+    let streamCompleted = false
     while (true) {
       const { done, value } = await reader.read()
       if (done) {
@@ -40,15 +134,52 @@ export async function streamChat(workId, message, onEvent, signal, attachments =
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
         const data = line.slice(6).trim()
-        if (data === '[DONE]') return
+        if (data === '[DONE]') {
+          streamCompleted = true
+          buffer = ''
+          break
+        }
         try {
-          onEvent(JSON.parse(data))
+          const event = JSON.parse(data)
+          if (event.type === 'context_snapshot') contextSnapshot = event.context || null
+          if (event.type === 'context_compaction_end' && event.compaction?.status === 'completed') {
+            compactedDuringRequest = true
+          }
+          if (event.type === 'error' && isContextOverflowError(event.content)) {
+            overflowDetected = true
+            if (!retryCompaction) continue
+          }
+          onEvent(event)
         } catch {}
       }
+      if (streamCompleted) break
     }
   } catch (e) {
     console.log(`[frontend] streamChat error: ${e.name} — ${e.message}`)
     throw e
+  }
+
+  const shouldAutoCompact = shouldAutoCompactAfterTurn(contextSnapshot, retryCompaction, compactedDuringRequest)
+  if (!retryCompaction && (overflowDetected || shouldAutoCompact)) {
+    onEvent({ type: 'context_compaction_start', compaction: { status: 'started' } })
+    try {
+      const result = await compactConversation(workId)
+      for (const event of result?.events || []) {
+        if (event.type !== 'context_compaction_start') onEvent(event)
+      }
+      if (result?.status === 'skipped') return
+      if (overflowDetected) {
+        return streamChat(workId, message, onEvent, signal, attachments, maxChatAttachments, modelMessage, true)
+      }
+    } catch (error) {
+      onEvent({
+        type: 'context_compaction_end',
+        compaction: { status: 'failed', error: error instanceof Error ? error.message : String(error) },
+      })
+      if (overflowDetected) {
+        onEvent({ type: 'error', content: '上下文已超限，自动压缩失败，无法继续请求' })
+      }
+    }
   }
 }
 

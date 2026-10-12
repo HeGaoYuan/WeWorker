@@ -4,6 +4,7 @@ import {
   collectPlaintextSecretsFromRaw,
   extractSecrets,
   rawFileHasPlaintextSecrets,
+  clearSecretsOnDisk,
 } from '../settings-secrets.js'
 import type { Settings } from '../config.js'
 
@@ -12,16 +13,26 @@ const baseSettings = (): Settings => ({
   api_key: 'active-key',
   base_url: 'https://api.anthropic.com',
   model: 'claude-sonnet-4-6',
+  context_limit: 1_000_000,
   api_key_anthropic: 'anthropic-key',
   model_anthropic: 'claude-sonnet-4-6',
+  context_limit_anthropic: 1_000_000,
   api_key_glm: '',
   model_glm: 'glm-4.7',
+  context_limit_glm: 1_000_000,
   api_key_deepseek: '',
   model_deepseek: 'deepseek-chat',
+  context_limit_deepseek: 1_000_000,
   api_key_custom: '',
   model_custom: '',
+  context_limit_custom: 1_000_000,
   base_url_custom: '',
   openai_base_url_custom: '',
+  exploration_base_url: '',
+  exploration_api_key: 'fixture-exploration-key',
+  exploration_model: '',
+  exploration_use_main_key: true,
+  custom_auth_type: 'auth_token',
   channels: {
     qq: { enabled: true, app_id: 'qq-id', app_secret: 'qq-secret', owner_user_id: 'owner-1', owner_permission_level: 'full' },
     weixin: { enabled: true, token: 'wx-token', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
@@ -56,6 +67,9 @@ describe('settings-secrets', () => {
     const cleared = applySecrets(settings, {})
     expect(cleared.api_key_anthropic).toBe('')
     expect(cleared.channels.qq.app_secret).toBe('')
+    expect(secrets.exploration_api_key).toBe('fixture-exploration-key')
+    expect(clearSecretsOnDisk(settings).exploration_api_key).toBe('')
+    expect(applySecrets(cleared, secrets).exploration_api_key).toBe('fixture-exploration-key')
   })
 
   it('detects legacy plaintext secrets in raw settings', () => {

@@ -1,3 +1,4 @@
+import routeAliases from '../../config/route-aliases.json'
 import React, { useRef, useEffect, useState, useMemo, useCallback, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useChatInputFillStore } from '../../store/chat-input-fill.js'
@@ -18,6 +19,7 @@ import {
 } from '../../utils/terminal-completion.js'
 import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeIcon.jsx'
 import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
+import ContextPanel from './ContextPanel.jsx'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
@@ -27,6 +29,23 @@ const SLASH_MENU_MAX_HEIGHT = 208
 const SLASH_MENU_GAP = 8
 const SLASH_MENU_INSET_X = 10
 const SLASH_MENU_SHELL_PADDING = 6
+
+// 命令路由友好别名（与后端 api-query-router/tool-overrides.ts 的 !my-todo 别名对齐）。
+// !<工具全名> 与 !<友好别名> 直接点名工具 → 发聊天走智能路由；其余 !xxx 仍是 shell 命令。
+const ROUTER_BANG_ALIASES = new Set(routeAliases)
+
+function isKnownRouterToolName(command) {
+  const token = String(command || '').trim().split(/\s+/)[0]
+  if (!token) return false
+  if (ROUTER_BANG_ALIASES.has(token)) return true
+  const sites = useSitesStore.getState().sites || []
+  for (const site of sites) {
+    for (const tool of site?.tools || []) {
+      if (tool?.name === token) return true
+    }
+  }
+  return false
+}
 
 function getPlatformShell() {
   if (typeof navigator === 'undefined') return 'bash'
@@ -53,6 +72,7 @@ export default function InputBar({
   variant,
   embedded,
   attachmentTarget = 'welcome',
+  contextSnapshot = null,
 }) {
   const textareaRef = useRef(null)
   const slashMenuRef = useRef(null)
@@ -65,9 +85,11 @@ export default function InputBar({
   const hasAttachments = attachments.length > 0
   const attachmentLimit = Math.max(1, Number(maxAttachments) || DEFAULT_MAX_ATTACHMENTS)
   const pasteTextAttachmentThreshold = useSettingsStore((s) => s.pasteTextAttachmentThreshold)
+  const contextLimit = useSettingsStore((s) => s.contextLimit)
   const textAttachmentThreshold = Math.max(1, Number(pasteTextAttachmentThreshold) || DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD)
   const overAttachmentLimit = attachments.length > attachmentLimit
   const inputDisabled = !!disabled || !!streaming
+  const isCommandMode = String(text || '').trimStart().startsWith('!')
   const [attachmentNotice, setAttachmentNotice] = useState('')
   const [slashMenuState, setSlashMenuState] = useState(null)
   const [slashMenuPlacement, setSlashMenuPlacement] = useState(null)
@@ -446,6 +468,18 @@ export default function InputBar({
     }
     if (trimmed.startsWith('!') && trimmed.slice(1).trim()) {
       const command = trimmed.slice(1).trim()
+      // 命令路由：!<工具全名> / !<友好别名> 直接点名工具 → 发聊天走智能路由（llmMs=0 直调）；
+      // 其余 !xxx 仍走 shell 命令（shell 优先，仅放行已知工具名）。
+      if (isKnownRouterToolName(command)) {
+        setSlashMenuState(null)
+        setBangCompletionSource(null)
+        onTextChange('')
+        onAttachmentsChange?.([])
+        setAttachmentNotice('')
+        onSend(trimmed, attachments)
+        textareaRef.current?.focus()
+        return
+      }
       setSlashMenuState(null)
       setBangCompletionSource(null)
       onTextChange('')
@@ -670,7 +704,10 @@ export default function InputBar({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
         {uploadBtn}
       </div>
-      {actionBtn}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <ContextPanel snapshot={contextSnapshot} contextLimit={contextLimit} />
+        {actionBtn}
+      </div>
     </div>
   )
 
@@ -795,10 +832,16 @@ export default function InputBar({
     <div style={outerStyle}>
       <div
         data-chat-input-surface
-        className="chat-input-surface"
+        data-chat-command-mode={isCommandMode ? 'true' : 'false'}
+        className={`chat-input-surface${isCommandMode ? ' chat-input-surface--command' : ''}`}
         style={innerStyle}
         onPointerDownCapture={handleInputSurfacePointerDown}
       >
+        {isCommandMode && (
+          <div className="chat-command-mode-bar" aria-live="polite">
+            <span className="chat-command-mode-bar__label">命令行模式</span>
+          </div>
+        )}
         {hasAttachments && (
           <div style={{ padding: '12px 14px 0' }}>
             <AttachmentTray
@@ -810,7 +853,10 @@ export default function InputBar({
             />
           </div>
         )}
-        {textareaEl}
+        <div className={isCommandMode ? 'chat-command-input-wrap' : undefined}>
+          {isCommandMode && <span className="chat-command-input-prompt" aria-hidden="true">$</span>}
+          {textareaEl}
+        </div>
         {toolbarEl}
       </div>
       {renderSlashMenu()}

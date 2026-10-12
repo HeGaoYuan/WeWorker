@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildRuntimeTestCases } from './runtime-test-policy.js';
+import { verifyGeneratedWriteTools } from './write-tool-verifier.js';
+import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 
 const MAX_PREVIEW_SCRIPT_CHARS = 1_000_000;
 const SAFE_PREVIEW_SCRIPT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*\.js$/;
@@ -27,6 +29,11 @@ function resolvePreviewScript(adapterDir, relativePath) {
 }
 
 function buildInlinePreviewBundle(adapterDir) {
+  if (isPackageDraft(adapterDir)) {
+    const { pkg, manifest, scripts } = packageDraftBundle(adapterDir);
+    if (scripts.reduce((total, script) => total + script.source.length, 0) > MAX_PREVIEW_SCRIPT_CHARS) throw new Error('Preview scripts exceed size limit.');
+    return { manifest, scripts, packageDigest: pkg.digest };
+  }
   const manifestPath = path.join(adapterDir, 'manifest.json');
   if (!fs.existsSync(manifestPath)) throw new Error(`preview manifest not found in draft: ${manifestPath}`);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -47,15 +54,30 @@ function buildInlinePreviewBundle(adapterDir) {
 
 export function createPreviewRuntimeValidator({ requestExtension } = {}) {
   if (typeof requestExtension !== 'function') throw new Error('runtime validator requires requestExtension');
-  return async ({ run, draft, signal, plan, memory }) => {
+  return async ({ run, draft, signal, plan, memory, validation }) => {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
     const preview = {
       previewAdapterId: createPreviewAdapterId(run.id),
       transport: 'inline_bundle',
     };
     const previewBundle = buildInlinePreviewBundle(draft.adapterDir);
-    run.setArtifact('previewAdapter', preview);
+    if (previewBundle.packageDigest && validation?.packageDigest && previewBundle.packageDigest !== validation.packageDigest) throw new Error('Draft changed after static validation.');
+    run.setArtifact('previewAdapter', { ...preview, packageDigest: previewBundle.packageDigest || null });
     try {
+      const writeVerification = await verifyGeneratedWriteTools({
+        adapterDir: draft.adapterDir,
+        expectedSiteKey: run.snapshot.siteKey,
+      });
+      run.setArtifact('writeVerification', writeVerification);
+      if (!writeVerification.passed) {
+        return {
+          passed: false,
+          validator: 'adapter_runtime_validator_v1',
+          errors: writeVerification.errors,
+          warnings: writeVerification.warnings || [],
+          writeVerification,
+        };
+      }
       const registration = await requestExtension({
         type: 'validate_generation_preview',
         previewAdapterId: preview.previewAdapterId,
@@ -67,8 +89,12 @@ export function createPreviewRuntimeValidator({ requestExtension } = {}) {
       if (!registration?.passed) {
         return { validator: 'adapter_runtime_validator_v1', ...registration };
       }
+      const evidence = previewBundle.manifest.schema_version === 2 ? readGenerationEvidence(draft.adapterDir) : null;
       const testCases = buildRuntimeTestCases({
-        registeredTools: registration.tools || [],
+        registeredTools: (registration.tools || []).map(tool => {
+          const source = evidence?.commands?.[tool.name.slice(previewBundle.manifest.name?.length + 1)];
+          return source ? { ...tool, generationSource: source.generationSource } : tool;
+        }),
         plan,
         memory,
       });
@@ -81,11 +107,23 @@ export function createPreviewRuntimeValidator({ requestExtension } = {}) {
         expectedToolNames: draft.toolNames || [],
         testCases,
       }, 60_000);
+      const warnings = [...(Array.isArray(execution?.warnings) ? execution.warnings : [])];
+      for (const testCase of testCases) {
+        if (testCase?.unverifiable) {
+          warnings.push({
+            code: 'TOOL_MARKED_UNVERIFIABLE',
+            message: `工具 ${testCase.toolName} 已由修订标记为转人工验证，本轮跳过自动断言`,
+            toolName: testCase.toolName,
+          });
+        }
+      }
       return {
         validator: 'adapter_runtime_validator_v1',
         ...execution,
+        warnings,
         registration,
         testCases,
+        writeVerification,
       };
     } finally {
       run.setArtifact('previewAdapter', null);

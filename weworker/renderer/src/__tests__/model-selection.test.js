@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildModelOptions, buildProbeResultRows, getVisibleModelRefreshDetail, isModelRefreshFailed, shouldShowModelRefreshFailure } from '../utils/model-selection.js'
+import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, getVisibleModelRefreshDetail, isModelRefreshFailed, shouldShowModelRefreshFailure } from '../utils/model-selection.js'
 
 describe('provider model selection', () => {
   it('keeps an unlisted current model as an enabled option', () => {
@@ -53,5 +53,11 @@ describe('provider model selection', () => {
       { protocol: 'anthropic_messages', ok: true },
     ])
     assert.deepEqual(rows.map((row) => row.label), ['Anthropic 接口', 'Anthropic 结构化输出接口'])
+  })
+
+  it('skips the optional website agent probe when a custom OpenAI URL is absent', () => {
+    assert.deepEqual(buildProviderProbeTargets('custom', ''), ['weworker'])
+    assert.deepEqual(buildProviderProbeTargets('custom', 'https://gateway.example/v1'), ['weworker', 'webwright'])
+    assert.deepEqual(buildProviderProbeTargets('anthropic', ''), ['weworker', 'webwright'])
   })
 })

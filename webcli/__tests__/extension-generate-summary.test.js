@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -8,17 +9,37 @@ function readText(relPath) {
   return fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
 }
 
+function loadStoredMemoryBuilder() {
+  const source = readText('extension/background/service-worker.js');
+  const sections = [
+    ['const REQUEST_TRUNCATION_MARKER_RE', 'function sanitizeActionCaptureResult('],
+    ['function isTelemetryLikeEntry(', 'function looksJsonPayload('],
+    ['function safeStoredText(', 'function normalizeExploreStateSiteKey('],
+  ].map(([startMarker, endMarker]) => {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  });
+  // Run the real storage builders without starting browser listeners or network I/O.
+  const context = vm.createContext({ URL, URLSearchParams });
+  vm.runInContext(sections.join('\n'), context, { timeout: 1000 });
+  return context.buildStoredSiteMemory;
+}
+
 describe('extension scaffold generation summary', () => {
-  it('dedupes generated file paths in sidepanel and popup summaries', () => {
+  it('uses tracked generation tasks in both sidepanel and popup', () => {
     const sidepanel = readText('extension/sidepanel/sidepanel.js');
     const popup = readText('extension/popup/popup.js');
 
     expect(sidepanel).toContain('function collectUniqueGeneratedFileLines');
-    expect(sidepanel).toContain('collectUniqueGeneratedFileLines(r.files)');
+    expect(sidepanel).toContain('return triggerGenerate({ quick: true });');
     expect(sidepanel).not.toContain('Object.values(r.files || {}).filter');
 
     expect(popup).toContain('function collectUniqueGeneratedFileLines');
-    expect(popup).toContain('collectUniqueGeneratedFileLines(response.files)');
+    expect(popup).toContain('generationRunsBySite');
+    expect(popup).toContain('response.run.id');
     expect(popup).not.toContain('Object.values(response.files || {}).filter');
   });
 
@@ -65,8 +86,8 @@ describe('extension scaffold generation summary', () => {
     expect(sidepanel).toContain('isBridgeConnected = Boolean(connected);');
     expect(sidepanel).toContain("type: 'popup_bridge_status'");
     expect(sidepanel).toContain('async function ensureBridgeConnected');
-    expect(sidepanel).toContain("await ensureBridgeConnected('Bridge 未连接，无法生成工具')");
-    expect(sidepanel).toContain('Bridge 未连接，无法写入生成工具');
+    expect(sidepanel).toContain("await ensureBridgeConnected('Bridge 未连接，无法启动智能生成')");
+    expect(sidepanel).toContain('return triggerGenerate({ quick: true });');
     expect(sidepanel).toContain('Bridge 未连接，无法保存配置');
     expect(sidepanel).toContain('Bridge 未连接，无法测试配置');
   });
@@ -83,12 +104,12 @@ describe('extension scaffold generation summary', () => {
     expect(sidepanel).toContain('已发现适配器，但注入当前页面失败');
   });
 
-  it('warns when scaffold files were written but runtime tools are not registered yet', () => {
+  it('shows installation review and refresh status instead of claiming an uninstalled draft is active', () => {
     const sidepanel = readText('extension/sidepanel/sidepanel.js');
 
-    expect(sidepanel).toContain('当前页面尚未注册到可用工具');
-    expect(sidepanel).toContain('若显示“适配器加载失败”，优先按错误信息检查生成文件');
-    expect(sidepanel).toContain('当前没有可刷新的匹配页面');
+    expect(sidepanel).toContain('本机安装评审');
+    expect(sidepanel).toContain('addedPermissions');
+    expect(sidepanel).toContain('页面刷新：');
   });
 
   it('keeps API candidate descriptions and blocks skip while capture is busy', () => {
@@ -101,12 +122,57 @@ describe('extension scaffold generation summary', () => {
     expect(sidepanel).toContain("data-capture-action=\"next-capture\"");
   });
 
-  it('persists response evidence for list API candidates', () => {
+  it('persists structural response evidence without raw previews for list API candidates', () => {
     const background = readText('extension/background/service-worker.js');
+    const storedCandidateSource = background.slice(
+      background.indexOf('function mergeStoredListCandidateEvidence('),
+      background.indexOf('function extractStoredListApiCandidates('),
+    );
 
-    expect(background).toContain('function createStoredListCandidate');
-    expect(background).toContain('responsePreview: safeStoredText(entry?.responsePreview)');
-    expect(background).toContain('responseContentType: safeStoredText(entry?.responseContentType || entry?.contentType)');
+    expect(storedCandidateSource).toContain('function createStoredListCandidate');
+    expect(storedCandidateSource).toContain('responseHints: extractStoredActionResponseHints(entry?.responsePreview)');
+    expect(storedCandidateSource).toContain('candidate.responseHints = mergeStoredActionResponseHints(');
+    expect(storedCandidateSource).toContain('responseContentType: safeStoredText(entry?.responseContentType || entry?.contentType)');
+    expect(storedCandidateSource).not.toMatch(/\bresponsePreview\s*:|\.responsePreview\s*=/);
     expect(background).toContain('mergeStoredListCandidateEvidence(existing, entry)');
+  });
+
+  it.each([false, true])('keeps list response hints but excludes captured values (merge=%s)', (merge) => {
+    const buildStoredSiteMemory = loadStoredMemoryBuilder();
+    const entry = {
+      url: 'https://example.com/api/list',
+      method: 'GET',
+      responseContentType: 'application/json',
+      status: 200,
+      responsePreview: JSON.stringify({ data: { rows: [{
+        id: 'fixture-record-private',
+        title: 'fixture-title-private',
+        email: 'fixture-person@example.com',
+      }] } }),
+    };
+    const memory = buildStoredSiteMemory('example.com', {
+      opened: { url: 'https://example.com/search' },
+      actions: merge ? [{
+        step: 'search',
+        networkDelta: { entries: [{ ...entry, responsePreview: '{}' }] },
+      }] : [],
+      network: { entries: [entry] },
+    });
+
+    expect(memory.listApiCandidates).toHaveLength(1);
+    const [candidate] = memory.listApiCandidates;
+    expect(candidate.responseHints).toMatchObject({
+      listPath: 'data.rows',
+      itemKeys: ['id', 'title', 'email'],
+      preferredIdKey: 'id',
+      preferredDisplayKey: 'title',
+    });
+    expect(candidate.responseContentType).toBe('application/json');
+    expect(candidate.sourceSteps).toEqual(merge ? ['search', 'passive_capture'] : ['passive_capture']);
+    expect(candidate).not.toHaveProperty('responsePreview');
+    const serialized = JSON.stringify(memory);
+    for (const value of ['fixture-record-private', 'fixture-title-private', 'fixture-person@example.com']) {
+      expect(serialized).not.toContain(value);
+    }
   });
 });

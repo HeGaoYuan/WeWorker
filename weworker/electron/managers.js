@@ -6,19 +6,25 @@ import { Socket } from 'net'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { app, utilityProcess } from 'electron'
+import { buildAdapterEnvironment } from './adapter-environment.js'
 import {
   formatProcessExitCode,
   isPortOccupied,
-  isStandaloneWeWorkerBackend,
   probeHttpJson,
   waitForHttpInstance,
 } from './local-service.js'
+import {
+  ExternalBackendMonitor,
+  PortInUseMonitor,
+  resolveBackendAvailability,
+} from './backend-availability.js'
 
 import {
   buildWebwrightEnvironment,
   resolveWebwrightHome,
   resolveWeWorkerUserFilesDir,
 } from './webwright-manager.js'
+import { resolveClaudeCodePath } from './claude-runtime.js'
 
 export {
   WebwrightManager,
@@ -27,6 +33,10 @@ export {
 } from './webwright-manager.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+function adapterEnvironment() {
+  return buildAdapterEnvironment({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, repoRoot: path.resolve(__dirname, '../..') })
+}
 
 function normalizeOpenBrowserAllowedOrigin(value) {
   const raw = String(value || '').trim()
@@ -106,7 +116,7 @@ export class BridgeManager {
 
     let cmd, args
     const bridgeEnv = {
-      ...process.env,
+      ...adapterEnvironment(),
       NODE_OPTIONS: [process.env.NODE_OPTIONS, '--max-old-space-size=4096'].filter(Boolean).join(' '),
       WEBCLI_AI_REPORT_DIR: this._reportDir,
       WEBCLI_GENERATION_REPORT_DIR: this._reportDir,
@@ -246,7 +256,7 @@ export class BridgeManager {
 }
 
 export class NodeManager {
-  constructor(log, logFile, httpAuthToken, webwrightHome = resolveWebwrightHome(), modelConfigToken = '') {
+  constructor(log, logFile, httpAuthToken, webwrightHome = resolveWebwrightHome(), modelConfigToken = '', explorationInstanceId = '') {
     this._process = null
     this._status = 'stopped'
     this._log = log || console.log
@@ -254,51 +264,78 @@ export class NodeManager {
     this._httpAuthToken = httpAuthToken || ''
     this._webwrightHome = webwrightHome
     this._modelConfigToken = modelConfigToken
+    this._explorationInstanceId = explorationInstanceId
     this._stopping = false
     this._restartTimer = null
     this._restartAttempts = 0
-    this._externalMonitorTimer = null
+    this._externalMonitor = null
+    this._portInUseMonitor = null
+    this._starting = false
   }
 
   async start() {
+    if (this._starting) return
     if (this._process && (this._status === 'starting' || this._status === 'running')) return
     if (this._restartTimer) {
       clearTimeout(this._restartTimer)
       this._restartTimer = null
     }
-    if (this._externalMonitorTimer) {
-      clearInterval(this._externalMonitorTimer)
-      this._externalMonitorTimer = null
+    if (this._externalMonitor) {
+      this._externalMonitor.stop()
+      this._externalMonitor = null
+    }
+    if (this._portInUseMonitor) {
+      this._portInUseMonitor.stop()
+      this._portInUseMonitor = null
     }
     this._stopping = false
+    this._starting = true
+    try {
+      await this._startInternal()
+    } catch (error) {
+      this._status = 'error'
+      this._log(`[node] startup failed: ${error?.message || error}`)
+      throw error
+    } finally {
+      this._starting = false
+    }
+  }
+
+  async _startInternal() {
     this._status = 'starting'
 
     // Do not spawn a second backend into an occupied port. Previously the
     // readiness probe could hit the old process, report "running", and then
     // restart forever when the newly spawned process exited with EADDRINUSE.
-    const occupied = await isPortOccupied(8765)
-    if (occupied) {
-      if (!app.isPackaged) {
-        const externalStatus = await probeHttpJson(
-          'http://127.0.0.1:8765/status',
-          1500,
-          this._httpAuthToken,
-        )
-        if (isStandaloneWeWorkerBackend(externalStatus)) {
-          this._status = 'external_running'
-          this._restartAttempts = 0
-          this._log('[node] using standalone backend already running on port 8765')
-          this._monitorExternalBackend()
-          return
-        }
-      }
+    // The startup probe budget tolerates a busy-but-healthy standalone
+    // backend; only a foreign or truly unresponsive holder leads to
+    // port_in_use, and that state self-heals via _monitorPortInUse.
+    const availability = await resolveBackendAvailability({
+      checkPort: isPortOccupied,
+      probeStatus: (timeout) => probeHttpJson(
+        'http://127.0.0.1:8765/status',
+        timeout,
+        this._httpAuthToken,
+      ),
+      allowExternal: !app.isPackaged,
+    })
+    if (availability === 'external') {
+      this._status = 'external_running'
+      this._restartAttempts = 0
+      this._log('[node] using standalone backend already running on port 8765')
+      this._monitorExternalBackend()
+      return
+    }
+    if (availability === 'port_in_use') {
       this._status = 'port_in_use'
       this._log('[node] port 8765 already in use by another process — skipping backend spawn')
+      this._monitorPortInUse(!app.isPackaged)
       return
     }
 
     const backendDir = path.resolve(__dirname, '../backend-ts')
     const backendInstanceId = randomUUID()
+    const claudeCodePath = resolveClaudeCodePath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appRoot: path.resolve(__dirname, '..') })
     if (app.isPackaged) {
       // Packaged: use utilityProcess (Electron's embedded Node.js) — NOT process.execPath
       // which would re-launch Electron itself causing an infinite loop.
@@ -307,11 +344,13 @@ export class NodeManager {
         stdio: 'pipe',
         execArgv: ['--experimental-sqlite'],
         env: {
-          ...buildWebwrightEnvironment(process.env, this._webwrightHome),
+          ...buildWebwrightEnvironment(adapterEnvironment(), this._webwrightHome),
           WEWORK_PORT: '8765',
           WEWORK_LOG_FILE: this._logFile,
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
+          WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
+          WEWORKER_CLAUDE_CODE_PATH: claudeCodePath,
           WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
           WEWORKER_PACKAGED: '1',
           WEWORKER_RESOURCES_PATH: process.resourcesPath,
@@ -341,13 +380,16 @@ export class NodeManager {
       this._process = spawn(cmd, args, {
         cwd: backendDir,
         env: {
-          ...buildWebwrightEnvironment(process.env, this._webwrightHome),
+          ...buildWebwrightEnvironment(adapterEnvironment(), this._webwrightHome),
           ELECTRON_RUN_AS_NODE: '1',
           WEWORK_PORT: '8765',
           WEWORK_LOG_FILE: this._logFile,
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
+          WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
+          WEWORKER_CLAUDE_CODE_PATH: claudeCodePath,
           WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
+          WEWORKER_RENDERER_ORIGIN: process.env.WEWORKER_DEV_SERVER_URL || '',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
@@ -392,9 +434,13 @@ export class NodeManager {
       clearTimeout(this._restartTimer)
       this._restartTimer = null
     }
-    if (this._externalMonitorTimer) {
-      clearInterval(this._externalMonitorTimer)
-      this._externalMonitorTimer = null
+    if (this._externalMonitor) {
+      this._externalMonitor.stop()
+      this._externalMonitor = null
+    }
+    if (this._portInUseMonitor) {
+      this._portInUseMonitor.stop()
+      this._portInUseMonitor = null
     }
     // A standalone development backend was started by the developer, not by
     // Electron. Never terminate it when the desktop app exits.
@@ -437,28 +483,43 @@ export class NodeManager {
   }
 
   _monitorExternalBackend() {
-    if (this._externalMonitorTimer) return
-    let checking = false
-    this._externalMonitorTimer = setInterval(async () => {
-      if (checking || this._stopping || this._status !== 'external_running') return
-      checking = true
-      try {
-        const status = await probeHttpJson(
-          'http://127.0.0.1:8765/status',
-          1000,
-          this._httpAuthToken,
-        )
-        if (isStandaloneWeWorkerBackend(status)) return
-
-        clearInterval(this._externalMonitorTimer)
-        this._externalMonitorTimer = null
+    if (this._externalMonitor) return
+    this._externalMonitor = new ExternalBackendMonitor({
+      probeStatus: (timeout) => probeHttpJson(
+        'http://127.0.0.1:8765/status',
+        timeout,
+        this._httpAuthToken,
+      ),
+      onUnavailable: () => {
+        this._externalMonitor = null
         this._status = 'stopped'
         this._log('[node] standalone backend is no longer available; starting managed backend')
-        await this.start()
-      } finally {
-        checking = false
-      }
-    }, 3000)
+        void this.start()
+      },
+    })
+    this._externalMonitor.start()
+  }
+
+  _monitorPortInUse(allowExternal) {
+    if (this._portInUseMonitor) return
+    this._portInUseMonitor = new PortInUseMonitor({
+      checkPort: isPortOccupied,
+      probeStatus: (timeout) => probeHttpJson(
+        'http://127.0.0.1:8765/status',
+        timeout,
+        this._httpAuthToken,
+      ),
+      allowExternal,
+      onRecovered: (availability) => {
+        this._portInUseMonitor = null
+        if (this._stopping) return
+        this._log(availability === 'free'
+          ? '[node] port 8765 is now free; starting managed backend'
+          : '[node] standalone backend on port 8765 is reachable again; using it')
+        void this.start()
+      },
+    })
+    this._portInUseMonitor.start()
   }
 }
 

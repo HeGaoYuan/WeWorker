@@ -1,0 +1,1237 @@
+{
+  "schema_version": 2,
+  "name": "x.com",
+  "version": "0.1.0",
+  "description": "Twitter/X：OpenCLI 对齐能力",
+  "homepage_url": "https://x.com/",
+  "match": [
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "twitter",
+    "Twitter/X"
+  ],
+  "runtime_allowed_hosts": [
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com"
+  ],
+  "commands": [
+    {
+      "id": "accept",
+      "runtime": "extension",
+      "module": "extension/commands/accept.js",
+      "routeDomain": "x.com",
+      "description": "Auto-accept DM requests containing specific keywords",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keywords to match (comma-separated for OR, e.g. \"群,微信\")"
+          },
+          "max": {
+            "type": "integer",
+            "description": "Maximum number of requests to accept (default: 20)",
+            "default": 20
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Max seconds for the overall command (default: 600 — batch op)",
+            "default": 600
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "article",
+      "runtime": "extension",
+      "module": "extension/commands/article.js",
+      "routeDomain": "x.com",
+      "description": "Fetch a Twitter Article (long-form content) and export as Markdown",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "tweet-id": {
+            "type": "string",
+            "description": "Tweet ID or URL containing the article"
+          }
+        },
+        "required": [
+          "tweet-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "x.com",
+      "description": "Show the current logged-in twitter account",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "x.com",
+      "description": "Open the twitter login page; finish signing in on the page, then verify with whoami",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "block",
+      "runtime": "extension",
+      "module": "extension/commands/block.js",
+      "routeDomain": "x.com",
+      "description": "Block a Twitter user",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (without @)"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "bookmark",
+      "runtime": "extension",
+      "module": "extension/commands/bookmark.js",
+      "routeDomain": "x.com",
+      "description": "Bookmark a tweet",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Tweet URL to bookmark"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "bookmark-folder",
+      "runtime": "extension",
+      "module": "extension/commands/bookmark-folder.js",
+      "routeDomain": "x.com",
+      "description": "Read the tweets inside a single Twitter/X bookmark folder. Get the folder id from `opencli twitter bookmark-folders`.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "folder-id": {
+            "type": "string",
+            "description": "Folder id from `opencli twitter bookmark-folders`."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of bookmarks to return (default 20).",
+            "default": 20
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the folder by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps the API's native (saved-time) ordering.",
+            "default": 0
+          }
+        },
+        "required": [
+          "folder-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "bookmark-folders",
+      "runtime": "extension",
+      "module": "extension/commands/bookmark-folders.js",
+      "routeDomain": "x.com",
+      "description": "List your Twitter/X bookmark folders (the user-created collections under Bookmarks). Returns folder id, name, item count, and created_at.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "bookmarks",
+      "runtime": "extension",
+      "module": "extension/commands/bookmarks.js",
+      "routeDomain": "x.com",
+      "description": "Fetch your Twitter/X bookmarks (the logged-in user's saved tweets, newest first)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of bookmarks to return (default 20). Ignored when --all is set.",
+            "default": 20
+          },
+          "all": {
+            "type": "boolean",
+            "description": "Fetch all bookmark pages until exhausted (in-memory; no file resume).",
+            "default": false
+          },
+          "max-pages": {
+            "type": "integer",
+            "description": "Optional pagination safety cap (default 100; raised automatically with --all)."
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the bookmarks by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps the API's native (saved-time) ordering.",
+            "default": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "collection",
+      "runtime": "extension",
+      "module": "extension/commands/collection.js",
+      "routeDomain": "x.com",
+      "description": "Fetch a user timeline with relationship facts and a bounded completion receipt.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (with or without @)."
+          },
+          "until": {
+            "type": "string",
+            "description": "RFC3339 lower time boundary that must be reached or exhausted."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Safety ceiling; reaching it is a typed failure.",
+            "default": 10000
+          },
+          "page-delay": {
+            "type": "integer",
+            "description": "Seconds to wait between cursor pages.",
+            "default": 2
+          }
+        },
+        "required": [
+          "username",
+          "until"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "delete",
+      "runtime": "extension",
+      "module": "extension/commands/delete.js",
+      "routeDomain": "x.com",
+      "description": "Delete a specific tweet by URL",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to delete"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "device-follow",
+      "runtime": "extension",
+      "module": "extension/commands/device-follow.js",
+      "routeDomain": "x.com",
+      "description": "Read the /i/timeline device-follow notification stream (tweets aggregated under a bell-icon \"new posts from @userA and N others\" notification)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of tweets to return (1-200, default 20)",
+            "default": 20
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank by weighted engagement and return the top N. Default 0 keeps upstream ordering.",
+            "default": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "download",
+      "runtime": "extension",
+      "module": "extension/commands/download.js",
+      "routeDomain": "x.com",
+      "description": "List Twitter/X media URLs (images and videos). Provide either <username> to scan profile media via the GraphQL UserMedia endpoint with cursor pagination, or --tweet-url for a single tweet. Returns URLs only; download them through your own channel.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter username (with or without @) to scan their profile media. Either <username> or --tweet-url is required."
+          },
+          "tweet-url": {
+            "type": "string",
+            "description": "Single tweet URL to download. Use this OR <username>, not both required at once."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of media items when scanning a profile (default 10). Ignored when --tweet-url is used.",
+            "default": 10
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "follow",
+      "runtime": "extension",
+      "module": "extension/commands/follow.js",
+      "routeDomain": "x.com",
+      "description": "Follow a Twitter user",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (without @)"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "follow-batch",
+      "runtime": "extension",
+      "module": "extension/commands/follow-batch.js",
+      "routeDomain": "x.com",
+      "description": "Follow multiple Twitter/X users from a comma-separated username list",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "usernames": {
+            "type": "string",
+            "description": "Comma-separated Twitter/X screen names, with or without @"
+          },
+          "delay-ms": {
+            "type": "integer",
+            "description": "Delay between follow attempts in milliseconds",
+            "default": 3000
+          }
+        },
+        "required": [
+          "usernames"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "followers",
+      "runtime": "extension",
+      "module": "extension/commands/followers.js",
+      "routeDomain": "x.com",
+      "description": "Get accounts following a Twitter/X user (defaults to the logged-in user when no user is given)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "Twitter/X handle (with or without @). Omit to fetch followers of the currently logged-in account."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of follower rows to return (default 50). Must be a positive integer.",
+            "default": 50
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "following",
+      "runtime": "extension",
+      "module": "extension/commands/following.js",
+      "routeDomain": "x.com",
+      "description": "Get accounts a Twitter/X user is following (defaults to the logged-in user when no user is given)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "Twitter/X handle (with or without @). Omit to fetch the accounts the currently logged-in user follows."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of following rows to return (default 50). Must be a positive integer.",
+            "default": 50
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hide-reply",
+      "runtime": "extension",
+      "module": "extension/commands/hide-reply.js",
+      "routeDomain": "x.com",
+      "description": "Hide a reply on your tweet (useful for hiding bot/spam replies)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the reply tweet to hide"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "like",
+      "runtime": "extension",
+      "module": "extension/commands/like.js",
+      "routeDomain": "x.com",
+      "description": "Like a specific tweet",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to like"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "likes",
+      "runtime": "extension",
+      "module": "extension/commands/likes.js",
+      "routeDomain": "x.com",
+      "description": "Fetch liked tweets of a Twitter user (defaults to the logged-in user when no username is given)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (with or without @). Defaults to the logged-in user when omitted."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of liked tweets to return (default 20). Ignored when --all is set.",
+            "default": 20
+          },
+          "all": {
+            "type": "boolean",
+            "description": "Fetch all liked-tweet pages until exhausted (in-memory; no file resume).",
+            "default": false
+          },
+          "max-pages": {
+            "type": "integer",
+            "description": "Optional pagination safety cap (default 100; raised automatically with --all)."
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the liked tweets by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps the API's native (recency) ordering.",
+            "default": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "lists",
+      "runtime": "extension",
+      "module": "extension/commands/lists.js",
+      "routeDomain": "x.com",
+      "description": "Get Twitter/X lists for the logged-in user (owned + subscribed)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of lists to return (default 50).",
+            "default": 50
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-add",
+      "runtime": "extension",
+      "module": "extension/commands/list-add.js",
+      "routeDomain": "x.com",
+      "description": "Add a user to a Twitter/X list you own (no-op if already a member)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listId": {
+            "type": "string",
+            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+          },
+          "username": {
+            "type": "string",
+            "description": "Twitter/X handle to add (with or without @)"
+          }
+        },
+        "required": [
+          "listId",
+          "username"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-add-batch",
+      "runtime": "extension",
+      "module": "extension/commands/list-add-batch.js",
+      "routeDomain": "x.com",
+      "description": "Add multiple users to a Twitter/X list you own from a comma-separated username list",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listId": {
+            "type": "string",
+            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+          },
+          "usernames": {
+            "type": "string",
+            "description": "Comma-separated Twitter/X handles to add (with or without @)"
+          },
+          "interval": {
+            "type": "integer",
+            "description": "Seconds to wait between account additions (default: 5)",
+            "default": 5
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Max seconds for the overall batch command (default: 600)",
+            "default": 600
+          }
+        },
+        "required": [
+          "listId",
+          "usernames"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-create",
+      "runtime": "extension",
+      "module": "extension/commands/list-create.js",
+      "routeDomain": "x.com",
+      "description": "Create a new Twitter/X list (returns the new list id)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "List name (max 25 chars)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional list description (max 100 chars)",
+            "default": ""
+          },
+          "mode": {
+            "type": "string",
+            "description": "public | private",
+            "default": "public"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-delete",
+      "runtime": "extension",
+      "module": "extension/commands/list-delete.js",
+      "routeDomain": "x.com",
+      "description": "Delete a Twitter/X list you own after explicit confirmation",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listId": {
+            "type": "string",
+            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "Required. Set --confirm true to delete the list.",
+            "default": false
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Max seconds for the overall delete command (default: 300)",
+            "default": 300
+          }
+        },
+        "required": [
+          "listId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-remove",
+      "runtime": "extension",
+      "module": "extension/commands/list-remove.js",
+      "routeDomain": "x.com",
+      "description": "Remove a user from a Twitter/X list you own (toggles via UI; no-op if not currently a member)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listId": {
+            "type": "string",
+            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+          },
+          "username": {
+            "type": "string",
+            "description": "Twitter/X handle to remove (with or without @)"
+          }
+        },
+        "required": [
+          "listId",
+          "username"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-remove-batch",
+      "runtime": "extension",
+      "module": "extension/commands/list-remove-batch.js",
+      "routeDomain": "x.com",
+      "description": "Remove multiple users from a Twitter/X list you own from a comma-separated username list",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listId": {
+            "type": "string",
+            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+          },
+          "usernames": {
+            "type": "string",
+            "description": "Comma-separated Twitter/X handles to remove (with or without @)"
+          },
+          "interval": {
+            "type": "integer",
+            "description": "Seconds to wait between account removals (default: 5)",
+            "default": 5
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Max seconds for the overall batch command (default: 600)",
+            "default": 600
+          }
+        },
+        "required": [
+          "listId",
+          "usernames"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list-tweets",
+      "runtime": "extension",
+      "module": "extension/commands/list-tweets.js",
+      "routeDomain": "x.com",
+      "description": "Fetch tweets from a Twitter/X list timeline",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listId": {
+            "type": "string",
+            "description": "Numeric ID of a Twitter/X list (e.g. from `opencli twitter lists`)"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the list timeline by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps the list's native (recency) ordering.",
+            "default": 0
+          }
+        },
+        "required": [
+          "listId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "mute-word",
+      "runtime": "extension",
+      "module": "extension/commands/mute-word.js",
+      "routeDomain": "x.com",
+      "description": "Add a muted word or phrase on Twitter/X",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "Word or phrase to mute"
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "notifications",
+      "runtime": "extension",
+      "module": "extension/commands/notifications.js",
+      "routeDomain": "x.com",
+      "description": "Get your Twitter/X notifications (the logged-in user's likes/replies/follows feed, newest first)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of notifications to return (default 20).",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "post",
+      "runtime": "extension",
+      "module": "extension/commands/post.js",
+      "routeDomain": "x.com",
+      "description": "Post a new tweet (text only)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text content of the tweet"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "profile",
+      "runtime": "extension",
+      "module": "extension/commands/profile.js",
+      "routeDomain": "x.com",
+      "description": "Fetch a Twitter user profile — bio, stats, etc. (defaults to the logged-in user when no username is given)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (with or without @). Defaults to the logged-in user when omitted."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "quote",
+      "runtime": "extension",
+      "module": "extension/commands/quote.js",
+      "routeDomain": "x.com",
+      "description": "Quote-tweet a specific tweet with your own text (text only)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to quote"
+          },
+          "text": {
+            "type": "string",
+            "description": "The text content of your quote"
+          }
+        },
+        "required": [
+          "url",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reply",
+      "runtime": "extension",
+      "module": "extension/commands/reply.js",
+      "routeDomain": "x.com",
+      "description": "Reply to a specific tweet (text only)",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to reply to"
+          },
+          "text": {
+            "type": "string",
+            "description": "The text content of your reply"
+          }
+        },
+        "required": [
+          "url",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reply-dm",
+      "runtime": "extension",
+      "module": "extension/commands/reply-dm.js",
+      "routeDomain": "x.com",
+      "description": "Send a message to recent DM conversations",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Message text to send (e.g. \"我的微信 wxkabi\")"
+          },
+          "max": {
+            "type": "integer",
+            "description": "Maximum number of conversations to reply to (default: 20)",
+            "default": 20
+          },
+          "skip-replied": {
+            "type": "boolean",
+            "description": "Skip conversations where you already sent the same text (default: true)",
+            "default": true
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Max seconds for the overall command (default: 600 — batch op)",
+            "default": 600
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "retweet",
+      "runtime": "extension",
+      "module": "extension/commands/retweet.js",
+      "routeDomain": "x.com",
+      "description": "Retweet a specific tweet",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to retweet"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "x.com",
+      "description": "Search Twitter/X for tweets, with optional --from / --has / --exclude / --product filters mapped to X's search operators",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query. Raw X operators (e.g. \"exact phrase\", #tag, OR, lang:en, since:YYYY-MM-DD, from:, since:) are passed through unchanged."
+          },
+          "filter": {
+            "type": "string",
+            "description": "Legacy alias for --product. Kept for backwards compatibility; if --product is set it wins.",
+            "default": "top"
+          },
+          "product": {
+            "type": "string",
+            "description": "Which X search tab to read: top (default), live (Latest), photos, videos. Maps to the f= URL param."
+          },
+          "from": {
+            "type": "string",
+            "description": "Restrict to tweets authored by <user>. Leading @ is stripped. Equivalent to appending `from:<user>` to the query."
+          },
+          "has": {
+            "type": "string",
+            "description": "Restrict to tweets that have media|images|videos|links|replies. Maps to X's `filter:<has>` operator."
+          },
+          "exclude": {
+            "type": "string",
+            "description": "Exclude tweets matching <type>: replies|retweets|media|links. Maps to X's `-filter:<x>` operator (retweets → -filter:nativeretweets)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of tweets to return (default 15). Result count after server-side filtering.",
+            "default": 15
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the results by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps X's native ordering.",
+            "default": 0
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "thread",
+      "runtime": "extension",
+      "module": "extension/commands/thread.js",
+      "routeDomain": "x.com",
+      "description": "Get a tweet thread (original + all replies)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "tweet-id": {
+            "type": "string",
+            "description": "Tweet numeric ID (e.g. 1234567890) or full status URL"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the thread by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps the conversation's structural ordering.",
+            "default": 0
+          }
+        },
+        "required": [
+          "tweet-id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "timeline",
+      "runtime": "extension",
+      "module": "extension/commands/timeline.js",
+      "routeDomain": "x.com",
+      "description": "Fetch the logged-in user's home timeline (for-you algorithmic feed by default; pass --type following for the chronological feed of accounts you follow)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Which home-timeline feed to read. Default for-you (algorithmic). Use following for the chronological feed of accounts you follow.",
+            "default": "for-you"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of tweets to return (default 20).",
+            "default": 20
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the timeline by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps X's native ordering.",
+            "default": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "trending",
+      "runtime": "extension",
+      "module": "extension/commands/trending.js",
+      "routeDomain": "x.com",
+      "description": "Twitter/X trending topics",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Number of trends to show",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "tweets",
+      "runtime": "extension",
+      "module": "extension/commands/tweets.js",
+      "routeDomain": "x.com",
+      "description": "Fetch a Twitter user's most recent tweets (chronological, excludes pinned; defaults to the logged-in user when no username is given)",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (with or without @). Defaults to the logged-in user when omitted."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max tweets to return (1-10000; fetched across cursor pages)",
+            "default": 20
+          },
+          "page-delay": {
+            "type": "integer",
+            "description": "Seconds to wait between paginated timeline requests to reduce rate-limit risk. Use 0 to disable.",
+            "default": 2
+          },
+          "top-by-engagement": {
+            "type": "integer",
+            "description": "When set to N>0, re-rank the tweets by weighted engagement (likes×1 + retweets×3 + replies×2 + bookmarks×5 + log10(views+1)×0.5) and return the top N. Default 0 keeps the chronological ordering.",
+            "default": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "unblock",
+      "runtime": "extension",
+      "module": "extension/commands/unblock.js",
+      "routeDomain": "x.com",
+      "description": "Unblock a Twitter user",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (without @)"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "unbookmark",
+      "runtime": "extension",
+      "module": "extension/commands/unbookmark.js",
+      "routeDomain": "x.com",
+      "description": "Remove a tweet from bookmarks",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Tweet URL to unbookmark"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "unfollow",
+      "runtime": "extension",
+      "module": "extension/commands/unfollow.js",
+      "routeDomain": "x.com",
+      "description": "Unfollow a Twitter user",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Twitter screen name (without @)"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "unlike",
+      "runtime": "extension",
+      "module": "extension/commands/unlike.js",
+      "routeDomain": "x.com",
+      "description": "Remove a like from a specific tweet",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to unlike"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "unretweet",
+      "runtime": "extension",
+      "module": "extension/commands/unretweet.js",
+      "routeDomain": "x.com",
+      "description": "Undo a retweet on a specific tweet",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the tweet to unretweet"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

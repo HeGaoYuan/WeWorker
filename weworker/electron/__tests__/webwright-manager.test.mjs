@@ -24,6 +24,7 @@ function createChild() {
 function sourceHealth() {
   return {
     ok: true,
+    instance_id: 'exploration-fixture',
     version: '0.1.0',
     platform: 'darwin',
     arch: 'arm64',
@@ -122,6 +123,7 @@ test('configured user files directory and scoped model credentials are passed', 
     webwrightHome: path.resolve('test-home/.weworker/webwright'),
     userFilesDir: path.resolve('custom-user-files'),
     modelConfigToken: 'model-token',
+    explorationInstanceId: 'exploration-fixture',
     checkPort: async () => false,
     spawnProcess: (command, args, options) => {
       invocation = { command, args, options }
@@ -135,6 +137,7 @@ test('configured user files directory and scoped model credentials are passed', 
   assert.equal(invocation.options.env.WEWORKER_BRIDGE_TOKEN, undefined)
   assert.equal(invocation.options.env.WEWORKER_MODEL_CONFIG_URL, 'http://127.0.0.1:8765/internal/webwright/model-config')
   assert.equal(invocation.options.env.WEWORKER_MODEL_CONFIG_TOKEN, 'model-token')
+  assert.equal(invocation.options.env.WEWORKER_EXPLORATION_INSTANCE_ID, 'exploration-fixture')
   const stopPromise = manager.stop()
   child.emit('exit', 0, null)
   await stopPromise
@@ -212,7 +215,11 @@ test('unexpected exit schedules a bounded restart', async (t) => {
   const manager = new WebwrightManager({
     repoRoot: '/repo',
     checkPort: async () => false,
-    spawnProcess: () => children[spawnCount++],
+    explorationInstanceId: 'exploration-fixture',
+    spawnProcess: (_command, _args, options) => {
+      assert.equal(options.env.WEWORKER_EXPLORATION_INSTANCE_ID, 'exploration-fixture')
+      return children[spawnCount++]
+    },
     fetchHealth: async () => ({ ok: true, json: async () => sourceHealth() }),
     maxRestartAttempts: 1,
   })

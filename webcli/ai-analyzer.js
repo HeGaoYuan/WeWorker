@@ -7,6 +7,12 @@ import { spawn } from "child_process";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { normalizeOutputConfig, resolveModelOutputLimit, assertModelOutputComplete, modelOutputErrorDetails } from './generation-harness/model-output-policy.js';
+import {
+  normalizeApiEndpoint,
+  normalizeRequestBodyEvidence,
+  normalizeResponseBodyEvidence,
+} from "./generation-harness/source-evidence.js";
 
 const CONFIG_DIR = join(homedir(), ".webcli");
 const CONFIG_PATH = join(homedir(), ".webcli", "config.json");
@@ -68,6 +74,7 @@ export function normalizeAiConfig(config = {}) {
     api_key: String(config.api_key || "").trim(),
     base_url: baseUrl || preset.base_url || "",
     model: model || preset.model || "",
+    ...normalizeOutputConfig(config),
   };
 }
 
@@ -127,19 +134,27 @@ function validateAiConfig(config, label = "配置") {
   }
 }
 
-function buildPrompt(siteKey, apiEntries, existingCode) {
+function structuralUrl(value) {
+  return normalizeApiEndpoint({ url: String(value || "") }).endpoint;
+}
+
+export function buildPrompt(siteKey, apiEntries, existingCode) {
   const apiDescriptions = apiEntries
     .map((entry, i) => {
-      const urlObj = new URL(entry.url);
-      const params = urlObj.searchParams.toString();
+      const endpoint = normalizeApiEndpoint(entry);
       let section = `### API ${i + 1}\n`;
       section += `- Method: ${entry.method || "GET"}\n`;
-      section += `- URL: ${urlObj.origin}${urlObj.pathname}\n`;
-      if (params) section += `- Query Params: ${params}\n`;
-      if (entry.requestBody)
-        section += `- Request Body: ${entry.requestBody.slice(0, 1500)}\n`;
-      if (entry.responsePreview)
-        section += `- Response Sample: ${entry.responsePreview.slice(0, 2000)}\n`;
+      section += `- URL: ${endpoint.endpoint}\n`;
+      if (endpoint.queryKeys.length) section += `- Query Keys: ${endpoint.queryKeys.join(", ")}\n`;
+      const requestEvidence = normalizeRequestBodyEvidence({
+        ...entry,
+        requestBodyPreview: entry.requestBodyPreview ?? entry.requestBody,
+      });
+      if (requestEvidence.bodyKind !== 'none')
+        section += `- Request Evidence: ${JSON.stringify(requestEvidence)}\n`;
+      const responseEvidence = normalizeResponseBodyEvidence(entry);
+      if (responseEvidence.bodyKind !== 'none')
+        section += `- Response Evidence: ${JSON.stringify(responseEvidence)}\n`;
       if (entry.status) section += `- Status: ${entry.status}\n`;
       return section;
     })
@@ -238,21 +253,16 @@ function truncateForModel(value, limit = 500) {
 }
 
 function summarizeNetworkEntry(entry = {}) {
-  const url = String(entry.url || "").trim();
-  let queryKeys = [];
-  try {
-    const parsed = new URL(url);
-    queryKeys = [...parsed.searchParams.keys()].slice(0, 12);
-  } catch {}
-
+  const endpoint = normalizeApiEndpoint(entry);
+  const requestEvidence = normalizeRequestBodyEvidence(entry);
   return {
     method: String(entry.method || "GET").toUpperCase(),
-    url,
+    url: endpoint.endpoint,
     status: entry.status ?? null,
     responseContentType: String(entry.responseContentType || entry.contentType || ""),
-    queryKeys,
-    requestBodyPreview: truncateForModel(entry.requestBodyPreview, 600),
-    responsePreview: truncateForModel(entry.responsePreview, 1000),
+    queryKeys: endpoint.queryKeys.slice(0, 12),
+    requestEvidence,
+    responseEvidence: normalizeResponseBodyEvidence(entry),
   };
 }
 
@@ -278,7 +288,7 @@ function summarizeStateHints(stateHints = {}) {
   };
 }
 
-function buildExplorationAnalysisPayload({ siteKey, explorationResult, heuristicVerdict }) {
+export function buildExplorationAnalysisPayload({ siteKey, explorationResult, heuristicVerdict }) {
   const pageStateAfter = explorationResult?.pageStateAfter || {};
   const resultPageState = explorationResult?.resultPageState || {};
   const networkEntries = Array.isArray(explorationResult?.network?.entries)
@@ -294,9 +304,9 @@ function buildExplorationAnalysisPayload({ siteKey, explorationResult, heuristic
       strategy: truncateForModel(explorationResult?.workflow?.strategy, 400),
     },
     page: {
-      finalUrl: String(pageStateAfter?.url || ""),
+      finalUrl: structuralUrl(pageStateAfter?.url),
       finalTitle: truncateForModel(pageStateAfter?.title, 120),
-      resultUrl: String(resultPageState?.url || ""),
+      resultUrl: structuralUrl(resultPageState?.url),
       resultTitle: truncateForModel(resultPageState?.title, 120),
       resultSignals: {
         listCandidates: Number(resultPageState?.listCandidates || 0),
@@ -368,7 +378,7 @@ function normalizeExplorationAnalysis(raw = {}, fallbackVerdict = {}) {
       .slice(0, 5)
       .map((item) => ({
         method: String(item.method || "GET").toUpperCase(),
-        url: String(item.url || "").trim(),
+        url: structuralUrl(item.url),
         why: String(item.why || "").trim(),
       }))
     : [];
@@ -388,26 +398,21 @@ function normalizeExplorationAnalysis(raw = {}, fallbackVerdict = {}) {
 }
 
 function summarizeActionCaptureCandidate(candidate = {}) {
-  const url = String(candidate.url || "").trim();
-  let queryKeys = [];
-  try {
-    const parsed = new URL(url);
-    queryKeys = [...parsed.searchParams.keys()].slice(0, 12);
-  } catch {}
-
+  const endpoint = normalizeApiEndpoint(candidate);
+  const requestEvidence = normalizeRequestBodyEvidence(candidate);
   return {
     method: String(candidate.method || "GET").toUpperCase(),
-    url,
+    url: endpoint.endpoint,
     intercepted: Boolean(candidate.intercepted),
     blockedReason: String(candidate.blockedReason || ""),
     responseContentType: String(candidate.responseContentType || ""),
-    queryKeys,
-    requestBodyPreview: truncateForModel(candidate.requestBodyPreview, 700),
-    responsePreview: truncateForModel(candidate.responsePreview, 1000),
+    queryKeys: endpoint.queryKeys.slice(0, 12),
+    requestEvidence,
+    responseEvidence: normalizeResponseBodyEvidence(candidate),
   };
 }
 
-function buildActionCaptureAnalysisPayload({ captureResult }) {
+export function buildActionCaptureAnalysisPayload({ captureResult }) {
   return {
     site: String(captureResult?.site || ""),
     actionName: String(captureResult?.actionName || ""),
@@ -420,8 +425,8 @@ function buildActionCaptureAnalysisPayload({ captureResult }) {
       canGenerateAdapterTool: Boolean(captureResult?.recommendation?.canGenerateAdapterTool),
     },
     page: {
-      beforeUrl: String(captureResult?.beforeTab?.url || ""),
-      finalUrl: String(captureResult?.finalTab?.url || ""),
+      beforeUrl: structuralUrl(captureResult?.beforeTab?.url),
+      finalUrl: structuralUrl(captureResult?.finalTab?.url),
       beforeTitle: truncateForModel(captureResult?.beforeTab?.title, 120),
       finalTitle: truncateForModel(captureResult?.finalTab?.title, 120),
     },
@@ -494,7 +499,7 @@ function normalizeActionCaptureAnalysis(raw = {}, fallbackResult = {}) {
       .slice(0, 5)
       .map((item) => ({
         method: String(item.method || "GET").toUpperCase(),
-        url: String(item.url || "").trim(),
+        url: structuralUrl(item.url),
         purpose: String(item.purpose || "").trim(),
         why: String(item.why || "").trim(),
         isPrimary: Boolean(item.isPrimary),
@@ -535,15 +540,18 @@ function extractPreviewFieldNames(preview, limit = 20) {
 }
 
 function summarizeScaffoldCandidate(candidate = {}) {
+  const endpoint = normalizeApiEndpoint(candidate);
+  const requestEvidence = normalizeRequestBodyEvidence(candidate);
   return {
     actionName: String(candidate.actionName || "").trim(),
     toolName: String(candidate.toolName || "").trim(),
     method: String(candidate.method || "GET").toUpperCase(),
-    url: String(candidate.url || "").trim(),
+    url: endpoint.endpoint,
+    queryKeys: endpoint.queryKeys.slice(0, 20),
     mode: String(candidate.mode || "").trim(),
-    requestFieldNames: extractPreviewFieldNames(candidate.requestBodyPreview, 20),
-    requestBodyPreview: truncateForModel(candidate.requestBodyPreview, 800),
-    responseFieldNames: extractPreviewFieldNames(candidate.responsePreview, 24),
+    requestFieldNames: requestEvidence.bodyKeys.slice(0, 20),
+    requestEvidence,
+    responseEvidence: normalizeResponseBodyEvidence(candidate),
     responseHints: candidate.responseHints && typeof candidate.responseHints === "object"
       ? {
           listPath: String(candidate.responseHints.listPath || "").trim(),
@@ -556,7 +564,7 @@ function summarizeScaffoldCandidate(candidate = {}) {
   };
 }
 
-function buildScaffoldSemanticPayload(memory = {}) {
+export function buildScaffoldSemanticPayload(memory = {}) {
   const siteKey = String(memory.siteKey || "").trim();
   const listCandidates = Array.isArray(memory.listApiCandidates) ? memory.listApiCandidates.slice(0, 2) : [];
   const actionCandidates = Array.isArray(memory.actionApiCandidates) ? memory.actionApiCandidates.slice(0, 5) : [];
@@ -575,9 +583,10 @@ function buildScaffoldSemanticPayload(memory = {}) {
     listApiCandidates: listCandidates.map((candidate, index) => ({
       sourceToolName: index === 0 ? `${siteKey}.search_records` : `${siteKey}.fetch_summary_groups`,
       method: String(candidate.method || "GET").toUpperCase(),
-      url: String(candidate.url || "").trim(),
-      requestFieldNames: extractPreviewFieldNames(candidate.requestBodyPreview, 16),
-      requestBodyPreview: truncateForModel(candidate.requestBodyPreview, 700),
+      url: structuralUrl(candidate.url),
+      queryKeys: normalizeApiEndpoint(candidate).queryKeys.slice(0, 20),
+      requestFieldNames: normalizeRequestBodyEvidence(candidate).bodyKeys.slice(0, 16),
+      requestEvidence: normalizeRequestBodyEvidence(candidate),
     })),
     actionApiCandidates: actionCandidates.map(summarizeScaffoldCandidate),
   };
@@ -734,6 +743,14 @@ function buildOpenAiChatEndpoint(baseUrl) {
   return trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
 }
 
+export function extractAnthropicTextContent(content = []) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => (typeof block?.text === 'string' ? block.text : ''))
+    .join('')
+    .trim();
+}
+
 async function callAnthropicModel(prompt, config, maxTokens, taskLabel) {
   const client = new Anthropic({
     apiKey: config.api_key,
@@ -754,12 +771,19 @@ async function callAnthropicModel(prompt, config, maxTokens, taskLabel) {
     max_tokens: maxTokens,
     messages: [{ role: "user", content: prompt }],
   });
+  assertModelOutputComplete({ stopReason: response.stop_reason, outputLimit: maxTokens, usage: response.usage });
 
-  const text = String(response.content?.[0]?.text || "").trim();
+  // Anthropic-compatible providers may prepend a thinking/redacted-thinking
+  // block before the text block. Read every text block instead of assuming
+  // content[0] contains the action payload.
+  const text = extractAnthropicTextContent(response.content);
   const memoryAfter = process.memoryUsage();
+  const emptyDetail = text
+    ? ''
+    : ` stop=${response.stop_reason || 'unknown'} blocks=${(response.content || []).map((block) => block?.type || 'unknown').join(',') || 'none'}`;
   process.stderr.write(
     `[AI] Completed ${taskLabel} `
-      + `(response=${Buffer.byteLength(text, "utf8")}B rss=${Math.round(memoryAfter.rss / 1024 / 1024)}MB)\n`
+      + `(response=${Buffer.byteLength(text, "utf8")}B${emptyDetail} rss=${Math.round(memoryAfter.rss / 1024 / 1024)}MB)\n`
   );
   return text;
 }
@@ -801,6 +825,7 @@ async function callOpenAiCompatibleModel(prompt, config, maxTokens, taskLabel) {
   if (payload?.error?.message) {
     throw new Error(`OpenAI-compatible 响应错误: ${payload.error.message}`);
   }
+  assertModelOutputComplete({ stopReason: payload?.choices?.[0]?.finish_reason, outputLimit: maxTokens, usage: payload?.usage });
   if (payload?.msg && !payload?.choices?.[0]?.message?.content) {
     throw new Error(`OpenAI-compatible 响应错误: ${payload.msg}`);
   }
@@ -930,6 +955,7 @@ export function runLanguageModelWorker({
           if (!payload.ok) {
             const error = new Error(payload.error || `AI worker failed for ${taskLabel}`);
             error.code = payload.code || "AI_WORKER_REQUEST_FAILED";
+            if (error.code === 'MODEL_OUTPUT_LIMIT_EXCEEDED') error.details = modelOutputErrorDetails(payload.details);
             reject(error);
             return;
           }
@@ -978,13 +1004,15 @@ async function callLanguageModel(prompt, config, maxTokens, taskLabel) {
  */
 export async function callConfiguredLanguageModel({
   prompt,
-  maxTokens = 2400,
+  maxTokens,
+  purpose = 'analysis',
   taskLabel = 'generation harness step',
   config = null,
 } = {}) {
   const resolvedConfig = config ? normalizeAiConfig(config) : loadRequiredConfig();
   validateAiConfig(resolvedConfig, taskLabel);
-  const text = await callLanguageModel(String(prompt || ''), resolvedConfig, maxTokens, taskLabel);
+  const outputLimit = resolveModelOutputLimit({ config: resolvedConfig, purpose, requested: maxTokens });
+  const text = await callLanguageModel(String(prompt || ''), resolvedConfig, outputLimit, taskLabel);
   return {
     text,
     provider: resolvedConfig.provider,
@@ -992,15 +1020,11 @@ export async function callConfiguredLanguageModel({
   };
 }
 
-export async function analyzeExplorationResult({ siteKey, explorationResult, heuristicVerdict }) {
-  const config = loadRequiredConfig();
+export async function analyzeExplorationResult({ siteKey, explorationResult, heuristicVerdict, modelConfig }) {
+  const config = resolveTaskModelConfig(modelConfig);
   const prompt = buildExplorationAnalysisPrompt({ siteKey, explorationResult, heuristicVerdict });
-  const rawText = await callLanguageModel(
-    prompt,
-    config,
-    2400,
-    `${siteKey || "unknown-site"} exploration analysis`,
-  );
+  const { text: rawText } = await callConfiguredLanguageModel({ prompt, config,
+    taskLabel: `${siteKey || "unknown-site"} exploration analysis` });
   const parsed = extractJsonFromResponse(rawText);
   const analysis = normalizeExplorationAnalysis(parsed, heuristicVerdict || {});
 
@@ -1012,15 +1036,26 @@ export async function analyzeExplorationResult({ siteKey, explorationResult, heu
   };
 }
 
-export async function analyzeActionCaptureResult({ captureResult }) {
-  const config = loadRequiredConfig();
+export function resolveTaskModelConfig(modelConfig) {
+  // Only an absent injection may use the standalone extension configuration.
+  if (modelConfig === undefined) return loadRequiredConfig();
+  if (!modelConfig || ['api_key', 'base_url', 'model'].some((key) => (
+    typeof modelConfig[key] !== 'string' || !modelConfig[key].trim()
+  )) || !['anthropic', 'openai'].includes(modelConfig.protocol)) {
+    throw new Error('客户端模型配置不完整，请检查客户端模型设置');
+  }
+  const config = normalizeAiConfig(modelConfig);
+  validateAiConfig(config, '客户端模型配置');
+  return config;
+}
+
+export const resolveActionCaptureModelConfig = resolveTaskModelConfig;
+
+export async function analyzeActionCaptureResult({ captureResult, modelConfig }) {
+  const config = resolveActionCaptureModelConfig(modelConfig);
   const prompt = buildActionCaptureAnalysisPrompt({ captureResult });
-  const rawText = await callLanguageModel(
-    prompt,
-    config,
-    2200,
-    `${captureResult?.site || "unknown-site"} action capture analysis`,
-  );
+  const { text: rawText } = await callConfiguredLanguageModel({ prompt, config,
+    taskLabel: `${captureResult?.site || "unknown-site"} action capture analysis` });
   const parsed = extractJsonFromResponse(rawText);
   const analysis = normalizeActionCaptureAnalysis(parsed, captureResult || {});
   return {
@@ -1031,15 +1066,11 @@ export async function analyzeActionCaptureResult({ captureResult }) {
   };
 }
 
-export async function analyzeScaffoldSemantics({ memory }) {
-  const config = loadRequiredConfig();
+export async function analyzeScaffoldSemantics({ memory, modelConfig }) {
+  const config = resolveTaskModelConfig(modelConfig);
   const prompt = buildScaffoldSemanticPrompt(memory || {});
-  const rawText = await callLanguageModel(
-    prompt,
-    config,
-    2200,
-    `${memory?.siteKey || "unknown-site"} scaffold semantic enhancement`,
-  );
+  const { text: rawText } = await callConfiguredLanguageModel({ prompt, config,
+    taskLabel: `${memory?.siteKey || "unknown-site"} scaffold semantic enhancement` });
   const parsed = extractJsonFromResponse(rawText);
   const analysis = normalizeScaffoldSemanticAnalysis(parsed, memory || {});
   return {
@@ -1054,12 +1085,8 @@ export async function testAiConfig(inputConfig = {}) {
   const config = normalizeAiConfig(inputConfig || {});
   validateAiConfig(config, "测试配置");
   const startedAt = Date.now();
-  const rawText = await callLanguageModel(
-    '请只回复 OK',
-    config,
-    60,
-    `${config.provider || "unknown"} connectivity test`,
-  );
+  const { text: rawText } = await callConfiguredLanguageModel({ prompt: '请只回复 OK', config,
+    taskLabel: `${config.provider || "unknown"} connectivity test` });
   const latencyMs = Date.now() - startedAt;
   return {
     provider: config.provider,
@@ -1074,20 +1101,16 @@ export async function testAiConfig(inputConfig = {}) {
  * @param {{ siteKey: string, apiEntries: Array, existingCode?: string }} options
  * @returns {Promise<{ adapterCode: string, toolNames: string[] }>}
  */
-export async function generateAdapterWithAI({ siteKey, apiEntries, existingCode }) {
-  const config = loadRequiredConfig();
+export async function generateAdapterWithAI({ siteKey, apiEntries, existingCode, modelConfig }) {
+  const config = resolveTaskModelConfig(modelConfig);
   const prompt = buildPrompt(siteKey, apiEntries, existingCode || null);
 
   process.stderr.write(
     `[AI] Generating adapter for ${siteKey} with ${apiEntries.length} API entries${existingCode ? ' (merge mode)' : ''}...\n`
   );
 
-  const rawText = await callLanguageModel(
-    prompt,
-    config,
-    8192,
-    `${siteKey} adapter generation`,
-  );
+  const { text: rawText } = await callConfiguredLanguageModel({ prompt, config, purpose: 'adapter_generation',
+    taskLabel: `${siteKey} adapter generation` });
   const adapterCode = extractCodeFromResponse(rawText);
 
   if (!adapterCode.includes("__webmcpRegister")) {
@@ -1113,8 +1136,8 @@ export async function generateAdapterWithAI({ siteKey, apiEntries, existingCode 
  * @param {{ siteKey: string, adapterCode: string, toolNames: string[] }} options
  * @returns {Promise<string>} Skill.md 内容
  */
-export async function generateSkillMd({ siteKey, adapterCode, toolNames }) {
-  const config = loadRequiredConfig();
+export async function generateSkillMd({ siteKey, adapterCode, toolNames, modelConfig }) {
+  const config = resolveTaskModelConfig(modelConfig);
 
   const prompt = `根据以下 WebMCP adapter 代码，为网站 ${siteKey} 生成一份 SKILL.md 文档。
 
@@ -1147,12 +1170,8 @@ ${toolNames.map(t => `- ${t}`).join('\n')}
 
   process.stderr.write(`[AI] Generating SKILL.md for ${siteKey}...\n`);
 
-  const skillMd = await callLanguageModel(
-    prompt,
-    config,
-    4096,
-    `${siteKey} skill generation`,
-  );
+  const { text: skillMd } = await callConfiguredLanguageModel({ prompt, config, purpose: 'adapter_generation',
+    taskLabel: `${siteKey} skill generation` });
   process.stderr.write(`[AI] SKILL.md generated for ${siteKey} (${skillMd.length} chars)\n`);
   return skillMd;
 }

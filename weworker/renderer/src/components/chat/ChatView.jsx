@@ -6,7 +6,7 @@ import MessageList from './MessageList.jsx'
 import ChatBottomDock from './ChatBottomDock.jsx'
 import WelcomeScreen from '../welcome/WelcomeScreen.jsx'
 import HealthCheckPanel from './HealthCheckPanel.jsx'
-import { streamChat, submitUserChoice } from '../../api/backend.js'
+import { setContextCompactionLifecycleHandler, streamChat, submitUserChoice } from '../../api/backend.js'
 import { backendFetch } from '../../api/http.js'
 import { displayToolName } from '../../utils/tool-name.js'
 import { formatDuration } from '../../utils/format-duration.js'
@@ -21,6 +21,9 @@ import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/use
 
 export default function ChatView({ workId }) {
   const messages = useWorksStore((s) => s.messages[workId] ?? [])
+  const contextSnapshot = useWorksStore((s) => s.contextSnapshots[workId] ?? null)
+  const contextCompactionStatus = useWorksStore((s) => s.contextCompactionStatuses[workId] ?? null)
+  const memoryStatus = useWorksStore((s) => s.memoryStatuses[workId] ?? null)
   const appendMessage = useWorksStore((s) => s.appendMessage)
   const updateLastMessage = useWorksStore((s) => s.updateLastMessage)
   const selectWork = useWorksStore((s) => s.selectWork)
@@ -54,6 +57,14 @@ export default function ChatView({ workId }) {
   const [slowWarning, setSlowWarning] = useState(false)
   const slowTimerRef = useRef(null)
   const gotFirstEventRef = useRef(false)
+  const compactionNoticeTimerRef = useRef(null)
+
+  useEffect(() => {
+    setContextCompactionLifecycleHandler((targetWorkId, status) => {
+      useWorksStore.getState().setContextCompactionStatus(targetWorkId, status)
+    })
+    return () => setContextCompactionLifecycleHandler(null)
+  }, [])
 
   const handleFillInput = (text) => {
     setInputText(text)
@@ -115,7 +126,7 @@ export default function ChatView({ workId }) {
   }
 
   const handleSend = async (text, files = []) => {
-    if ((!text.trim() && !files.length) || streaming) return
+    if ((!text.trim() && !files.length) || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
     if (files.length > maxChatAttachments) {
       setError(`已选 ${files.length}/${maxChatAttachments} 个文件，请删减后再发送`)
       return
@@ -125,6 +136,7 @@ export default function ChatView({ workId }) {
     setAttachments([])
     setSlowWarning(false)
     gotFirstEventRef.current = false
+    useWorksStore.getState().clearMemoryStatus(workId)
 
     const controller = new AbortController()
     const currentPlan = buildTodoWriteState(messages, { streaming: false })?.plan ?? null
@@ -194,6 +206,37 @@ export default function ChatView({ workId }) {
         }
         // turn_start: only used for logging
         if (event.type === 'turn_start') {
+          return
+        }
+        if (event.type === 'context_snapshot') {
+          useWorksStore.getState().setContextSnapshot(workId, event.context)
+          return
+        }
+        if (event.type === 'context_compaction_start' || event.type === 'context_compaction_end') {
+          if (compactionNoticeTimerRef.current) {
+            window.clearTimeout(compactionNoticeTimerRef.current)
+            compactionNoticeTimerRef.current = null
+          }
+          const status = event.type === 'context_compaction_start'
+            ? 'compacting'
+            : event.compaction?.status === 'failed'
+              ? 'failed'
+              : event.compaction?.status === 'skipped' ? 'skipped' : 'completed'
+          useWorksStore.getState().setContextCompactionStatus(workId, status)
+          if (status !== 'compacting') {
+            compactionNoticeTimerRef.current = window.setTimeout(() => {
+              useWorksStore.getState().setContextCompactionStatus(workId, null)
+              compactionNoticeTimerRef.current = null
+            }, 5000)
+          }
+          return
+        }
+        if (event.type === 'usage') {
+          useWorksStore.getState().setContextUsage(workId, event.usage)
+          return
+        }
+        if (event.type === 'memory_status') {
+          useWorksStore.getState().setMemoryStatus(workId, event)
           return
         }
         // turn_end: append a timing summary block to the assistant message being streamed
@@ -339,7 +382,7 @@ export default function ChatView({ workId }) {
 
   const handleShellCommand = async (command, originalText = '') => {
     const trimmed = String(command || '').trim()
-    if (!trimmed || streaming) return
+    if (!trimmed || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
     setError(null)
     setInputText('')
     setAttachments([])
@@ -470,6 +513,13 @@ export default function ChatView({ workId }) {
     init()
   }, [workId])
 
+  useEffect(() => {
+    return () => {
+      if (slowTimerRef.current) window.clearTimeout(slowTimerRef.current)
+      if (compactionNoticeTimerRef.current) window.clearTimeout(compactionNoticeTimerRef.current)
+    }
+  }, [])
+
   const shortId = workId?.slice(0, 8) || ''
   // Sum of all turn durations in this work (each assistant turn ends with a timing block)
   const taskTotalMs = messages.reduce(
@@ -553,13 +603,39 @@ export default function ChatView({ workId }) {
           {zcfNotice}
         </div>
       )}
+      {contextCompactionStatus && (
+        <div
+          data-conversation-compaction-status={contextCompactionStatus}
+          style={{
+            padding: '8px 20px',
+            color: contextCompactionStatus === 'failed' ? 'var(--error)' : contextCompactionStatus === 'completed' ? '#22c55e' : contextCompactionStatus === 'skipped' ? 'var(--text-secondary)' : 'var(--accent)',
+            fontSize: 12,
+            background: contextCompactionStatus === 'failed' ? 'rgba(248,113,113,0.1)' : contextCompactionStatus === 'completed' ? 'rgba(34,197,94,0.1)' : contextCompactionStatus === 'skipped' ? 'rgba(148,163,184,0.12)' : 'rgba(99,102,241,0.1)',
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          {contextCompactionStatus === 'compacting' && '⏳ 正在压缩对话上下文…'}
+          {contextCompactionStatus === 'completed' && '✅ 对话上下文压缩完成'}
+          {contextCompactionStatus === 'skipped' && 'ℹ️ 当前没有足够的历史对话可压缩，继续使用原对话'}
+          {contextCompactionStatus === 'failed' && '⚠️ 对话上下文压缩失败，已继续使用原对话'}
+        </div>
+      )}
+      {memoryStatus && memoryStatus.status !== 'not_applicable' && (
+        <div style={{ padding: '6px 20px', color: memoryStatus.status === 'failed' ? 'var(--error)' : 'var(--text-secondary)', fontSize: 12, background: 'var(--bg-secondary)' }}>
+          {memoryStatus.status === 'processing' && '正在整理长期记忆'}
+          {memoryStatus.status === 'saved' && '长期记忆已更新'}
+          {memoryStatus.status === 'ignored' && '本次内容无需保存为长期记忆'}
+          {memoryStatus.status === 'duplicate' && '长期记忆已处理'}
+          {memoryStatus.status === 'failed' && `长期记忆整理失败${memoryStatus.error ? `：${memoryStatus.error}` : ''}`}
+        </div>
+      )}
       {isHealthCheck && !isStreamingHere ? null : (
         <ChatBottomDock
           showInput
           onSend={handleSend}
           onShellCommand={handleShellCommand}
           onStop={handleStop}
-          disabled={isStreamingHere || messageSelectMode}
+          disabled={isStreamingHere || contextCompactionStatus === 'compacting' || messageSelectMode}
           streaming={isStreamingHere}
           text={inputText}
           onTextChange={setInputText}
@@ -571,6 +647,7 @@ export default function ChatView({ workId }) {
           zcfMode={zcfMode}
           zcfRoles={zcfRoles}
           zcfModes={zcfModes}
+          contextSnapshot={contextSnapshot}
           onZcfRoleChange={handleZcfRoleChange}
           onZcfModeChange={handleZcfModeChange}
         />

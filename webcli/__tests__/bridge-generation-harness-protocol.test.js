@@ -10,7 +10,7 @@ describe('bridge generation harness protocol', () => {
     expect(source).toContain("msg.type === 'cancel_generation_run'");
     expect(source).toContain("msg.type === 'publish_generation_run'");
     expect(source).toContain("type: 'generation_run_event'");
-    expect(source).toContain("type: 'start_generation_run_result'");
+    expect(source).toContain("'start_generation_run_result'");
     expect(source).toContain("msg.type === 'validate_generation_preview_result'");
     expect(source).toContain('GenerationWorkerController');
     expect(source).not.toContain('new GenerationHarness');
@@ -49,11 +49,20 @@ describe('bridge generation harness protocol', () => {
     expect(source).toContain('normalizeGenerationPreviewBundle');
     expect(source).toContain('findExtensionIsolatedWorldContext');
     expect(source).toContain('injectGenerationPreviewSourcesWithCdp');
-    expect(source).toContain('allowUnsafeEvalBlockedByCSP: true');
+    expect(source).toContain('return injectAdapterSources({');
+    const loaderSource = fs.readFileSync(new URL('../../extension/background/adapter-script-loader.js', import.meta.url), 'utf8');
+    expect(loaderSource).toContain('allowUnsafeEvalBlockedByCSP: false');
+    expect(loaderSource).not.toContain('allowUnsafeEvalBlockedByCSP: true');
     expect(source).toContain("method === 'Runtime.executionContextCreated'");
-    expect(source).toContain("contract.kind === 'captured_sample'");
+    const validatorSource = fs.readFileSync(
+      path.resolve(import.meta.dirname, '..', '..', 'extension', 'background', 'generation-output-validator.js'),
+      'utf8',
+    );
+    expect(source).toContain("from './generation-output-validator.js'");
+    expect(source).toContain('validateGenerationPreviewOutputV2(output, contract)');
+    expect(validatorSource).toContain("contract.kind === 'captured_sample'");
     expect(source).toContain('generationSource: tool.generationSource || null');
-    expect(source).toContain("code: 'OUTPUT_SHAPE_MISMATCH'");
+    expect(validatorSource).toContain("code: 'OUTPUT_SHAPE_MISMATCH'");
     expect(source).not.toContain('列表工具应返回数组');
     expect(source).not.toContain('now - lastNativeAckAt > NATIVE_ACK_TIMEOUT_MS');
   });

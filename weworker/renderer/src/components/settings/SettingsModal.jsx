@@ -1,22 +1,26 @@
+import deployment from '../../config/deployment.json'
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
+import ExplorationModelSettings from './ExplorationModelSettings.jsx'
+import { connectionMessage } from '../../utils/model-connection.js'
 import SkillsTab from './SkillsTab.jsx'
 import LogsTab from './LogsTab.jsx'
 import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, buildProbeResultRows, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
+import { buildModelOptions, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
+import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
 import weworkerLogo from '../../../../asset/logo.png'
 import './settings-theme.css'
 import { backendFetch } from '../../api/http.js'
 
 const API = 'http://127.0.0.1:8765'
-const OFFICIAL_URL = 'http://weworker.example.com'
-const DOWNLOAD_URL = 'http://weworker.example.com/downloads/'
+const OFFICIAL_URL = deployment.officialUrl
+const DOWNLOAD_URL = deployment.downloadUrl
 const GITHUB_UPDATE_URL = 'https://github.com/WeWorker/WeWorker/releases/download/latest/'
 
 const EXACT_PATH_PLACEHOLDER = '例如 folder-b/foo/.env 或 .env'
@@ -83,6 +87,9 @@ const LOGOS = {
       <text x="12" y="16" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">GLM</text>
     </svg>
   ),
+  builtin: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor" fillOpacity="0.18"/><path d="M7 12.5 10.2 15 17 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+  ),
   deepseek: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
@@ -108,7 +115,7 @@ export default function SettingsModal({ onClose }) {
   const commitHash = typeof __BUILD_COMMIT_HASH__ !== 'undefined' ? __BUILD_COMMIT_HASH__ : 'dev'
 
   return (
-    <div className="settings-overlay" onClick={onClose}>
+    <div className="settings-overlay">
       <div className="settings-shell" onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <div>
@@ -1243,8 +1250,10 @@ function ModelTab({ onClose }) {
     return {
       api_key: '',
       model: stored.model || p?.models[0] || '',
+      context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
-      openai_base_url: stored.openai_base_url || '',
+      auth_type: stored.auth_type === 'api_key' ? 'api_key' : 'auth_token',
+      auto_auth: true,
     }
   }
 
@@ -1258,7 +1267,7 @@ function ModelTab({ onClose }) {
       delete next[pid]
       return next
     })
-    if (k === 'api_key' || k === 'base_url' || k === 'openai_base_url') {
+    if (k === 'api_key' || k === 'base_url' || k === 'auth_type') {
       catalogRequestIds.current[pid] = (catalogRequestIds.current[pid] || 0) + 1
       setCatalogLoading((current) => current === pid ? null : current)
       setCatalogs((current) => {
@@ -1275,7 +1284,7 @@ function ModelTab({ onClose }) {
       provider: pid,
       api_key: f.api_key,
       model: f.model,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url } : {}),
+      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: '', auth_type: f.auth_type, auto_auth: f.auto_auth } : {}),
     }
   }
 
@@ -1284,7 +1293,7 @@ function ModelTab({ onClose }) {
     return {
       provider: pid,
       api_key: f.api_key,
-      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: f.openai_base_url } : {}),
+      ...(pid === 'custom' ? { base_url: f.base_url, openai_base_url: '', auth_type: f.auth_type } : {}),
     }
   }
 
@@ -1331,18 +1340,28 @@ function ModelTab({ onClose }) {
     setSaving(pid)
     setTestResult(null)
     const f = getForm(pid)
-    const updates = { model: f.model }
+    const contextLimit = parseContextLimitInput(f.context_limit)
+    if (contextLimit === null) {
+      setTestResult({ ok: false, message: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
+      setSaving(null)
+      return
+    }
+    const updates = { model: f.model, context_limit: contextLimit }
     if (f.api_key) updates.api_key = f.api_key
     if (pid === 'custom') {
       updates.base_url = f.base_url
-      updates.openai_base_url = f.openai_base_url
+      updates.auth_type = f.auth_type
     }
     try {
+      const result = await handleTest(pid)
+      if (!result?.ok) return
+      if (result.auth_type) updates.auth_type = result.auth_type
       await saveProvider(pid, updates)
+      await activateProvider(pid)
       // Clear the api_key field after save
-      setForms((prev) => ({ ...prev, [pid]: { ...getForm(pid), api_key: '' } }))
+      setForms((prev) => ({ ...prev, [pid]: { ...getForm(pid), api_key: '', auth_type: result.auth_type || f.auth_type } }))
       setSaved(pid)
-      setTestResult({ ok: true, message: '配置已保存' })
+      setTestResult({ ok: true, message: '验证通过，已开始使用' })
       setTimeout(() => setSaved(null), 2000)
     } catch (e) {
       setTestResult({ ok: false, message: e.message || '保存失败' })
@@ -1369,35 +1388,26 @@ function ModelTab({ onClose }) {
     setTesting(pid)
     setProbeResults((results) => ({ ...results, [pid]: null }))
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 30000)
+    const timer = setTimeout(() => controller.abort(), 35000)
     try {
-      const provider = PROVIDERS.find((item) => item.id === pid)
-      const probe = async (target) => {
-        const fallbackProtocol = target === 'weworker'
-          ? 'anthropic_messages'
-          : provider?.webwright?.protocol || (pid === 'anthropic' ? 'anthropic_messages' : 'openai_chat_completions')
-        try {
-          const res = await backendFetch(`${API}/settings/provider/probe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...providerRequestBody(pid), target }),
-            signal: controller.signal,
-          })
-          const data = await res.json()
-          return res.ok && data.ok
-            ? { ok: true, protocol: data.protocol || fallbackProtocol, message: `连接成功 · ${data.model}` }
-            : { ok: false, protocol: data.protocol || fallbackProtocol, message: data.detail || '连接失败' }
-        } catch (error) {
-          return {
-            ok: false,
-            protocol: fallbackProtocol,
-            message: error.name === 'AbortError' ? '连接超时（30s）' : `无法连接：${error.message}`,
-          }
-        }
+      const res = await backendFetch(`${API}/settings/provider/probe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...providerRequestBody(pid), target: 'weworker' }),
+        signal: controller.signal,
+      })
+      const data = await res.json()
+      if (probeRequestIds.current[pid] !== requestId) return null
+      const result = { ...data, ok: res.ok && data.ok }
+      setProbeResults(current => ({ ...current, [pid]: [{ ...result, label: '模型连接', message: connectionMessage(result) }] }))
+      if (result.ok && result.auth_type) {
+        setForms(current => ({ ...current, [pid]: { ...getForm(pid), auth_type: result.auth_type } }))
       }
-      const results = await Promise.all(['weworker', 'webwright'].map(probe))
-      if (probeRequestIds.current[pid] !== requestId) return
-      setProbeResults((current) => ({ ...current, [pid]: buildProbeResultRows(results) }))
+      return result
+    } catch (error) {
+      if (probeRequestIds.current[pid] !== requestId) return null
+      setProbeResults(current => ({ ...current, [pid]: [{ label: '模型连接', ok: false, message: error.name === 'AbortError' ? '连接超时，请重试' : '无法连接，请检查网络后重试' }] }))
+      return null
     } finally {
       clearTimeout(timer)
       if (probeRequestIds.current[pid] === requestId) {
@@ -1452,6 +1462,28 @@ function ModelTab({ onClose }) {
               : '展开后自动获取厂商模型列表'
           const providerColor = p.id === 'custom' ? 'var(--provider-custom)' : p.color
 
+          if (p.id === 'builtin') {
+            const builtinActive = activeProvider === p.id
+            return (
+              <div key={p.id} className={`settings-card settings-card-builtin${builtinActive ? ' is-active' : ''}`}>
+                <div className="settings-card-header">
+                  <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id]}</span>
+                  <div style={{ flex: 1 }}>
+                    <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
+                      {p.name}{builtinActive && <span className="settings-badge-active">使用中</span>}
+                    </div>
+                    <div className="settings-card-subtitle">火山方舟 Coding Plan · {builtinActive ? '当前使用 ark-code-latest' : '无需配置，下载即可使用'}</div>
+                  </div>
+                  <div className="settings-btn-group">
+                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating} className="settings-btn settings-btn-provider" style={{ background: providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
+                    <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">{testing === p.id ? '检测中…' : '测试连通性'}</button>
+                  </div>
+                </div>
+                {probeResults[p.id] && <div className="settings-builtin-probe">{probeResults[p.id].map((result) => <div key={`${result.target}-${result.protocol}`} className={result.ok ? 'is-success' : 'is-error'}>{result.ok ? '✓' : '✗'} {result.label}：{result.message}</div>)}</div>}
+              </div>
+            )
+          }
+
           return (
             <div key={p.id} className={`settings-card${isActive ? ' is-active' : ''}`}>
               <div className="settings-card-header">
@@ -1492,7 +1524,10 @@ function ModelTab({ onClose }) {
               </div>
 
               {isExpanded && (
-                <div className="settings-card-body">
+                <fieldset className="settings-card-body settings-model-form" disabled={saving === p.id}>
+                  {p.id === 'custom' && <Field label="服务地址" hint="填写 Claude Code 使用的 Base URL">
+                    <input className="settings-input" value={f.base_url} onChange={e => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://example.com/anthropic" />
+                  </Field>}
                   <Field label="API Key" hint={stored.has_key ? '已设置（留空保持不变）' : '未设置'}>
                     <input
                       type="password"
@@ -1531,16 +1566,52 @@ function ModelTab({ onClose }) {
                     </div>
                   </Field>
 
+                  <details className="settings-model-advanced"><summary>高级设置</summary>
+                  <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
+                    <input
+                      className="settings-input"
+                      list={`provider-context-limits-${p.id}`}
+                      value={f.context_limit}
+                      onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)}
+                      onBlur={() => {
+                        const parsed = parseContextLimitInput(f.context_limit)
+                        if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed))
+                      }}
+                      placeholder="例如 200K、1M 或 1000000"
+                      inputMode="text"
+                    />
+                    <datalist id={`provider-context-limits-${p.id}`}>
+                      {CONTEXT_LIMIT_PRESETS.map((preset) => <option key={preset} value={preset} />)}
+                    </datalist>
+                  </Field>
+
                   {p.id === 'custom' && (
                     <>
-                      <Field label="Anthropic 兼容 Base URL" hint="（不要加/v1/messages 后缀）">
-                        <input className="settings-input" value={f.base_url} onChange={(e) => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder="https://gateway.example/anthropic" />
-                      </Field>
-                      <Field label="OpenAI Chat Completions 兼容 Base URL" hint="（不要加/chat/completions 后缀）">
-                        <input className="settings-input" value={f.openai_base_url} onChange={(e) => setFormField(p.id, 'openai_base_url', e.target.value)} onBlur={() => { if (f.openai_base_url) void loadModels(p.id) }} placeholder="https://gateway.example/openai/v1" />
+                      <Field label="API Key 类型">
+                        <AppDropdownSelect
+                          value={f.auto_auth ? 'auto' : f.auth_type}
+                          options={[
+                            { value: 'auto', label: '自动检测（推荐）' },
+                            { value: 'auth_token', label: 'Bearer Token' },
+                            { value: 'api_key', label: 'API Key' },
+                          ]}
+                          onChange={value => {
+                            if (value === 'auto') setFormField(p.id, 'auto_auth', true)
+                            else {
+                              setFormField(p.id, 'auth_type', value)
+                              setForms(current => ({ ...current, [p.id]: { ...current[p.id], auto_auth: false } }))
+                            }
+                          }}
+                          ariaLabel="API Key 类型"
+                          minMenuWidth={320}
+                          matchAnchorWidth
+                          className="settings-provider-auth-select"
+                        />
                       </Field>
                     </>
                   )}
+
+                  </details>
 
                   <div className="settings-btn-group" style={{ justifyContent: 'flex-end', marginTop: 4 }}>
                     <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">
@@ -1564,20 +1635,23 @@ function ModelTab({ onClose }) {
                       disabled={saving === p.id}
                       className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}
                     >
-                      {saving === p.id ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
+                      {saving === p.id ? '验证并保存中…' : saved === p.id ? '已启用' : '验证并开始使用'}
                     </button>
                   </div>
                   {(probeResults[p.id] || []).map((result) => (
-                    <div key={result.label} className={`settings-action-hint settings-remote-detail${result.ok ? ' is-success' : ' is-error'}`} style={{ textAlign: 'right' }}>
-                      {result.label}：{result.ok ? '✓ ' : '✗ '}{result.message}
+                    <div key={result.label} className={`settings-action-hint settings-remote-detail${result.ok === true ? ' is-success' : result.ok === false ? ' is-error' : ''}`} style={{ textAlign: 'right' }}>
+                      {result.message}
+                      {!result.ok && result.detail && <details><summary>查看详情</summary><pre>{result.detail}</pre></details>}
                     </div>
                   ))}
-                </div>
+                </fieldset>
               )}
             </div>
           )
         })}
       </div>
+
+      <ExplorationModelSettings />
 
       <div className="settings-actions">
         <button type="button" onClick={onClose} className="settings-btn settings-btn-ghost">关闭</button>

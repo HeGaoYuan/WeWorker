@@ -4,8 +4,8 @@ import type { ParsedAdapter } from '../adapter-parser.js'
 
 const mockAdapter = (overrides: Partial<ParsedAdapter> = {}): ParsedAdapter => ({
   id: 'expense.example.com',
-  name: 'ExpenseDemo费控系统',
-  description: 'ExpenseDemo费控系统：团建预算提单，团建报销',
+  name: 'ExpenseDemo费用管理示例',
+  description: 'ExpenseDemo费用管理示例：团建预算提单，团建报销',
   detailDescription: 'ExpenseDemo detail description',
   match: ['expense.example.com'],
   homepageUrl: 'https://expense.example.com/',

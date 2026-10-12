@@ -102,6 +102,7 @@ function arbitraryParsedAdapter(): fc.Arbitrary<ParsedAdapter> {
       defaultEnabled: r.defaultEnabled,
       detailDescription: '',
       registryScenarios: [],
+      routeTemplates: [],
       icon: 'globe',
       promptVarDisplay: {},
     }))
@@ -111,6 +112,15 @@ function arbitraryParsedAdapter(): fc.Arbitrary<ParsedAdapter> {
 
 // Feature: skill-based-adapter-architecture, Property 4: Skill content completeness
 describe('Property 4: Skill content completeness', () => {
+  it('describes per-command confirmation independently of write access', () => {
+    const adapter = fc.sample(arbitraryParsedAdapter(), 1)[0]
+    adapter.tools = [{ name: 'fixture.reserve', description: 'Reserve an item', parameters: {}, safety: 'write', requiresConfirmation: false }]
+    expect(generateSkillContent(adapter)).toContain('Confirmation: not required')
+    expect(generateSkillContent(adapter)).not.toContain('__confirmed')
+    adapter.tools[0].requiresConfirmation = true
+    expect(generateSkillContent(adapter)).toContain('Confirmation: required')
+    expect(generateSkillContent(adapter)).toContain('__confirmed: true')
+  })
   // **Validates: Requirements 2.2, 2.3, 6.1, 6.2, 6.3**
 
   it('(a) generated content contains YAML frontmatter with name and description', () => {
@@ -203,13 +213,13 @@ describe('Property 4: Skill content completeness', () => {
     )
   })
 
-  it('(f) generated content contains a "How to Use" section mentioning call_adapter_tool', () => {
+  it('(f) generated content contains a "How to Use" section mentioning webcli call', () => {
     fc.assert(
       fc.property(arbitraryParsedAdapter(), (adapter) => {
         const content = generateSkillContent(adapter)
 
         expect(content).toContain('## How to Use')
-        expect(content).toContain('call_adapter_tool')
+        expect(content).toContain('webcli call')
       }),
       { numRuns: 100 },
     )
@@ -221,8 +231,11 @@ describe('Property 4: Skill content completeness', () => {
         const content = generateSkillContent(adapter)
 
         for (const tool of adapter.tools) {
-          // Each tool should have an example with its tool_name
-          expect(content).toContain(`tool_name: "${tool.name}"`)
+          // Each tool should have an example using its exact public name.
+          expect(content).toContain(`webcli call '${tool.name}'`)
+          expect(content).not.toMatch(/webcli call [^\n]* --args/)
+          const required = (tool.parameters.required ?? []) as string[]
+          for (const name of required) expect(content).toContain('--' + name + '=')
         }
       }),
       { numRuns: 100 },

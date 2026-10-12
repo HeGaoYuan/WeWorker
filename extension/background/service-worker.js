@@ -1,3 +1,10 @@
+import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
+import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
+import { injectAdapterSources } from './adapter-script-loader.js';
+import { createHostAdapterClient } from './host-adapter-client.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
+import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+
 /**
  * Background Service Worker
  *
@@ -9,7 +16,33 @@
  * 5. 管理本地已安装 adapter，检测 Tab URL 并注入
  */
 
+import {
+  selectCompatibleCaptureBoundEntry,
+  validateGenerationPreviewOutputV2,
+} from './generation-output-validator.js';
+
 const WS_URL = "ws://localhost:3711";
+const EXTENSION_CAPABILITIES = [
+  'adapter_catalog_v1',
+  'adapter_background_v1',
+  'passive_exploration_v1',
+  'safe_api_probe_v1',
+  'api_replay_v1',
+  'action_capture_v1',
+  'action_capture_model_context_v1',
+  'action_capture_analysis_retry_v1',
+  'generation_harness_v1',
+  'runtime_validation_v1',
+];
+
+function buildExtensionHello(extra = {}) {
+  return {
+    type: 'extension_hello',
+    version: chrome.runtime.getManifest().version,
+    capabilities: EXTENSION_CAPABILITIES,
+    ...extra,
+  };
+}
 
 // 截图配置
 // 根据 Claude Code 限制：约 1MB
@@ -182,10 +215,13 @@ const adapterInjectionStatus = new Map();
 const cdpAttachedTabs = new Set();
 const cdpNetworkState = new Map();
 const cdpActionCaptureSessions = new Map();
+const adapterNetworkCaptureSessions = new Map();
 const cdpExecutionContexts = new Map();
 const CDP_NETWORK_ENTRY_LIMIT = 200;
 const CDP_RESPONSE_PREVIEW_LIMIT = 4000;
 const CDP_REQUEST_PREVIEW_LIMIT = 2000;
+const ADAPTER_RESPONSE_CAPTURE_LIMIT = 8 * 1024 * 1024;
+const ADAPTER_CAPTURE_ENTRY_LIMIT = 20;
 const ACTION_CAPTURE_VERSION = 'opencli-action-capture-v1';
 
 function ensureCdpState(tabId) {
@@ -297,7 +333,7 @@ function isSideEffectMethod(method) {
   return !['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase());
 }
 
-function isLikelyActionRequest(requestLike, patterns = []) {
+function isLikelyActionRequest(requestLike, patterns = [], { allowRead = false } = {}) {
   const url = String(requestLike?.url || '');
   const method = String(requestLike?.method || 'GET').toUpperCase();
   const requestBody = String(requestLike?.requestBodyPreview || requestLike?.postData || '');
@@ -306,7 +342,9 @@ function isLikelyActionRequest(requestLike, patterns = []) {
   if (!matchesCapturePattern(`${url} ${requestBody}`, patterns)) return false;
   if (isTelemetryLikeEntry({ url, requestBodyPreview: requestBody }) || isStaticAssetEntry({ url })) return false;
   if (patterns.length > 0) return true;
-  if (!isSideEffectMethod(method)) return false;
+  if (!isSideEffectMethod(method)) {
+    return allowRead && /\/api\/|\.json(?:$|[?#])|\.spr(?:$|[?#])|graphql/.test(probe);
+  }
   return /\/api\/|\.json(?:$|[?#])|\.spr(?:$|[?#])|graphql|book|reserve|meeting|room|submit|create|save|apply|order|calendar|appointment|booking/.test(probe)
     || requestBody.length > 0;
 }
@@ -321,9 +359,9 @@ function normalizeFetchHeaders(headers) {
   return result;
 }
 
-function getActionCaptureEntries(tabId, baselineCaptureCount, upperBoundCaptureCount = null, patterns = []) {
+function getActionCaptureEntries(tabId, baselineCaptureCount, upperBoundCaptureCount = null, patterns = [], allowRead = false) {
   return getCapturedEntriesSince(tabId, baselineCaptureCount, upperBoundCaptureCount)
-    .filter((entry) => isLikelyActionRequest(entry, patterns))
+    .filter((entry) => isLikelyActionRequest(entry, patterns, { allowRead }))
     .map((entry) => ({
       ...sanitizeNetworkEntry(entry),
       intercepted: false,
@@ -333,7 +371,7 @@ function getActionCaptureEntries(tabId, baselineCaptureCount, upperBoundCaptureC
 function rankActionCaptureEntries(entries, actionName = '') {
   const actionTokens = normalizeStoredActionTokens(actionName);
   const writeIntent = hasStoredWriteActionIntent(actionTokens);
-  return entries.slice().sort((a, b) => {
+  const ranked = entries.slice().sort((a, b) => {
     const score = (entry) => {
       let value = 0;
       const method = String(entry?.method || 'GET').toUpperCase();
@@ -352,19 +390,30 @@ function rankActionCaptureEntries(entries, actionName = '') {
     if (diff !== 0) return diff;
     return (b.timestamp || 0) - (a.timestamp || 0);
   });
+  const unique = new Map();
+  for (const entry of ranked) {
+    const method = String(entry?.method || 'GET').toUpperCase();
+    const key = `${method} ${String(entry?.url || '')} ${String(entry?.requestBodyPreview || '')}`;
+    const existing = unique.get(key);
+    if (!existing) {
+      unique.set(key, { ...entry });
+      continue;
+    }
+    existing.responsePreview ||= entry?.responsePreview || '';
+    existing.responseContentType ||= entry?.responseContentType || '';
+    existing.responseHeaders ||= entry?.responseHeaders || {};
+    existing.requestHeaders ||= entry?.requestHeaders || {};
+    if (existing.status == null && entry?.status != null) existing.status = entry.status;
+    existing.intercepted = Boolean(existing.intercepted || entry?.intercepted);
+  }
+  return [...unique.values()];
 }
 
 async function ensureCdpAttached(tabId) {
   if (cdpAttachedTabs.has(tabId)) return ensureCdpState(tabId);
 
-  try {
-    await chrome.debugger.attach({ tabId }, '1.3');
-  } catch (err) {
-    const message = err?.message || String(err);
-    if (!/Another debugger is already attached/i.test(message)) {
-      throw err;
-    }
-  }
+  // An attachment owned by another debugger must not be reused.
+  await chrome.debugger.attach({ tabId }, '1.3');
 
   cdpAttachedTabs.add(tabId);
   const state = ensureCdpState(tabId);
@@ -405,6 +454,69 @@ async function clearCdpNetworkEntries(tabId) {
   state.entries = [];
   state.requests.clear();
   state.totalCaptured = 0;
+}
+
+function adapterCaptureAllowsUrl(session, url) {
+  try {
+    const targetHost = new URL(url).hostname;
+    return isRuntimeHelperHostAllowed(session.tabHost, targetHost, session.allowedHosts)
+      && matchesCapturePattern(url, session.patterns);
+  } catch {
+    return false;
+  }
+}
+
+async function startAdapterNetworkCapture(tab, payload, allowedHosts) {
+  const pattern = String(payload.pattern || '').trim();
+  if (!pattern || pattern.length > 256 || /[\x00-\x1f]/.test(pattern)) {
+    throw createRuntimeHelperError('INVALID_ARGS', 'network_capture_start requires a pattern of at most 256 characters');
+  }
+  const tabHost = new URL(tab.url).hostname;
+  const existing = adapterNetworkCaptureSessions.get(tab.id);
+  const wasAttached = cdpAttachedTabs.has(tab.id);
+  await ensureCdpAttached(tab.id);
+  await chrome.debugger.sendCommand({ tabId: tab.id }, 'Network.enable', {
+    maxTotalBufferSize: ADAPTER_RESPONSE_CAPTURE_LIMIT * 2,
+    maxResourceBufferSize: ADAPTER_RESPONSE_CAPTURE_LIMIT,
+    maxPostDataSize: 262144,
+  });
+  adapterNetworkCaptureSessions.set(tab.id, {
+    tabHost,
+    allowedHosts: normalizeRouteHosts(allowedHosts),
+    patterns: normalizeCapturePatterns(pattern),
+    entries: [],
+    requestIds: new Set(),
+    lastEventAt: Date.now(),
+    ownedAttachment: existing?.ownedAttachment ?? !wasAttached,
+  });
+  return { started: true, pattern };
+}
+
+async function finishAdapterNetworkCapture(tabId, session) {
+  adapterNetworkCaptureSessions.delete(tabId);
+  if (!session?.ownedAttachment || !cdpAttachedTabs.has(tabId)) return;
+  await clearCdpNetworkEntries(tabId);
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch { }
+  cdpAttachedTabs.delete(tabId);
+}
+
+async function readAdapterNetworkCapture(tab, payload) {
+  const session = adapterNetworkCaptureSessions.get(tab.id);
+  if (!session) throw createRuntimeHelperError('CAPTURE_NOT_STARTED', 'No Adapter network capture is active for this tab');
+  const waitMs = payload.waitMs === undefined ? 0 : Number(payload.waitMs);
+  if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 20000) {
+    throw createRuntimeHelperError('INVALID_ARGS', 'network_capture_read waitMs must be an integer between 0 and 20000');
+  }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (session.entries.length > 0 && session.requestIds.size === 0 && Date.now() - session.lastEventAt >= 300) break;
+    await delay(100);
+  }
+  const result = { entries: session.entries.slice() };
+  if (payload.finish !== false) await finishAdapterNetworkCapture(tab.id, session);
+  return result;
 }
 
 async function delay(ms) {
@@ -549,23 +661,11 @@ async function findExtensionIsolatedWorldContext(tabId) {
 }
 
 async function injectGenerationPreviewSourcesWithCdp(tabId, scripts) {
-  const contextId = await findExtensionIsolatedWorldContext(tabId);
-  for (const script of scripts) {
-    const sourcePath = String(script.path || '').replace(/[^a-zA-Z0-9._/-]/g, '_');
-    const result = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
-      expression: `${script.source}\n//# sourceURL=webmcp-preview://${sourcePath}`,
-      contextId,
-      returnByValue: true,
-      awaitPromise: true,
-      allowUnsafeEvalBlockedByCSP: true,
-    });
-    if (result?.exceptionDetails) {
-      const message = result.exceptionDetails.exception?.description
-        || result.exceptionDetails.text
-        || `preview script execution failed: ${sourcePath}`;
-      throw new Error(message);
-    }
-  }
+  return injectAdapterSources({
+    tabId, scripts,
+    borrowedSession: cdpAttachedTabs.has(tabId),
+    existingContexts: () => [...getCdpExecutionContextMap(tabId).values()],
+  });
 }
 
 async function runExplorationAction(tabId, expression, waitMs = 1200) {
@@ -999,6 +1099,165 @@ async function runExploreWorkflow({ tabId = null, url = null } = {}) {
       strategy: 'open_page -> attach_cdp -> reload -> wait_for_hydration -> capture_fetch_xhr -> classify_without_dom_mutation',
       executionEngine: 'chrome.debugger.Network',
     },
+  };
+}
+
+async function inspectSafeApiActions(tabId) {
+  if (!Number.isInteger(tabId) || tabId < 0) throw new Error('A valid tabId is required');
+  await ensureCdpAttached(tabId);
+  const result = await sendExplorationMessage(tabId, { type: 'exploration_safe_actions' });
+  return {
+    tabId,
+    ...(result && typeof result === 'object' ? result : { candidates: [] }),
+    workflow: {
+      version: 'safe-api-probe-v1',
+      scope: 'network_delta_only',
+    },
+  };
+}
+
+async function runSafeApiProbe({ tabId, candidateId, value = '' }) {
+  if (!Number.isInteger(tabId) || tabId < 0) throw new Error('A valid tabId is required');
+  if (!candidateId || typeof candidateId !== 'string') throw new Error('candidateId required');
+  const state = await ensureCdpAttached(tabId);
+  const baselineCaptureCount = state.totalCaptured;
+  const beforeTab = await getTabRuntimeState(tabId);
+  const pageStateBefore = await sendExplorationMessage(tabId, { type: 'browser_state' });
+  const actionResult = await sendExplorationMessage(tabId, {
+    type: 'exploration_safe_probe',
+    candidateId,
+    value: String(value || '').slice(0, 80),
+  });
+  const pageSignal = await waitForExplorationEffects(tabId, {
+    baselineCaptureCount,
+    beforeTab,
+    minWaitMs: 700,
+    maxWaitMs: 8000,
+    idleMs: 1000,
+    pollMs: 200,
+    postTabChangeGraceMs: 1200,
+  });
+  const pageStateAfter = await sendExplorationMessage(tabId, { type: 'browser_state' });
+  const deltaEntries = getCapturedEntriesSince(tabId, baselineCaptureCount);
+  const step = `safe_${String(actionResult?.kind || 'read_action')}`;
+  return {
+    tabId,
+    step,
+    result: actionResult,
+    networkDelta: buildActionNetworkDelta(step, deltaEntries),
+    pageStateBefore,
+    pageStateAfter,
+    pageSignal,
+    workflow: {
+      version: 'safe-api-probe-v1',
+      scope: 'network_delta_only',
+      writeActionsBlocked: true,
+    },
+  };
+}
+
+function sanitizeExplorationReplayHeaders(headers = {}) {
+  const result = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    const lower = String(name || '').toLowerCase();
+    if (!name
+      || /authorization|cookie|credential|password|secret|session|ticket|token|csrf|xsrf/.test(lower)
+      || /^(?:connection|content-length|host|origin|referer|sec-|proxy-)/.test(lower)) continue;
+    const normalized = String(value ?? '');
+    if (!normalized || normalized.includes('[redacted]')) continue;
+    result[name] = normalized.slice(0, 2000);
+  }
+  if (!Object.keys(result).some((name) => name.toLowerCase() === 'accept')) result.Accept = 'application/json, text/plain;q=0.9';
+  return result;
+}
+
+async function runExplorationCandidateReplay({ tabId, url, method = 'GET', headers = {}, body = '' }) {
+  if (!Number.isInteger(tabId) || tabId < 0) throw new Error('A valid tabId is required');
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'POST'].includes(normalizedMethod)) throw new Error('API_REPLAY_METHOD_NOT_ALLOWED');
+  let parsedUrl;
+  try { parsedUrl = new URL(String(url || '')); } catch { throw new Error('API_REPLAY_URL_NOT_ALLOWED'); }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('API_REPLAY_URL_NOT_ALLOWED');
+
+  const state = await ensureCdpAttached(tabId);
+  const captured = state.entries.some((entry) => String(entry?.url || '') === parsedUrl.toString()
+    && String(entry?.method || 'GET').toUpperCase() === normalizedMethod);
+  if (!captured) throw new Error('API_REPLAY_REQUIRES_CAPTURED_REQUEST');
+  const probe = `${parsedUrl.pathname} ${parsedUrl.search} ${String(body || '')}`;
+  if (/(?:^|[^a-z0-9])(approve|book|buy|cancel|commit|create|delete|edit|finish|mutation|pay|publish|reject|reserve|save|submit|update|upload)(?:$|[^a-z0-9])/i.test(probe)) {
+    throw new Error('API_REPLAY_WRITE_SIGNAL_BLOCKED');
+  }
+  if (normalizedMethod === 'POST' && !/detail|filter|get|list|page|query|read|search|sort|status/i.test(probe)) {
+    throw new Error('API_REPLAY_POST_READ_SIGNAL_REQUIRED');
+  }
+
+  const request = {
+    url: parsedUrl.toString(),
+    method: normalizedMethod,
+    headers: sanitizeExplorationReplayHeaders(headers),
+    body: ['GET', 'HEAD'].includes(normalizedMethod) ? undefined : String(body || '').slice(0, 4000),
+    // Article feeds often exceed 16 KiB. Keep a hard bound while allowing
+    // complete JSON to reach the structural evidence parser.
+    maxBytes: 1024 * 1024,
+  };
+  const startedAt = Date.now();
+  const [{ result } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [request],
+    func: async (input) => {
+      try {
+        const response = await fetch(input.url, {
+          method: input.method,
+          credentials: 'include',
+          headers: input.headers || {},
+          ...(input.body === undefined ? {} : { body: input.body }),
+          redirect: 'manual',
+        });
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let size = 0;
+        let text = '';
+        let truncated = false;
+        if (reader) {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            const remaining = input.maxBytes - size;
+            const chunk = next.value.slice(0, remaining);
+            size += chunk.byteLength;
+            text += decoder.decode(chunk, { stream: true });
+            if (chunk.byteLength < next.value.byteLength) {
+              truncated = true;
+              break;
+            }
+          }
+          text += decoder.decode();
+          await reader.cancel().catch(() => {});
+        }
+        return {
+          status: response.status,
+          ok: response.ok,
+          contentType: response.headers.get('content-type') || '',
+          responsePreview: truncated ? `${text}...[truncated]` : text,
+          truncated,
+        };
+      } catch (error) {
+        return { error: error?.message || String(error) };
+      }
+    },
+  });
+  if (result?.error) {
+    return { transport: 'browser_page', status: null, ok: false, contentType: '', responsePreview: '', durationMs: Date.now() - startedAt, errorCode: 'NETWORK' };
+  }
+  return {
+    transport: 'browser_page',
+    status: Number(result?.status || 0),
+    ok: Boolean(result?.ok),
+    contentType: String(result?.contentType || ''),
+    responsePreview: String(result?.responsePreview || ''),
+    durationMs: Date.now() - startedAt,
+    errorCode: result?.truncated ? 'RESPONSE_TOO_LARGE' : '',
   };
 }
 
@@ -1573,6 +1832,8 @@ async function runActionCaptureWorkflow({
   mode = 'intercept',
   timeoutSeconds = 90,
   pattern = '',
+  captureReadRequests = false,
+  onReady = null,
 } = {}) {
   const normalizedMode = ['observe', 'intercept', 'commit'].includes(mode) ? mode : 'intercept';
   const safeTimeoutSeconds = Math.max(5, Math.min(Number(timeoutSeconds || 90), 300));
@@ -1590,6 +1851,13 @@ async function runActionCaptureWorkflow({
     targetTabId = await getExplorationTabId(null);
   }
   if (!targetTabId) throw new Error('未找到可用于动作捕获的标签页');
+
+  try {
+    const targetTab = await chrome.tabs.get(targetTabId);
+    if (!targetTab || !shouldHandleTabUrl(targetTab.url)) throw new Error('TARGET_TAB_NOT_FOUND');
+  } catch {
+    throw new Error('TARGET_TAB_NOT_FOUND');
+  }
 
   await ensureCdpAttached(targetTabId);
 
@@ -1617,6 +1885,7 @@ async function runActionCaptureWorkflow({
     startedAt,
     entries: [],
     errors: [],
+    captureReadRequests: Boolean(captureReadRequests),
     stopReason: 'timeout',
     stopRequestedAt: '',
   };
@@ -1639,8 +1908,13 @@ async function runActionCaptureWorkflow({
     fetchEnabled = true;
   }
 
+  if (typeof onReady === 'function') {
+    await onReady({ tabId: targetTabId, startedAt });
+  }
+
+  let completionReason = 'timeout';
   try {
-    const completionReason = await Promise.race([
+    completionReason = await Promise.race([
       delay(safeTimeoutSeconds * 1000).then(() => 'timeout'),
       session.stopPromise,
     ]);
@@ -1658,9 +1932,19 @@ async function runActionCaptureWorkflow({
     cdpActionCaptureSessions.delete(targetTabId);
   }
 
+  if (completionReason === 'target_tab_closed') {
+    throw new Error('TARGET_TAB_NOT_FOUND');
+  }
+
   const pageStateAfter = await sendExplorationMessage(targetTabId, { type: 'browser_state' }).catch((err) => ({ error: err.message }));
   const finalTab = await getTabRuntimeState(targetTabId);
-  const observedEntries = getActionCaptureEntries(targetTabId, baselineCaptureCount, ensureCdpState(targetTabId).totalCaptured, patterns);
+  const observedEntries = getActionCaptureEntries(
+    targetTabId,
+    baselineCaptureCount,
+    ensureCdpState(targetTabId).totalCaptured,
+    patterns,
+    session.captureReadRequests,
+  );
   const capturedActions = rankActionCaptureEntries([
     ...session.entries,
     ...observedEntries,
@@ -1946,15 +2230,20 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     if (method === 'Fetch.requestPaused') {
       const session = cdpActionCaptureSessions.get(tabId);
       const request = params.request || {};
+      const rawPostData = String(request.postData || '');
       const requestInfo = {
         kind: 'cdp_fetch_intercept',
         url: request.url || '',
         method: request.method || 'GET',
         timestamp: Date.now(),
         requestHeaders: normalizeFetchHeaders(request.headers),
-        requestBodyPreview: truncateText(request.postData || '', CDP_REQUEST_PREVIEW_LIMIT),
+        requestBodyPreview: truncateText(rawPostData, CDP_REQUEST_PREVIEW_LIMIT),
+        requestBodyFullSize: rawPostData.length,
+        requestBodyTruncated: rawPostData.length > CDP_REQUEST_PREVIEW_LIMIT,
       };
-      const shouldCapture = session && isLikelyActionRequest(requestInfo, session.patterns);
+      const shouldCapture = session && isLikelyActionRequest(requestInfo, session.patterns, {
+        allowRead: session.captureReadRequests,
+      });
 
       if (shouldCapture) {
         session.entries.push({
@@ -1973,14 +2262,22 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
 
     if (method === 'Network.requestWillBeSent') {
       const request = params.request || {};
+      const rawPostData = String(request.postData || '');
       requests.set(params.requestId, {
         requestId: params.requestId,
         url: request.url || '',
         method: request.method || 'GET',
         timestamp: Date.now(),
         requestHeaders: normalizeHeaders(request.headers),
-        requestBodyPreview: truncateText(request.postData || '', CDP_REQUEST_PREVIEW_LIMIT),
+        requestBodyPreview: truncateText(rawPostData, CDP_REQUEST_PREVIEW_LIMIT),
+        requestBodyFullSize: rawPostData.length,
+        requestBodyTruncated: rawPostData.length > CDP_REQUEST_PREVIEW_LIMIT,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession && adapterCaptureAllowsUrl(adapterSession, request.url || '')) {
+        adapterSession.requestIds.add(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       return;
     }
 
@@ -2001,10 +2298,16 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       if (!pending) return;
 
       let responsePreview = '';
+      let responseBody = '';
       try {
         const body = await chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: params.requestId });
-        const raw = body?.base64Encoded ? atob(body.body || '') : (body.body || '');
-        responsePreview = truncateText(raw, CDP_RESPONSE_PREVIEW_LIMIT);
+        if (body?.base64Encoded) {
+          const binary = atob(body.body || '');
+          responseBody = new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)));
+        } else {
+          responseBody = body?.body || '';
+        }
+        responsePreview = truncateText(responseBody, CDP_RESPONSE_PREVIEW_LIMIT);
       } catch { }
 
       pushCdpNetworkEntry(tabId, {
@@ -2014,6 +2317,8 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         timestamp: pending.timestamp,
         requestHeaders: pending.requestHeaders,
         requestBodyPreview: pending.requestBodyPreview || '',
+        requestBodyFullSize: Number(pending.requestBodyFullSize || 0),
+        requestBodyTruncated: Boolean(pending.requestBodyTruncated),
         status: pending.status,
         statusText: pending.statusText || '',
         responseHeaders: pending.responseHeaders,
@@ -2021,6 +2326,29 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         responsePreview,
         encodedDataLength: params.encodedDataLength || 0,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession?.requestIds.has(params.requestId)) {
+        const encodedBody = new TextEncoder().encode(responseBody);
+        const truncated = encodedBody.byteLength > ADAPTER_RESPONSE_CAPTURE_LIMIT;
+        adapterSession.entries.push({
+          kind: 'cdp',
+          url: pending.url,
+          method: pending.method,
+          timestamp: pending.timestamp,
+          responseStatus: pending.status,
+          responseContentType: pending.responseContentType || pending.mimeType || '',
+          responsePreview: truncated
+            ? new TextDecoder().decode(encodedBody.subarray(0, ADAPTER_RESPONSE_CAPTURE_LIMIT))
+            : responseBody,
+          responseBodyFullSize: encodedBody.byteLength,
+          responseBodyTruncated: truncated,
+        });
+        if (adapterSession.entries.length > ADAPTER_CAPTURE_ENTRY_LIMIT) {
+          adapterSession.entries.splice(0, adapterSession.entries.length - ADAPTER_CAPTURE_ENTRY_LIMIT);
+        }
+        adapterSession.requestIds.delete(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       requests.delete(params.requestId);
       return;
     }
@@ -2035,9 +2363,24 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         timestamp: pending.timestamp,
         requestHeaders: pending.requestHeaders,
         requestBodyPreview: pending.requestBodyPreview || '',
+        requestBodyFullSize: Number(pending.requestBodyFullSize || 0),
+        requestBodyTruncated: Boolean(pending.requestBodyTruncated),
         errorText: params.errorText || 'loading failed',
         canceled: !!params.canceled,
       });
+      const adapterSession = adapterNetworkCaptureSessions.get(tabId);
+      if (adapterSession?.requestIds.has(params.requestId)) {
+        adapterSession.entries.push({
+          kind: 'cdp',
+          url: pending.url,
+          method: pending.method,
+          timestamp: pending.timestamp,
+          responseStatus: pending.status,
+          errorText: params.errorText || 'loading failed',
+        });
+        adapterSession.requestIds.delete(params.requestId);
+        adapterSession.lastEventAt = Date.now();
+      }
       requests.delete(params.requestId);
     }
   } catch (err) {
@@ -2050,6 +2393,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   if (!tabId) return;
   cdpAttachedTabs.delete(tabId);
   cdpExecutionContexts.delete(tabId);
+  adapterNetworkCaptureSessions.delete(tabId);
   const state = cdpNetworkState.get(tabId);
   if (state) state.lastError = reason || 'detached';
 });
@@ -2059,6 +2403,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 let isConnecting = false;
 let lastNativeAckAt = 0;
 let lastBridgeDisconnectReason = '';
+let bridgeCapabilities = [];
 let nativeHeartbeatAckTimer = null;
 const NATIVE_ACK_GRACE_MS = 10000;
 
@@ -2092,16 +2437,13 @@ function sendNativeHeartbeat() {
   const socket = ws;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
   const sentAt = Date.now();
-  const sent = sendToNative({
-    type: 'extension_hello',
-    version: chrome.runtime.getManifest().version,
-    heartbeat: true,
-  });
+  const sent = sendToNative(buildExtensionHello({ heartbeat: true }));
   if (sent) scheduleNativeHeartbeatAckCheck(socket, sentAt);
   return sent;
 }
 
 function resetNativeSocket(reason) {
+  bridgeCapabilities = [];
   console.warn("[WebMCP] Reset native socket:", reason);
   lastBridgeDisconnectReason = `Bridge 连接已断开：${reason || '连接异常'}`;
   clearNativeHeartbeatAckTimer();
@@ -2150,7 +2492,7 @@ function connectToNativeHost() {
     lastNativeAckAt = Date.now();
 
     // 先发送一个握手消息，让 Bridge 识别这是 Chrome 扩展（即使暂无工具）
-    sendToNative({ type: "extension_hello", version: chrome.runtime.getManifest().version });
+    sendToNative(buildExtensionHello());
 
     chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
@@ -2178,6 +2520,7 @@ function connectToNativeHost() {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
     if (msg.type === "extension_hello_ack") {
+      bridgeCapabilities = Array.isArray(msg.capabilities) ? msg.capabilities : [];
       lastNativeAckAt = Date.now();
       clearNativeHeartbeatAckTimer();
       return;
@@ -2187,6 +2530,7 @@ function connectToNativeHost() {
 
   socket.addEventListener("close", (event) => {
     if (ws !== socket) return;
+    bridgeCapabilities = [];
     clearNativeHeartbeatAckTimer();
     const closeDetail = event?.reason || (event?.code ? `WebSocket close code ${event.code}` : 'WebSocket 已关闭');
     lastBridgeDisconnectReason = `Bridge 连接已断开：${closeDetail}`;
@@ -2219,7 +2563,9 @@ async function handleNativeMessage(msg) {
   }
 
   if (
-    msg.type === "write_adapter_file_result"
+    msg.type === "adapter_catalog_result"
+    || msg.type === "adapter_bundle_result"
+    || msg.type === "write_adapter_file_result"
     || msg.type === "generate_adapter_with_ai_result"
     || msg.type === "generate_adapter_scaffold_result"
     || msg.type === "get_ai_config_result"
@@ -2228,6 +2574,7 @@ async function handleNativeMessage(msg) {
     || msg.type === "analyze_action_capture_result"
     || msg.type === "analyze_exploration_result"
     || msg.type === "start_generation_run_result"
+    || msg.type === "resume_generation_run_result"
     || msg.type === "get_generation_run_result"
     || msg.type === "cancel_generation_run_result"
     || msg.type === "publish_generation_run_result"
@@ -2241,6 +2588,30 @@ async function handleNativeMessage(msg) {
       pendingWriteRequests.delete(msg.id);
       clearTimeout(pending.timer);
       pending.resolve(msg);
+    }
+    return;
+  }
+
+  if (msg.type === 'adapter_state_changed') {
+    try {
+      const registry = await doRefreshRegistry();
+      let refreshedTabs = 0;
+      const adapters = Array.isArray(msg.adapters)
+        ? msg.adapters.filter((name) => typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name))
+        : [];
+      // An empty sync snapshot means the consumer reconnected and must refresh all
+      // managed packages; it does not claim knowledge of which names changed.
+      const adapterIds = adapters.length > 0 ? adapters : registry.adapters.filter((name) =>
+        typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name)
+      );
+      for (const adapterId of adapterIds) {
+        const result = await refreshAdapterTabs(adapterId);
+        refreshedTabs += result.refreshedTabs;
+      }
+      chrome.runtime.sendMessage({ ...msg, registry, refreshedTabs }, () => void chrome.runtime.lastError);
+    } catch (error) {
+      console.error("[WebMCP] Adapter state refresh failed:", error?.message || error);
+      chrome.runtime.sendMessage({ ...msg, error: error?.message || String(error) }, () => void chrome.runtime.lastError);
     }
     return;
   }
@@ -2273,7 +2644,7 @@ async function handleNativeMessage(msg) {
   }
 
   if (msg.type === "list_tools") {
-    const tools = gatherAllTools();
+    const tools = await getHostAdapterClient().tools(gatherAllTools());
     sendToNative({ type: "list_tools_result", id: msg.id, tools });
 
   } else if (msg.type === "call_tool") {
@@ -2283,6 +2654,34 @@ async function handleNativeMessage(msg) {
     console.log(`${tracePrefix}[WebMCP] <- native: call_tool ${toolName}`);
     traceLog(traceID, `[ServiceWorker] 收到 call_tool: ${toolName}`);
     try {
+      const selected = await getHostAdapterClient().tool(toolName);
+      if (msg.adapterSnapshot && (!selected.managed || msg.adapterSnapshot.name !== selected.manifest.name
+        || msg.adapterSnapshot.digest !== selected.manifest._hostSnapshot.digest
+        || msg.adapterSnapshot.profile !== selected.manifest._hostSnapshot.profile)) {
+        throw new Error('Adapter changed since this call started; refresh the catalog.');
+      }
+      if (selected.managed) {
+        if (selected.command.runtime !== 'extension') throw new Error('This command requires the host Toolkit runtime.');
+        if ((selected.command.requires_confirmation ?? selected.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
+        if (selected.command.execution?.runtime === 'background') {
+          const result = await callManagedBackgroundTool(selected.manifest, selected.command, args || {}, traceID);
+          sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
+          return;
+        }
+        const tabs = await chrome.tabs.query({});
+        const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        let tab = tabs.find(entry => {
+          try { return new URL(entry.url).hostname === route; } catch { return false; }
+        });
+        if (!tab?.id) {
+          const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
+          tab = await chrome.tabs.create({ url: startUrl, active: false });
+        }
+        const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
+          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command);
+        sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
+        return;
+      }
       if (isLegacyWecliHandlerName(toolName)) {
         throw new Error(`"${toolName}" is an internal handler name. Use the public WebCLI command name without "wecli_".`);
       }
@@ -2380,6 +2779,279 @@ async function handleNativeMessage(msg) {
     } catch (err) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
       traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}`);
+    }
+
+  } else if (msg.type === 'exploration_list_tabs') {
+    try {
+      const tabs = await chrome.tabs.query({});
+      const explorableTabs = tabs
+        .filter((tab) => Number.isInteger(tab.id) && shouldHandleTabUrl(tab.url))
+        .map((tab) => ({
+          id: tab.id,
+          title: tab.title || '',
+          url: tab.url || '',
+          active: Boolean(tab.active),
+          windowId: Number.isInteger(tab.windowId) ? tab.windowId : -1,
+        }))
+        .sort((left, right) => Number(right.active) - Number(left.active));
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: { tabs: explorableTabs } });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_capture_passive') {
+    try {
+      const result = await runExploreWorkflow({ tabId: msg.tabId ?? null });
+      sendToNative({ type: 'call_tool_result', id: msg.id, result });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_safe_actions_inspect') {
+    try {
+      const result = await inspectSafeApiActions(Number(msg.tabId));
+      sendToNative({ type: 'call_tool_result', id: msg.id, result });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_safe_probe_run') {
+    try {
+      const result = await runSafeApiProbe({
+        tabId: Number(msg.tabId),
+        candidateId: String(msg.candidateId || ''),
+        value: String(msg.value || ''),
+      });
+      sendToNative({ type: 'call_tool_result', id: msg.id, result });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_replay_candidate') {
+    try {
+      const result = await runExplorationCandidateReplay({
+        tabId: Number(msg.tabId),
+        url: String(msg.url || ''),
+        method: String(msg.method || 'GET'),
+        headers: msg.headers && typeof msg.headers === 'object' ? msg.headers : {},
+        body: String(msg.body || ''),
+      });
+      sendToNative({ type: 'call_tool_result', id: msg.id, result });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_action_capture_start') {
+    try {
+      const tabId = Number(msg.tabId);
+      const siteKey = String(msg.siteKey || '').trim();
+      const actionName = String(msg.actionName || '').trim();
+      if (!Number.isInteger(tabId) || tabId < 0) throw new Error('A valid tabId is required');
+      if (!siteKey) throw new Error('siteKey required');
+      if (!actionName) throw new Error('actionName required');
+      if (cdpActionCaptureSessions.has(tabId)) throw new Error('当前标签页已有进行中的动作捕获');
+      if (actionCaptureAnalysisRetries.size) throw new Error('已有动作分析正在进行，请稍后开始新的捕获');
+
+      const mode = ['observe', 'intercept'].includes(msg.mode) ? msg.mode : 'intercept';
+      const timeoutSeconds = Math.max(5, Math.min(Number(msg.timeoutSeconds || 60), 300));
+      const pattern = String(msg.pattern || '').trim();
+      await chrome.storage.local.set({
+        actionCaptureLastResult: {
+          type: 'action_capture_loading',
+          tabId,
+          siteKey,
+          actionName,
+          mode,
+          timeoutSeconds,
+          pattern,
+          startedAtMs: Date.now(),
+          timestamp: Date.now(),
+        },
+      });
+      let resolveCaptureReady;
+      let rejectCaptureReady;
+      const captureReady = new Promise((resolve, reject) => {
+        resolveCaptureReady = resolve;
+        rejectCaptureReady = reject;
+      });
+
+      void (async () => {
+        try {
+          const captureResult = await runActionCaptureWorkflow({
+            tabId,
+            site: siteKey,
+            actionName,
+            mode,
+            timeoutSeconds,
+            pattern,
+            captureReadRequests: true,
+            onReady: resolveCaptureReady,
+          });
+          await chrome.storage.local.set({
+            actionCaptureLastResult: {
+              type: 'action_capture_ai_loading',
+              tabId,
+              siteKey,
+              actionName,
+              startedAtMs: Date.parse(captureResult.startedAt || '') || Date.now(),
+              result: captureResult,
+              timestamp: Date.now(),
+            },
+          });
+          const result = await finalizeActionCaptureResult(captureResult, {
+            timeoutMs: 120000,
+            analysisContextId: msg.analysisContextId,
+          });
+          await chrome.storage.local.set({
+            actionCaptureLastResult: {
+              type: 'action_capture',
+              tabId,
+              siteKey,
+              actionName,
+              startedAtMs: Date.parse(result.startedAt || '') || Date.now(),
+              result,
+              timestamp: Date.now(),
+            },
+          });
+        } catch (err) {
+          rejectCaptureReady(err);
+          await chrome.storage.local.set({
+            actionCaptureLastResult: {
+              type: 'action_capture_error',
+              tabId,
+              siteKey,
+              actionName,
+              startedAtMs: Date.now(),
+              error: err?.message || String(err),
+              timestamp: Date.now(),
+            },
+          });
+        }
+      })();
+
+      await Promise.race([
+        captureReady,
+        delay(7000).then(() => { throw new Error('操作捕获初始化超时，请重新录制'); }),
+      ]);
+      sendToNative({
+        type: 'call_tool_result',
+        id: msg.id,
+        result: { ok: true, started: true, type: 'action_capture_loading', tabId, siteKey, actionName },
+      });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_action_capture_stop') {
+    try {
+      const tabId = Number(msg.tabId);
+      const session = Number.isFinite(tabId) ? cdpActionCaptureSessions.get(tabId) : null;
+      if (!session || typeof session.requestStop !== 'function') throw new Error('当前没有进行中的动作捕获');
+      if (!session.requestStop('manual_stop')) throw new Error('动作捕获已经在结束中');
+      const stored = await chrome.storage.local.get('actionCaptureLastResult');
+      const state = stored.actionCaptureLastResult || {};
+      await chrome.storage.local.set({
+        actionCaptureLastResult: {
+          ...state,
+          type: 'action_capture_stopping',
+          tabId,
+          siteKey: String(msg.siteKey || session.site || state.siteKey || '').trim(),
+          actionName: String(msg.actionName || session.actionName || state.actionName || '').trim(),
+          stopRequestedAt: session.stopRequestedAt,
+          timestamp: Date.now(),
+        },
+      });
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: { ok: true, stopping: true, type: 'action_capture_stopping', tabId } });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_action_capture_analyze') {
+    try {
+      const state = await retryStoredActionCaptureAnalysis(msg);
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: state });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_action_capture_get') {
+    try {
+      const stored = await chrome.storage.local.get('actionCaptureLastResult');
+      let state = stored.actionCaptureLastResult || null;
+      const requestedTabId = Number(msg.tabId);
+      const requestedSiteKey = String(msg.siteKey || '').trim();
+      if (state && ['action_capture_loading', 'action_capture_stopping', 'action_capture_ai_loading'].includes(state.type)) {
+        const stateTabId = Number(state.tabId);
+        const ageMs = Math.max(0, Date.now() - Number(state.timestamp || state.startedAtMs || Date.now()));
+        let targetMissing = false;
+        if (Number.isInteger(stateTabId)) {
+          try {
+            await chrome.tabs.get(stateTabId);
+          } catch {
+            targetMissing = true;
+          }
+        }
+        const sessionMissing = Number.isInteger(stateTabId) && !cdpActionCaptureSessions.has(stateTabId);
+        const abandoned = targetMissing
+          || (state.type === 'action_capture_loading' && sessionMissing && ageMs > 5000)
+          || (state.type === 'action_capture_stopping' && sessionMissing && ageMs > 10000)
+          || (state.type === 'action_capture_ai_loading' && ageMs > 150000);
+        if (abandoned) {
+          state = {
+            ...state,
+            type: 'action_capture_error',
+            code: targetMissing ? 'TARGET_TAB_NOT_FOUND' : 'ACTION_CAPTURE_SESSION_LOST',
+            error: targetMissing ? '目标页面已经关闭，请重新选择页面并录制。' : '操作捕获会话已丢失，请重新录制。',
+            recoverable: true,
+            timestamp: Date.now(),
+          };
+          if (state.result && Array.isArray(state.result.capturedActions)) {
+            state.type = 'action_capture';
+            state.result = actionCaptureAnalysisFailure(state.result, '分析会话已中断，可重试已有证据的 AI 分析，无需重新操作网站', 'ACTION_ANALYSIS_INTERRUPTED');
+          }
+          await chrome.storage.local.set({ actionCaptureLastResult: state });
+        }
+      }
+      if (state && Number.isInteger(requestedTabId) && Number(state.tabId) !== requestedTabId) {
+        sendToNative({ type: 'call_tool_result', id: msg.id, result: null });
+      } else if (state && requestedSiteKey && state.siteKey && String(state.siteKey) !== requestedSiteKey) {
+        sendToNative({ type: 'call_tool_result', id: msg.id, result: null });
+      } else {
+        sendToNative({ type: 'call_tool_result', id: msg.id, result: state });
+      }
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_action_capture_select') {
+    try {
+      if (actionCaptureAnalysisRetries.size) throw new Error('动作分析仍在进行中，暂时不能修改主接口');
+      const state = await selectStoredActionCapturePrimaryCandidate({
+        siteKey: String(msg.siteKey || '').trim(),
+        candidateIndex: msg.candidateIndex,
+      });
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: state });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_action_capture_clear') {
+    try {
+      const stored = await chrome.storage.local.get('actionCaptureLastResult');
+      const state = stored.actionCaptureLastResult || null;
+      if (actionCaptureAnalysisRetries.size) throw new Error('动作分析仍在进行中，暂时不能清空');
+      const requestedTabId = Number(msg.tabId);
+      const requestedSiteKey = String(msg.siteKey || '').trim();
+      const matchesTab = !state || !Number.isInteger(requestedTabId) || Number(state.tabId) === requestedTabId;
+      const matchesSite = !state || !requestedSiteKey || !state.siteKey || String(state.siteKey) === requestedSiteKey;
+      if (matchesTab && matchesSite) await chrome.storage.local.remove('actionCaptureLastResult');
+      sendToNative({
+        type: 'call_tool_result',
+        id: msg.id,
+        result: { ok: true, cleared: Boolean(state && matchesTab && matchesSite) },
+      });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
   } else if (msg.type === "get_active_tab") {
@@ -2557,6 +3229,13 @@ async function handleNativeMessage(msg) {
     doRefreshRegistry()
       .then(r => console.log(`[WebMCP] Registry refreshed via CLI: ${r.count} adapters`))
       .catch(err => console.error(`[WebMCP] Registry refresh failed: ${err.message}`));
+  } else if (msg.type === "refresh_adapter_tabs") {
+    try {
+      const result = await refreshAdapterTabs(String(msg.siteKey || '').trim());
+      sendToNative({ type: "call_tool_result", id: msg.id, result });
+    } catch (err) {
+      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
+    }
   } else if (msg.type === 'browser_state') {
     try {
       const tabId = await getExplorationTabId(msg.tabId);
@@ -2765,13 +3444,86 @@ async function enhanceExplorationResultWithAI(result, options = {}) {
   };
 }
 
-async function enhanceActionCaptureResultWithAI(result, options = {}) {
-  const heuristicRecommendation = result?.recommendation || {};
-  const withHeuristicFallback = (errorMessage = "") => ({
+const REQUEST_TRUNCATION_MARKER_RE = /(?:\.{0,3}\[truncated\]|…\s*\[truncated\])\s*$/i;
+
+function capturedValueShape(value, depth = 0) {
+  if (depth >= 8) return { type: 'unknown' };
+  if (value === null) return { type: 'null' };
+  if (Array.isArray(value)) return { type: 'array', items: value.length > 0 ? capturedValueShape(value[0], depth + 1) : { type: 'unknown' } };
+  if (value && typeof value === 'object') {
+    return { type: 'object', properties: Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, capturedValueShape(nested, depth + 1)])) };
+  }
+  if (typeof value === 'number') return { type: Number.isInteger(value) ? 'integer' : 'number' };
+  if (typeof value === 'boolean') return { type: 'boolean' };
+  if (typeof value === 'string') return { type: 'string' };
+  return { type: 'unknown' };
+}
+
+function capturedBodyKeys(shape) {
+  return shape?.type === 'object' && shape.properties && typeof shape.properties === 'object'
+    ? Object.keys(shape.properties).sort()
+    : [];
+}
+
+function buildSafeRequestEvidence(entry = {}) {
+  if (entry.requestEvidence && typeof entry.requestEvidence === 'object') return entry.requestEvidence;
+  const text = String(entry.requestBodyPreview || '').trim();
+  if (!text) return { version: 'request-evidence-v1', bodyKind: 'none', bodyShape: null, bodyKeys: [], bodyFullSize: 0, bodyTruncated: false, bodyOmitted: false };
+  const bodyFullSize = Number(entry.requestBodyFullSize) || text.length;
+  const bodyTruncated = Boolean(entry.requestBodyTruncated) || REQUEST_TRUNCATION_MARKER_RE.test(text) || bodyFullSize > text.length;
+  if (bodyTruncated) return { version: 'request-evidence-v1', bodyKind: 'opaque', bodyShape: null, bodyKeys: [], bodyFullSize, bodyTruncated: true, bodyOmitted: true };
+  try {
+    const bodyShape = capturedValueShape(JSON.parse(text));
+    return { version: 'request-evidence-v1', bodyKind: 'json', bodyShape, bodyKeys: capturedBodyKeys(bodyShape), bodyFullSize, bodyTruncated: false, bodyOmitted: false };
+  } catch {
+    if (text.startsWith('{') || text.startsWith('[')) return { version: 'request-evidence-v1', bodyKind: 'opaque', bodyShape: null, bodyKeys: [], bodyFullSize, bodyTruncated: false, bodyOmitted: true };
+  }
+  if (/^[^=&\s]+=[^&]*(?:&[^=&\s]+=[^&]*)*$/.test(text)) {
+    const bodyShape = capturedValueShape(Object.fromEntries(new URLSearchParams(text)));
+    return { version: 'request-evidence-v1', bodyKind: 'form', bodyShape, bodyKeys: capturedBodyKeys(bodyShape), bodyFullSize, bodyTruncated: false, bodyOmitted: false };
+  }
+  return { version: 'request-evidence-v1', bodyKind: 'opaque', bodyShape: null, bodyKeys: [], bodyFullSize, bodyTruncated: false, bodyOmitted: true };
+}
+
+function structuralCapturedUrl(input) {
+  try {
+    const url = new URL(String(input || ''));
+    for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, ':value');
+    url.hash = '';
+    url.username = '';
+    url.password = '';
+    return url.toString();
+  } catch {
+    return String(input || '').split('#', 1)[0];
+  }
+}
+
+function structuralizeStoredTextUrls(value) {
+  return safeStoredText(value).replace(/https?:\/\/[^\s，。；）)]+/g, (url) => structuralCapturedUrl(url));
+}
+
+function sanitizeActionCaptureResult(result = {}) {
+  return {
     ...result,
+    capturedActions: (Array.isArray(result.capturedActions) ? result.capturedActions : []).map((candidate) => {
+      const { requestBodyPreview, requestBody, requestHeaders, ...safeCandidate } = candidate || {};
+      return {
+        ...safeCandidate,
+        url: structuralCapturedUrl(candidate?.url),
+        requestEvidence: buildSafeRequestEvidence(candidate),
+      };
+    }),
+  };
+}
+
+function actionCaptureAnalysisFailure(result, errorMessage = '', code = 'ACTION_ANALYSIS_FAILED', details = {}) {
+  const safeResult = sanitizeActionCaptureResult(result);
+  const heuristicRecommendation = safeResult?.recommendation || {};
+  return {
+    ...safeResult,
     actionAnalysis: {
       analysisSource: 'heuristic',
-      summary: result?.capturedActions?.length > 0
+      summary: safeResult?.capturedActions?.length > 0
         ? 'AI 分析失败，已保留当前动作捕获与规则结论。'
         : '本次没有捕获到足够的动作候选，已保留规则结论。',
       recommendedToolName: heuristicRecommendation.toolName || '',
@@ -2780,20 +3532,72 @@ async function enhanceActionCaptureResultWithAI(result, options = {}) {
       confidence: null,
       candidateAnalyses: [],
       aiError: errorMessage || '',
+      errorCode: code,
+      ...(Number.isSafeInteger(details?.outputLimit) ? { outputLimit: details.outputLimit } : {}),
     },
-  });
+  };
+}
 
-  const response = await requestBridge(
-    {
-      type: 'analyze_action_capture_result',
-      captureResult: result,
-    },
-    Math.max(1000, Number(options.timeoutMs || 120000)),
-    '动作捕获 AI 分析超时，已回退到规则结论',
-  );
+// Only re-analyze retained evidence: no debugger, page interaction or request replay.
+const actionCaptureAnalysisRetries = new Set();
+async function retryStoredActionCaptureAnalysis(msg) {
+  const tabId = Number(msg.tabId);
+  if (actionCaptureAnalysisRetries.size) throw new Error('动作分析仍在进行中');
+  actionCaptureAnalysisRetries.add(tabId);
+  let handedOff = false;
+  try {
+    const stored = await chrome.storage.local.get('actionCaptureLastResult');
+    const state = stored.actionCaptureLastResult;
+    if (!state?.result || !Array.isArray(state.result.capturedActions)) throw new Error('没有保留的捕获证据可供分析，请勿重复执行写操作');
+    if (Number(state.tabId) !== tabId || state.result.site !== msg.siteKey || state.result.actionName !== msg.actionName) throw new Error('捕获证据与当前任务不匹配');
+    if (['action_capture_loading', 'action_capture_stopping', 'action_capture_ai_loading'].includes(state.type) || cdpActionCaptureSessions.has(tabId)) throw new Error('动作捕获或分析仍在进行中');
+    const loading = { ...state, type: 'action_capture_ai_loading', analysisAttemptId: msg.id, timestamp: Date.now() };
+    await chrome.storage.local.set({ actionCaptureLastResult: loading });
+    void (async () => {
+      try {
+        let result;
+        try {
+          result = await finalizeActionCaptureResult(state.result, { analysisContextId: msg.analysisContextId, timeoutMs: 120000 });
+        } catch (err) {
+          result = actionCaptureAnalysisFailure(state.result, err?.message || '动作分析失败');
+        }
+        const current = (await chrome.storage.local.get('actionCaptureLastResult')).actionCaptureLastResult;
+        if (current?.analysisAttemptId === msg.id) {
+          const { analysisAttemptId, ...settled } = loading;
+          await chrome.storage.local.set({ actionCaptureLastResult: { ...settled, type: 'action_capture', result, timestamp: Date.now() } });
+        }
+      } finally {
+        actionCaptureAnalysisRetries.delete(tabId);
+      }
+    })().catch(() => {}); // A storage failure is reconciled by the normal state polling path.
+    handedOff = true;
+    return loading;
+  } finally {
+    if (!handedOff) actionCaptureAnalysisRetries.delete(tabId);
+  }
+}
+
+async function enhanceActionCaptureResultWithAI(result, options = {}) {
+  const safeResult = sanitizeActionCaptureResult(result);
+  const heuristicRecommendation = safeResult?.recommendation || {};
+
+  let response;
+  try {
+    response = await requestBridge(
+      {
+        type: 'analyze_action_capture_result',
+        captureResult: safeResult,
+        ...(options.analysisContextId !== undefined ? { analysisContextId: options.analysisContextId } : {}),
+      },
+      Math.max(1000, Number(options.timeoutMs || 120000)),
+      '动作捕获 AI 分析超时，已保留证据，可重试分析，无需重新操作网站',
+    );
+  } catch (err) {
+    return actionCaptureAnalysisFailure(safeResult, err?.message || '动作分析连接中断', err?.code || 'ACTION_ANALYSIS_UNAVAILABLE');
+  }
 
   if (!response?.ok || !response.analysis) {
-    return withHeuristicFallback(response?.error || '动作捕获 AI 分析失败');
+    return actionCaptureAnalysisFailure(safeResult, response?.error || '动作捕获 AI 分析失败', response?.code, response?.details);
   }
 
   const analysis = response.analysis;
@@ -2804,8 +3608,8 @@ async function enhanceActionCaptureResultWithAI(result, options = {}) {
     ]),
   );
 
-  const enhancedCandidates = Array.isArray(result?.capturedActions)
-    ? result.capturedActions.map((candidate) => {
+  const enhancedCandidates = Array.isArray(safeResult?.capturedActions)
+    ? safeResult.capturedActions.map((candidate) => {
       const key = `${String(candidate?.method || 'GET').toUpperCase()} ${String(candidate?.url || '')}`;
       const match = analysisByKey.get(key);
       if (!match) return candidate;
@@ -2822,7 +3626,7 @@ async function enhanceActionCaptureResultWithAI(result, options = {}) {
     : [];
 
   return {
-    ...result,
+    ...safeResult,
     capturedActions: enhancedCandidates,
     recommendation: {
       ...heuristicRecommendation,
@@ -3613,7 +4417,7 @@ async function runDirectBrowserFetch(payload = {}, traceID = null) {
 
 async function runDirectBackendFetch(payload = {}, traceID = null) {
   const response = await runRuntimeBridgeRequest("wecli_backend_fetch", payload, traceID);
-  if (!isDirectAuthenticationResponse(response)) return response;
+  if (payload.browserFallback === false || !isDirectAuthenticationResponse(response)) return response;
   traceLog(traceID, `[ServiceWorkerRuntime] backend_fetch authentication response, retrying in browser context ${String(payload.url || "")}`);
   return runDirectBrowserFetch(payload, traceID);
 }
@@ -3666,7 +4470,7 @@ async function handleDirectRuntimeRequest(action, payload = {}) {
     case "cookies_get":
       traceLog(traceID, `[ServiceWorkerRuntime] direct cookies_get ${String(payload.domain || payload.domains || payload.url || directRuntimeContext?.routeDomain || "")}`);
       {
-        const debuggerResult = await getDirectRuntimeCookiesViaDebugger(payload, traceID);
+        const debuggerResult = payload.browserDebugger === false ? null : await getDirectRuntimeCookiesViaDebugger(payload, traceID);
         const result = debuggerResult || await getRuntimeCookies(createDirectContextTab(), payload);
         const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
         traceLog(traceID, `[ServiceWorkerRuntime] direct cookies_get result ${JSON.stringify({
@@ -3874,10 +4678,12 @@ async function findTabByDomain(domain, excludeTabDomain, requiredTabDomain) {
     if (!domainData.tabIds.has(tab.id)) continue;
 
     // 验证 tab URL 与 domain 一致，防止 tabId 被错误归入其他 domain
+    // （同 adapter 匹配多个 host 时，以注册时记录的来源主机 hostAliases 为准）
     let tabHostname;
     try {
       tabHostname = new URL(tab.url).hostname;
-      if (!hostnameMatchesDomain(tabHostname, domain)) {
+      const aliasOk = domainData.hostAliases?.has(tabHostname) === true;
+      if (!hostnameMatchesDomain(tabHostname, domain) && !aliasOk) {
         console.warn(`[WebMCP] Tab ${tab.id} hostname "${tabHostname}" does not match domain "${domain}", skipping`);
         domainData.tabIds.delete(tab.id);
         continue;
@@ -4059,7 +4865,7 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
  * 当 sendMessage 因 bfcache 失败时，我们主动激活标签页将其从 bfcache 中唤醒，
  * 等待页面恢复后重试。
  */
-async function callToolInTab(tabId, toolName, args, traceID = null) {
+async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
 
@@ -4073,7 +4879,7 @@ async function callToolInTab(tabId, toolName, args, traceID = null) {
   };
 
   let lastError;
-  const maxRetries = 2;
+  const maxRetries = allowTransportRetry ? 2 : 0;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
@@ -4082,7 +4888,11 @@ async function callToolInTab(tabId, toolName, args, traceID = null) {
     }
 
     try {
-      const response = await chrome.tabs.sendMessage(tabId, message);
+      let timer;
+      const response = await Promise.race([
+        chrome.tabs.sendMessage(tabId, message),
+        ...(Number.isFinite(timeoutMs) ? [new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter command timed out; execution was not replayed.')), timeoutMs); })] : []),
+      ]).finally(() => clearTimeout(timer));
       // 成功 —— 继续处理响应
       if (response?.error) throw createAdapterError(response.error);
 
@@ -4264,8 +5074,8 @@ function isLikelyStoredListApiEntry(entry) {
 }
 
 function mergeStoredListCandidateEvidence(candidate, entry) {
-  candidate.requestBodyPreview = pickStoredRicherPreview(candidate.requestBodyPreview, entry?.requestBodyPreview);
-  candidate.responsePreview = pickStoredRicherPreview(candidate.responsePreview, entry?.responsePreview);
+  candidate.requestEvidence = pickStoredRicherRequestEvidence(buildSafeRequestEvidence(candidate), buildSafeRequestEvidence(entry));
+  delete candidate.requestBodyPreview;
   candidate.responseContentType = candidate.responseContentType
     || safeStoredText(entry?.responseContentType || entry?.contentType);
   candidate.responseHints = mergeStoredActionResponseHints(
@@ -4278,10 +5088,9 @@ function mergeStoredListCandidateEvidence(candidate, entry) {
 
 function createStoredListCandidate(entry, url, method, step) {
   return mergeStoredListCandidateEvidence({
-    url,
+    url: structuralCapturedUrl(url),
     method,
-    requestBodyPreview: safeStoredText(entry?.requestBodyPreview),
-    responsePreview: safeStoredText(entry?.responsePreview),
+    requestEvidence: buildSafeRequestEvidence(entry),
     responseContentType: safeStoredText(entry?.responseContentType || entry?.contentType),
     responseHints: extractStoredActionResponseHints(entry?.responsePreview),
     status: Number.isFinite(Number(entry?.status)) ? Number(entry.status) : undefined,
@@ -4346,21 +5155,21 @@ function extractLegacyApiCandidates(workflowResult) {
       return Boolean(entry?.url) && (contentType.includes('json') || contentType.includes('javascript'));
     })
     .map((entry) => ({
-      url: entry.url,
+      url: structuralCapturedUrl(entry.url),
       method: entry.method || 'GET',
       status: entry.status,
       contentType: entry.responseContentType || entry.contentType,
-      requestBody: entry.requestBodyPreview,
-      responsePreview: entry.responsePreview,
+      requestEvidence: buildSafeRequestEvidence(entry),
+      responseHints: extractStoredActionResponseHints(entry.responsePreview),
     }));
 }
 
 function buildStoredSiteMemory(siteKey, workflowResult, existing = {}) {
   const now = new Date().toISOString();
-  const pageStateBeforeUrl = safeStoredUrl(workflowResult?.pageStateBefore?.url);
-  const resultPageUrl = safeStoredUrl(workflowResult?.resultPageState?.url);
-  const finalPageUrl = safeStoredUrl(workflowResult?.pageStateAfter?.url);
-  const openedUrl = safeStoredUrl(workflowResult?.opened?.url);
+  const pageStateBeforeUrl = structuralCapturedUrl(workflowResult?.pageStateBefore?.url);
+  const resultPageUrl = structuralCapturedUrl(workflowResult?.resultPageState?.url);
+  const finalPageUrl = structuralCapturedUrl(workflowResult?.pageStateAfter?.url);
+  const openedUrl = structuralCapturedUrl(workflowResult?.opened?.url);
   const sourceUrl = openedUrl || resultPageUrl || finalPageUrl || pageStateBeforeUrl;
   const parsedSource = parseStoredUrl(sourceUrl);
   const resolvedSiteKey = safeStoredText(siteKey) || parsedSource?.hostname || safeStoredText(existing.siteKey);
@@ -4396,26 +5205,26 @@ function buildStoredSiteMemory(siteKey, workflowResult, existing = {}) {
     canonicalResultUrl: resultPageUrl || finalPageUrl || safeStoredText(existing.canonicalResultUrl),
     verdictPattern: safeStoredText(verdict.pattern) || safeStoredText(existing.verdictPattern),
     recommendedStrategy: safeStoredText(verdict.recommendedStrategy) || safeStoredText(existing.recommendedStrategy),
-    verdictReason: safeStoredText(verdict.reason) || safeStoredText(existing.verdictReason),
+    verdictReason: structuralizeStoredTextUrls(verdict.reason) || structuralizeStoredTextUrls(existing.verdictReason),
     search: {
       executed: Boolean(searchAction?.result?.executed),
       action: safeStoredText(searchAction?.result?.action),
-      keywordSeed: safeStoredText(searchAction?.result?.value),
+      keywordSeed: '',
     },
     resultSignals: {
       listCandidates: Number(workflowResult?.resultPageState?.listCandidates || 0),
       paginationCandidates: Number(workflowResult?.resultPageState?.paginationCandidates || 0),
     },
     listApiCandidates,
-    actionApiCandidates: Array.isArray(existing.actionApiCandidates) ? existing.actionApiCandidates : [],
-    actionCaptureHistory: Array.isArray(existing.actionCaptureHistory) ? existing.actionCaptureHistory : [],
+    actionApiCandidates: Array.isArray(existing.actionApiCandidates) ? existing.actionApiCandidates.map(sanitizeStoredActionCandidate) : [],
+    actionCaptureHistory: Array.isArray(existing.actionCaptureHistory) ? existing.actionCaptureHistory.map(sanitizeStoredActionCandidate) : [],
     actionEvidenceSummary: existing.actionEvidenceSummary,
     detailHints: {
       mode: safeStoredText(detailAction?.result?.mode),
-      bestCandidateHref: safeStoredText(detailAction?.result?.bestCandidate?.href),
-      bestCandidateText: safeStoredText(detailAction?.result?.bestCandidate?.text),
+      bestCandidateHref: structuralCapturedUrl(detailAction?.result?.bestCandidate?.href),
+      bestCandidateText: '',
       networkDetailCandidates: Array.isArray(detailAction?.result?.networkDetailCandidates)
-        ? detailAction.result.networkDetailCandidates.filter((item) => typeof item === 'string' && item.trim())
+        ? detailAction.result.networkDetailCandidates.map(structuralCapturedUrl).filter(Boolean)
         : [],
     },
     pagination: {
@@ -4434,7 +5243,7 @@ function buildStoredSiteMemory(siteKey, workflowResult, existing = {}) {
     },
     apiCandidates: legacyApiCandidates,
     pattern: safeStoredText(verdict.pattern),
-    reason: safeStoredText(verdict.reason),
+    reason: structuralizeStoredTextUrls(verdict.reason),
   };
 }
 
@@ -4536,9 +5345,9 @@ function buildStoredActionCaptureMemory(siteKey, captureResult, existing = {}, o
     return existing && Object.keys(existing).length > 0 ? existing : null;
   }
 
-  const finalUrl = safeStoredUrl(captureResult?.finalTab?.url);
-  const beforeUrl = safeStoredUrl(captureResult?.beforeTab?.url);
-  const openedUrl = safeStoredUrl(captureResult?.opened?.url);
+  const finalUrl = structuralCapturedUrl(captureResult?.finalTab?.url);
+  const beforeUrl = structuralCapturedUrl(captureResult?.beforeTab?.url);
+  const openedUrl = structuralCapturedUrl(captureResult?.opened?.url);
   const sourceUrl = finalUrl || beforeUrl || openedUrl || safeStoredText(existing.lastSourceUrl);
   const parsedSource = parseStoredUrl(sourceUrl);
 
@@ -4546,10 +5355,9 @@ function buildStoredActionCaptureMemory(siteKey, captureResult, existing = {}, o
     actionName,
     mode,
     toolName,
-    url: safeStoredUrl(candidate.url),
+    url: structuralCapturedUrl(candidate.url),
     method: safeStoredText(candidate.method) || 'GET',
-    requestBodyPreview: safeStoredText(candidate.requestBodyPreview),
-    responsePreview: safeStoredText(candidate.responsePreview),
+    requestEvidence: buildSafeRequestEvidence(candidate),
     responseContentType: safeStoredText(candidate.responseContentType),
     responseHints: extractStoredActionResponseHints(candidate.responsePreview),
     intercepted: Boolean(candidate.intercepted),
@@ -4571,24 +5379,46 @@ function buildStoredActionCaptureMemory(siteKey, captureResult, existing = {}, o
     captureCount: Number(existing.captureCount || 0),
     workflowVersion: workflowVersion || safeStoredText(existing.workflowVersion),
     workflowVersionsSeen: Array.isArray(existing.workflowVersionsSeen) ? existing.workflowVersionsSeen.filter((item) => typeof item === 'string' && item.trim()) : [],
-    lastSourceUrl: sourceUrl,
-    canonicalEntryUrl: safeStoredText(existing.canonicalEntryUrl) || beforeUrl || sourceUrl,
-    canonicalResultUrl: safeStoredText(existing.canonicalResultUrl) || finalUrl || sourceUrl,
+    lastSourceUrl: structuralCapturedUrl(sourceUrl),
+    canonicalEntryUrl: structuralCapturedUrl(existing.canonicalEntryUrl) || beforeUrl || sourceUrl,
+    canonicalResultUrl: structuralCapturedUrl(existing.canonicalResultUrl) || finalUrl || sourceUrl,
     verdictPattern: safeStoredText(existing.verdictPattern),
     recommendedStrategy: safeStoredText(existing.recommendedStrategy),
-    verdictReason: safeStoredText(existing.verdictReason),
-    search: existing.search || { executed: false, action: '', keywordSeed: '' },
+    verdictReason: structuralizeStoredTextUrls(existing.verdictReason),
+    search: existing.search ? { ...existing.search, keywordSeed: '' } : { executed: false, action: '', keywordSeed: '' },
     resultSignals: existing.resultSignals || { listCandidates: 0, paginationCandidates: 0 },
-    listApiCandidates: Array.isArray(existing.listApiCandidates) ? existing.listApiCandidates : [],
-    actionApiCandidates: Array.isArray(existing.actionApiCandidates) ? existing.actionApiCandidates : [],
-    actionCaptureHistory: Array.isArray(existing.actionCaptureHistory) ? existing.actionCaptureHistory : [],
+    listApiCandidates: Array.isArray(existing.listApiCandidates) ? existing.listApiCandidates.map((candidate) => {
+      const { requestBodyPreview, requestBody, responsePreview, responseBodyPreview, responseBody, ...safeCandidate } = candidate || {};
+      return {
+        ...safeCandidate,
+        url: structuralCapturedUrl(candidate?.url),
+        requestEvidence: buildSafeRequestEvidence(candidate),
+        responseHints: mergeStoredActionResponseHints(candidate?.responseHints, extractStoredActionResponseHints(candidate?.responsePreview)),
+      };
+    }) : [],
+    actionApiCandidates: Array.isArray(existing.actionApiCandidates) ? existing.actionApiCandidates.map(sanitizeStoredActionCandidate) : [],
+    actionCaptureHistory: Array.isArray(existing.actionCaptureHistory) ? existing.actionCaptureHistory.map(sanitizeStoredActionCandidate) : [],
     actionEvidenceSummary: existing.actionEvidenceSummary,
-    detailHints: existing.detailHints || { mode: '', bestCandidateHref: '', bestCandidateText: '', networkDetailCandidates: [] },
+    detailHints: existing.detailHints ? {
+      ...existing.detailHints,
+      bestCandidateHref: structuralCapturedUrl(existing.detailHints.bestCandidateHref),
+      bestCandidateText: '',
+      networkDetailCandidates: Array.isArray(existing.detailHints.networkDetailCandidates)
+        ? existing.detailHints.networkDetailCandidates.map(structuralCapturedUrl).filter(Boolean)
+        : [],
+    } : { mode: '', bestCandidateHref: '', bestCandidateText: '', networkDetailCandidates: [] },
     pagination: existing.pagination || { attempted: false, verified: false, mode: '', targetPage: null, activePageBefore: null, activePageAfter: null, reason: '' },
     rawSummary: existing.rawSummary || { tabId: null, resultPageUrl: '', finalPageUrl: '' },
-    apiCandidates: Array.isArray(existing.apiCandidates) ? existing.apiCandidates : [],
+    apiCandidates: Array.isArray(existing.apiCandidates) ? existing.apiCandidates.map((item) => ({
+      url: structuralCapturedUrl(item?.url),
+      method: safeStoredText(item?.method) || 'GET',
+      status: item?.status,
+      contentType: safeStoredText(item?.contentType),
+      requestEvidence: buildSafeRequestEvidence(item),
+      responseHints: mergeStoredActionResponseHints(item?.responseHints, extractStoredActionResponseHints(item?.responsePreview)),
+    })) : [],
     pattern: safeStoredText(existing.pattern),
-    reason: safeStoredText(existing.reason),
+    reason: structuralizeStoredTextUrls(existing.reason),
   };
 
   const workflowVersionsSeen = new Set(base.workflowVersionsSeen || []);
@@ -4651,7 +5481,7 @@ function scoreStoredActionCaptureEntry(entry, tokens) {
   if (Boolean(entry?.aiIsPrimary)) score += 30;
   if (Boolean(entry?.intercepted)) score += 6;
   if (method !== 'GET') score += 4;
-  if (requestBody) score += 3;
+  if (requestBody || entry?.requestEvidence?.bodyKind && entry.requestEvidence.bodyKind !== 'none') score += 3;
   if (responsePreview) score += 2;
   if (storedHasQueryParams(url)) score += 2;
   if (url.includes('/api/') || url.includes('/meeting/') || url.includes('/list') || url.includes('/query') || url.includes('/search') || url.includes('/get')) score += 2;
@@ -4780,13 +5610,14 @@ function describeStoredActionCandidateQuality(candidate) {
     score += 4;
     signals.push('write_method');
   }
-  if (safeStoredUrl(candidate?.requestBodyPreview)) {
+  const requestEvidence = buildSafeRequestEvidence(candidate);
+  if (requestEvidence.bodyKind !== 'none') {
     score += 1;
     signals.push('has_request_body');
   }
-  if (safeStoredUrl(candidate?.responsePreview)) {
+  if (candidate?.responseHints || candidate?.apiEvidence?.responseShape) {
     score += 1;
-    signals.push('has_response_preview');
+    signals.push('has_response_shape');
   }
   if (safeStoredText(candidate?.responseContentType).toLowerCase().includes('json')) {
     score += 1;
@@ -4797,7 +5628,7 @@ function describeStoredActionCandidateQuality(candidate) {
     signals.push('has_query_params');
   }
 
-  const requestFieldCount = countStoredPreviewFields(candidate?.requestBodyPreview);
+  const requestFieldCount = Array.isArray(requestEvidence.bodyKeys) ? requestEvidence.bodyKeys.length : 0;
   if (requestFieldCount > 0) {
     const contribution = Math.min(requestFieldCount, 8);
     score += contribution;
@@ -4878,8 +5709,8 @@ function mergeStoredActionCandidate(primary, secondary) {
     ...winner,
     mode: winner.mode || loser.mode,
     toolName: winner.toolName || loser.toolName,
-    requestBodyPreview: preserveExplicitSelection ? winner.requestBodyPreview : pickStoredRicherPreview(winner.requestBodyPreview, loser.requestBodyPreview),
-    responsePreview: preserveExplicitSelection ? winner.responsePreview : pickStoredRicherPreview(winner.responsePreview, loser.responsePreview),
+    requestEvidence: pickStoredRicherRequestEvidence(buildSafeRequestEvidence(winner), buildSafeRequestEvidence(loser)),
+    responsePreview: undefined,
     responseContentType: winner.responseContentType || loser.responseContentType,
     responseHints: preserveExplicitSelection ? winner.responseHints : mergeStoredActionResponseHints(winner.responseHints, loser.responseHints),
     intercepted: Boolean(winner.intercepted || loser.intercepted),
@@ -4891,6 +5722,33 @@ function mergeStoredActionCandidate(primary, secondary) {
     capturedAt: compareStoredIsoTimestamps(winner.capturedAt, loser.capturedAt) >= 0 ? winner.capturedAt : loser.capturedAt,
     sourceWorkflowVersion: winner.sourceWorkflowVersion || loser.sourceWorkflowVersion,
   };
+}
+
+function sanitizeStoredActionCandidate(candidate) {
+  if (!candidate || typeof candidate !== 'object') return candidate;
+  const {
+    requestBodyPreview,
+    requestBody,
+    requestHeaders,
+    responsePreview,
+    responseBodyPreview,
+    responseBody,
+    ...safeCandidate
+  } = candidate;
+  return {
+    ...safeCandidate,
+    url: structuralCapturedUrl(candidate.url),
+    requestEvidence: buildSafeRequestEvidence(candidate),
+    responseHints: mergeStoredActionResponseHints(candidate.responseHints, extractStoredActionResponseHints(candidate.responsePreview)),
+  };
+}
+
+function pickStoredRicherRequestEvidence(primary, secondary) {
+  if (primary.bodyOmitted !== secondary.bodyOmitted) return primary.bodyOmitted ? secondary : primary;
+  if ((primary.bodyKeys?.length || 0) !== (secondary.bodyKeys?.length || 0)) {
+    return (primary.bodyKeys?.length || 0) > (secondary.bodyKeys?.length || 0) ? primary : secondary;
+  }
+  return Number(primary.bodyFullSize || 0) >= Number(secondary.bodyFullSize || 0) ? primary : secondary;
 }
 
 function buildStoredActionEvidenceSummary(history, bestView) {
@@ -5223,6 +6081,17 @@ async function loadExploreState(context = {}) {
 // ─── 来自 Content Script / 测试页面的消息 ──────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'managed_adapter_runtime_request') {
+    getManagedBackgroundRuntime().handleMessage(msg, sender)
+      .then(result => sendResponse({ ok: true, result }))
+      .catch(err => sendResponse({ ok: false, error: toStructuredRuntimeError(err) }));
+    return true;
+  }
+  // The managed document may use only its call-bound helper channel.
+  if (sender?.url?.split('?')[0] === chrome.runtime.getURL(MANAGED_RUNNER_PATH)) {
+    sendResponse({ ok: false, error: { code: 'RUNTIME_CHANNEL_DENIED', message: 'Use the current Adapter runtime context.' } });
+    return;
+  }
   if (msg.type === "wecli_direct_runtime_request") {
     handleDirectRuntimeMessage(msg)
       .then(result => sendResponse({ ok: true, result }))
@@ -5384,6 +6253,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       const resolved = await resolveAdapterForHostname(domain);
+      if (Number.isInteger(msg.tabId)) await injectAdapters(msg.tabId, url, resolved);
       if (resolved.adapterId) {
         const originalDomain = domain;
         domain = resolved.adapterId;
@@ -5711,46 +6581,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === "popup_explore_generate_scaffold") {
-    (async () => {
-      try {
-        const { siteKey } = msg;
-        if (!siteKey) throw new Error('siteKey required');
-        const stored = await chrome.storage.local.get('siteMemories');
-        const memories = stored.siteMemories || {};
-        const memory = memories[siteKey];
-        if (!memory) throw new Error(`未找到 ${siteKey} 的探索记录，请先保存探索结果`);
-
-        // Send to bridge for scaffold generation from site memory
-        const result = await requestBridge(
-          { type: 'generate_adapter_scaffold', siteKey, memory },
-          120000,
-          'Scaffold 生成超时。请检查 AI 配置、网络与 webcli bridge 状态；如果 bridge 早于本次代码变更启动，它仍是旧版，不支持新的 scaffold 语义增强链路',
-        );
-
-        if (!result.ok) {
-          throw new Error(result.error);
-        }
-
-        const refreshResult = await refreshAdapterTabs(siteKey);
-
-        sendResponse({
-          ok: true,
-          siteKey,
-          written: true,
-          ...result.result,
-          refreshedTabs: refreshResult.refreshedTabs,
-          refreshedToolCount: refreshResult.toolCount,
-          filePath: result.result?.files?.adapterIndex || result.result?.adapterDir || '',
-        });
-      } catch (err) {
-        sendResponse({ error: err.message });
-      }
-    })();
-    return true;
-  }
-
-  if (msg.type === 'popup_explore_start_generation') {
+  if (msg.type === 'popup_explore_start_generation' || msg.type === 'popup_explore_generate_scaffold') {
     (async () => {
       try {
         const { siteKey } = msg;
@@ -5761,6 +6592,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const result = await requestBridge(
           {
             type: 'start_generation_run',
+            mode: msg.type === 'popup_explore_generate_scaffold' || msg.mode === 'quick' ? 'quick' : 'agent',
             siteKey,
             memory,
             tabId: Number.isInteger(msg.tabId) ? msg.tabId : null,
@@ -5789,6 +6621,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'popup_explore_resume_generation') {
+    requestBridge({ type: 'resume_generation_run', runId: msg.runId, answer: String(msg.answer || '') }, 30000, '继续验证超时')
+      .then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (msg.type === 'popup_explore_cancel_generation') {
     (async () => {
       const result = await requestBridge(
@@ -5805,14 +6643,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const result = await requestBridge(
-          { type: 'publish_generation_run', runId: msg.runId },
+          { type: 'publish_generation_run', runId: msg.runId, approval: msg.approval },
           60000,
-          '发布智能生成结果超时',
+          '安装生成结果超时',
         );
         if (!result.ok) {
           sendResponse(result);
           return;
         }
+        if (result.run?.status !== 'completed') { sendResponse(result); return; }
         const refreshResult = await refreshAdapterTabs(result.run?.siteKey || msg.siteKey || '');
         sendResponse({
           ...result,
@@ -5953,10 +6792,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // 更新或创建域名数据
         if (!domainData) {
-          toolRegistry.set(domain, { tools: newTools, tabIds: new Set([tabId]) });
+          toolRegistry.set(domain, { tools: newTools, tabIds: new Set([tabId]), hostAliases: new Set([hostname]) });
         } else {
           domainData.tools = newTools;
           domainData.tabIds.add(tabId);
+          // 记录实际注册来源主机（同一 adapter 可能匹配多个 host，如 passport / uat.sso）
+          if (!domainData.hostAliases) domainData.hostAliases = new Set();
+          domainData.hostAliases.add(hostname);
         }
 
         // 记录tab到域名的映射
@@ -5971,6 +6813,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             clearTabDomainRegistration(tabId);
           }
           domainData.tabIds.add(tabId);
+          if (!domainData.hostAliases) domainData.hostAliases = new Set();
+          domainData.hostAliases.add(hostname);
           tabDomainMap.set(tabId, domain);
         }
         console.log(`[WebMCP] Domain ${domain} tools unchanged, skipping notification, tab count: ${domainData.tabIds.size}`);
@@ -5988,6 +6832,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const actionCaptureSession = cdpActionCaptureSessions.get(tabId);
+  if (actionCaptureSession && typeof actionCaptureSession.requestStop === 'function') {
+    actionCaptureSession.errors.push('TARGET_TAB_NOT_FOUND');
+    actionCaptureSession.requestStop('target_tab_closed');
+  }
+  adapterNetworkCaptureSessions.delete(tabId);
   clearTabInjectedAdapters(tabId);
   const domain = tabDomainMap.get(tabId);
   if (domain) {
@@ -6019,6 +6869,87 @@ async function getCachedRegistry() {
   const localAdapters = await loadLocalAdapterManifests();
   if (localAdapters.length === 0) return null;
   return { adapters: localAdapters };
+}
+
+let hostAdapterClient;
+function getHostAdapterClient() {
+  return hostAdapterClient ||= createHostAdapterClient((message, timeout) => bridgeCapabilities.includes('adapter_catalog_v1')
+    ? requestBridge(message, timeout) : Promise.resolve(null));
+}
+
+let hostAdapterRuntime;
+let managedBackgroundRuntime;
+function getManagedBackgroundRuntime() {
+  return managedBackgroundRuntime ||= createManagedBackgroundRuntime({
+    bundle: manifest => getHostAdapterClient().bundle(manifest),
+    exclusive: (task, context) => runDirectToolExclusive(async () => {
+      const previous = directRuntimeContext;
+      directRuntimeContext = context;
+      try { return await task(); } finally { directRuntimeContext = previous; }
+    }),
+    request: async (action, payload, context) => {
+      assertManagedRuntimeRequest(action, payload, context);
+      return handleDirectRuntimeRequest(action, payload);
+    },
+  });
+}
+
+function assertManagedRuntimeRequest(action, payload, context) {
+  const allowed = ['cookies_get', 'download', 'backend_fetch', 'browser_fetch', 'backend_file_read',
+    'backend_xlsx_read', 'backend_file_write', 'main_world_eval', 'storage_get', 'navigate', 'set_file_input'];
+  if (!allowed.includes(action)) throw new Error('Unsupported Adapter runtime helper.');
+  for (const value of [payload.url, payload.host, payload.hostname, payload.domain, payload.storageScope, ...(Array.isArray(payload.domains) ? payload.domains : [])]) {
+    if (!value) continue;
+    let host = String(value).replace(/^\.+/, '').toLowerCase();
+    if (host.includes('://')) {
+      const url = new URL(host);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Unsupported Adapter helper URL.');
+      host = url.hostname;
+    }
+    if (!context.declaredHosts.some((entry) => {
+      const pattern = entry.toLowerCase();
+      return pattern.startsWith('*.') ? host === pattern.slice(2) || host.endsWith(pattern.slice(1)) : host === pattern;
+    })) throw new Error('Adapter helper host is not declared in the current package.');
+  }
+}
+
+async function callManagedBackgroundTool(manifest, command, args, traceID) {
+  const routeDomain = manifest.match[0].replace(/^\*\./, '');
+  const context = { adapterId: manifest.name, routeDomain, tabDomain: routeDomain, traceID,
+    declaredHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])],
+    allowedHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])].map(host => host.replace(/^\*\./, '')) };
+  // The runtime owns the shared queue. Set global legacy helper context only
+  // while its queued task runs, including settlement of in-flight helpers.
+  const runtime = getManagedBackgroundRuntime();
+  return runtime.execute(manifest, command, args, context);
+}
+
+async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let stableUrl = null;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab) throw new Error('Adapter tab was closed.');
+    if (tab.status === 'complete' && stableUrl === tab.url) return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    stableUrl = tab.status === 'complete' ? tab.url : null;
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  throw new Error('Adapter page navigation timed out.');
+}
+
+function getHostAdapterRuntime() {
+  return hostAdapterRuntime ||= createHostAdapterRuntime({
+    bundle: (manifest) => getHostAdapterClient().bundle(manifest),
+    prepare: (tabId) => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', files: ['content/injector.js'] }),
+    clear: async (tabId, name) => {
+      await chrome.tabs.sendMessage(tabId, { type: 'clear_tools', siteKey: name });
+      clearTabDomainRegistration(tabId);
+      tabInjectedAdapters.delete(tabId);
+    },
+    inject: injectV2AdapterWithCode,
+    ready: (tabId, manifest, timeoutMs) => waitForManagedPageReady(tabId, manifest, true, timeoutMs),
+    navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
+  });
 }
 
 // ─── 用户 adapter 目录访问（经 bridge 代理）─────────────────────────────────
@@ -6063,6 +6994,8 @@ async function isUserAdapterInstalled(adapterId) {
  * @returns {Promise<boolean>}
  */
 async function isAnyAdapterInstalled(adapterId) {
+  const selected = await getHostAdapterClient().manifest(adapterId);
+  if (selected.managed) return Boolean(selected.manifest);
   if (await isAdapterFileInstalled(adapterId)) return true;
   return isUserAdapterInstalled(adapterId);
 }
@@ -6073,6 +7006,8 @@ async function isAnyAdapterInstalled(adapterId) {
  * @returns {Promise<object|null>}
  */
 async function loadAdapterManifestAnywhere(adapterId) {
+  const selected = await getHostAdapterClient().manifest(adapterId);
+  if (selected.managed) return selected.manifest;
   const builtin = await loadAdapterManifest(adapterId);
   if (builtin) return builtin;
   const content = await readUserAdapterFile(adapterId, "manifest.json");
@@ -6129,18 +7064,31 @@ async function loadLocalAdapterManifests() {
     try {
       const manifest = JSON.parse(content);
       if (manifest && typeof manifest === "object") {
-        manifests.push(manifest);
+        // v2：name 即安装身份，归一化出 id 供 hostname 路由使用
+        manifests.push(manifest.schema_version === 2 ? { ...manifest, id: manifest.name } : manifest);
       }
     } catch { }
   }
 
-  return manifests;
+  return getHostAdapterClient().merge(manifests);
 }
 
 /**
  * 初始化已安装 adapter ID 列表。
  * 从本地 adapters/index.json 读取（打包时生成），然后逐个验证文件存在。
  */
+async function doRefreshRegistry() {
+  await initInstalledAdapterIds();
+  await loadStaticToolRoutes();
+  const [stored, hostCatalog] = await Promise.all([
+    chrome.storage.local.get("installedAdapterIds"),
+    getHostAdapterClient().catalog().catch(() => null),
+  ]);
+  const managedNames = Array.isArray(hostCatalog?.managedNames) ? hostCatalog.managedNames : [];
+  const legacyIds = Array.isArray(stored.installedAdapterIds) ? stored.installedAdapterIds : [];
+  const adapters = [...new Set([...managedNames, ...legacyIds])].sort();
+  return { count: adapters.length, adapters };
+}
 async function initInstalledAdapterIds() {
   // 始终重新扫描（不依赖缓存，确保刷新后能发现新 adapter）
   const knownIds = [];
@@ -6393,7 +7341,9 @@ function normalizeGenerationPreviewBundle(bundle) {
     if (totalChars > 1_000_000) throw new Error('inline generation preview bundle is too large');
     return { path: scriptPath, source };
   });
-  return { manifest, scripts: normalizedScripts };
+  const packageDigest = bundle.packageDigest || null;
+  if (packageDigest !== null && !/^[a-f0-9]{64}$/.test(packageDigest)) throw new Error('Invalid preview package digest');
+  return { manifest, scripts: normalizedScripts, packageDigest };
 }
 
 async function loadAdapterManifest(adapterId) {
@@ -6408,9 +7358,14 @@ async function loadAdapterManifest(adapterId) {
 }
 
 function adapterMatchesHostname(adapterMeta, hostname) {
+  const matches = (domain) => {
+    const normalized = String(domain).toLowerCase().replace(/^\*\./, '').replace(/\.$/, '');
+    const host = String(hostname).toLowerCase().replace(/\.$/, '');
+    return host === normalized || host.endsWith('.' + normalized);
+  };
   return Array.isArray(adapterMeta?.match)
-    && adapterMeta.match.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
-    && !(adapterMeta.except ?? []).some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+    && adapterMeta.match.some(matches)
+    && !(adapterMeta.except ?? []).some(matches);
 }
 
 async function findAdapterIdByFileProbe(hostname) {
@@ -6447,6 +7402,9 @@ async function resolveAdapterForHostname(hostname) {
   }
 
   const adapterManifest = adapterMeta?.id === adapterId ? adapterMeta : await loadAdapterManifestAnywhere(adapterId);
+  if (adapterManifest?._hostSnapshot && !adapterMatchesHostname(adapterManifest, hostname)) {
+    return { registry, adapterId: null, adapterMeta: null, adapterManifest: null };
+  }
 
   return {
     registry,
@@ -6557,42 +7515,85 @@ function findSensitiveOutputPath(value, pathPrefix = '$', depth = 0) {
 }
 
 function validateGenerationPreviewOutput(output, contract = {}) {
-  const errors = [];
-  let serialized = '';
+  return validateGenerationPreviewOutputV2(output, contract);
+}
+
+const CAPTURE_BOUND_SENSITIVE_PARAM_RE = /api[_-]?key|authorization|cookie|credential|password|passwd|secret|session|ticket|token|csrf|xsrf/i;
+
+function normalizeEndpointPathForCaptureBound(pathname) {
+  return String(pathname || '')
+    .split('/')
+    .map((segment) => (
+      /^\d{3,}$/.test(segment)
+      || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(segment)
+      || /^[A-Za-z]+-\d{2,}$/.test(segment)
+        ? ':id'
+        : segment
+    ))
+    .join('/');
+}
+
+function capturedEndpointFamily(entry) {
   try {
-    serialized = JSON.stringify(output);
-  } catch (error) {
-    errors.push({ code: 'OUTPUT_NOT_SERIALIZABLE', message: error?.message || String(error) });
+    const url = new URL(String(entry?.url || ''));
+    const method = String(entry?.method || 'GET').toUpperCase();
+    const queryKeys = [...new Set([...url.searchParams.keys()])].sort();
+    return `${method} ${normalizeEndpointPathForCaptureBound(url.pathname)}${queryKeys.length ? `?${queryKeys.join(',')}` : ''}`;
+  } catch {
+    return '';
   }
-  const textProbe = typeof output === 'string' ? output : serialized;
-  if (/<html|<!doctype|登录|重新登录|login|sign in/i.test(String(textProbe || '').slice(0, 5000))) {
-    errors.push({ code: 'LOGIN_OR_HTML_RESPONSE', message: '工具返回了登录页或 HTML 页面内容' });
+}
+
+function findCaptureBoundEntry(tabId, endpointFamily, contract = {}) {
+  const candidates = ensureCdpState(tabId).entries.filter((entry) => {
+    if (capturedEndpointFamily(entry) !== String(endpointFamily || '')) return false;
+    const method = String(entry?.method || 'GET').toUpperCase();
+    const probe = `${capturedEndpointFamily(entry)} ${String(entry?.requestBodyPreview || '')}`;
+    if (/(?:^|[^a-z0-9])(approve|book|buy|cancel|commit|create|delete|edit|finish|mutation|pay|publish|reject|reserve|save|submit|update|upload)(?:$|[^a-z0-9])/i.test(probe)) return false;
+    return ['GET', 'HEAD'].includes(method)
+      || (method === 'POST' && /(?:^|[^a-z0-9])(detail|filter|get|list|page|query|read|search|sort|status)(?:$|[^a-z0-9])/i.test(probe));
+  });
+  return selectCompatibleCaptureBoundEntry(candidates, contract);
+}
+
+function coerceCaptureBoundValue(value, propertySchema = {}) {
+  if (value === undefined || value === null) return undefined;
+  if (propertySchema.type === 'number') {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : undefined;
   }
-  const sensitivePath = findSensitiveOutputPath(output);
-  if (sensitivePath) {
-    errors.push({ code: 'SENSITIVE_OUTPUT_DETECTED', message: `返回值包含敏感字段: ${sensitivePath}` });
+  if (propertySchema.type === 'boolean') {
+    if (value === 'true' || value === true) return true;
+    if (value === 'false' || value === false) return false;
+    return undefined;
   }
-  if (contract.kind === 'captured_sample' && contract.capturedShape) {
-    const runtimeShape = describeGenerationOutputShape(output);
-    const capturedShape = contract.capturedShape;
-    const compatible = runtimeShape.rootKind === capturedShape.rootKind
-      || (capturedShape.containsKinds || []).includes(runtimeShape.rootKind)
-      || (runtimeShape.containsKinds || []).includes(capturedShape.rootKind);
-    if (!compatible) {
-      errors.push({
-        code: 'OUTPUT_SHAPE_MISMATCH',
-        message: `返回类型与捕获样本不兼容：捕获为 ${capturedShape.rootKind}，调用结果为 ${runtimeShape.rootKind}`,
-        capturedShape,
-        runtimeShape,
-      });
-    }
+  return String(value);
+}
+
+function buildCaptureBoundArguments(entry, tool, testCase) {
+  const properties = tool?.parameters?.properties && typeof tool.parameters.properties === 'object'
+    ? tool.parameters.properties
+    : {};
+  const keys = [...new Set([
+    ...Object.keys(properties),
+    ...Object.keys(testCase?.arguments || {}),
+    ...(testCase?.capturedRequestKeys || []),
+  ])].filter((key) => key && !CAPTURE_BOUND_SENSITIVE_PARAM_RE.test(key));
+  const url = new URL(String(entry?.url || ''));
+  let body = {};
+  try {
+    const parsed = JSON.parse(String(entry?.requestBodyPreview || '{}'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed;
+  } catch {}
+  const args = { ...(testCase?.arguments || {}) };
+  for (const key of keys) {
+    const raw = url.searchParams.has(key)
+      ? url.searchParams.get(key)
+      : body[key];
+    const coerced = coerceCaptureBoundValue(raw, properties[key] || {});
+    if (coerced !== undefined) args[key] = coerced;
   }
-  return {
-    passed: errors.length === 0,
-    errors,
-    outputKind: Array.isArray(output) ? 'array' : output === null ? 'null' : typeof output,
-    outputPreview: String(serialized || textProbe || '').slice(0, 2000),
-  };
+  return args;
 }
 
 function describeGenerationOutputShape(value) {
@@ -6618,9 +7619,9 @@ function describeGenerationOutputShape(value) {
   };
 }
 
-async function callGenerationPreviewTool(tabId, toolName, args, timeoutMs = 30000) {
+async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs = 30000) {
   const response = await Promise.race([
-    chrome.tabs.sendMessage(tabId, { type: 'call_tool', toolName, args }),
+    chrome.tabs.sendMessage(tabId, { type: 'call_generation_preview', token, toolName, args }),
     new Promise((_, reject) => setTimeout(() => reject(new Error(`tool timed out after ${timeoutMs}ms`)), timeoutMs)),
   ]);
   if (response?.error) throw new Error(response.error);
@@ -6657,27 +7658,20 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
   const supportFiles = normalizeAdapterSupportFiles(previewAdapterId, manifest.support_files);
   const expected = [...new Set((expectedToolNames || []).map(String).filter(Boolean))];
 
+  const token = crypto.randomUUID();
+  let began = false;
   try {
-    clearTabDomainRegistration(targetTab.id);
-    await sendTabMessage(targetTab.id, { type: 'clear_tools', siteKey });
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
-        world: 'ISOLATED',
-        files: ['content/injector.js'],
-      });
-    } catch {}
-    if (inlinePreview) {
-      await injectGenerationPreviewSourcesWithCdp(targetTab.id, inlinePreview.scripts);
-    } else {
-      await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
-        world: 'ISOLATED',
-        files: [...supportFiles, `adapters/${previewAdapterId}/index.js`],
-      });
-    }
-
-    const domainData = await waitForPreviewTools(siteKey, targetTab.id, expected, 3500);
+    await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
+    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null });
+    if (!opened?.ok) throw new Error(opened?.error || 'Unable to begin preview');
+    began = true;
+    const scripts = inlinePreview?.scripts || await Promise.all([...supportFiles, `adapters/${previewAdapterId}/index.js`].map(async file => {
+      const response = await fetch(chrome.runtime.getURL(file));
+      if (!response.ok) throw new Error('Missing preview script');
+      return { path: file, source: await response.text() };
+    }));
+    await injectGenerationPreviewSourcesWithCdp(targetTab.id, scopedGenerationPreviewScripts(scripts, token));
+    const domainData = await chrome.tabs.sendMessage(targetTab.id, { type: 'get_generation_preview', token });
     const registeredTools = (domainData?.tools || []).map((tool) => ({
       name: tool.publicName || tool.name,
       description: tool.description || '',
@@ -6686,7 +7680,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     }));
     const registeredNames = new Set(registeredTools.map((tool) => tool.name));
     const missingTools = expected.filter((name) => !registeredNames.has(name));
-    const tabRegistered = Boolean(domainData?.tabIds?.has(targetTab.id));
+    const tabRegistered = domainData?.ok === true;
     const errors = [];
     if (!tabRegistered) errors.push({ code: 'PREVIEW_NOT_REGISTERED_ON_TAB', message: 'Preview Adapter 未在目标页面完成注册' });
     for (const toolName of missingTools) {
@@ -6697,6 +7691,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       for (const testCase of testCases.slice(0, 5)) {
         const toolName = String(testCase?.toolName || '');
         const risk = testCase?.risk || {};
+        const tool = registeredTools.find((item) => String(item?.name || '') === toolName) || null;
         const preflightErrors = Array.isArray(testCase?.validationErrors) ? testCase.validationErrors : [];
         if (preflightErrors.length > 0) {
           toolResults.push({
@@ -6719,7 +7714,21 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         }
         const startedAt = Date.now();
         try {
-          const output = await callGenerationPreviewTool(targetTab.id, toolName, testCase.arguments || {});
+          let runtimeArguments = testCase.arguments || {};
+          if (testCase?.captureBound) {
+            const capturedEntry = findCaptureBoundEntry(
+              targetTab.id,
+              testCase.captureBoundEndpointFamily,
+              testCase.contract || {},
+            );
+            if (!capturedEntry) {
+              throw Object.assign(new Error('未找到可用于本次 Preview 的 capture-bound 只读请求'), {
+                code: 'CAPTURE_BOUND_ARGUMENTS_NOT_FOUND',
+              });
+            }
+            runtimeArguments = buildCaptureBoundArguments(capturedEntry, tool, testCase);
+          }
+          const output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments);
           const contractResult = validateGenerationPreviewOutput(output, testCase.contract || {});
           toolResults.push({
             toolName,
@@ -6747,9 +7756,12 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     }
     const failedToolResults = toolResults.filter((item) => item.passed === false);
     const attemptedCount = toolResults.filter((item) => item.attempted).length;
-    const warnings = attemptedCount === 0 && failedToolResults.length === 0 && testCases.length > 0
-      ? [{ code: 'NO_SAFE_RUNTIME_CASES', message: '没有具备安全参数的高置信度只读工具，已仅完成注册验证' }]
-      : [];
+    const warnings = [
+      ...(attemptedCount === 0 && failedToolResults.length === 0 && testCases.length > 0
+        ? [{ code: 'NO_SAFE_RUNTIME_CASES', message: '没有具备安全参数的高置信度只读工具，已仅完成注册验证' }]
+        : []),
+      ...toolResults.flatMap((item) => (item.warnings || []).map((warning) => ({ ...warning, toolName: item.toolName }))),
+    ];
     for (const failure of failedToolResults) {
       for (const error of failure.errors || []) errors.push({ ...error, toolName: failure.toolName });
     }
@@ -6773,11 +7785,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       errors,
     };
   } finally {
-    clearTabDomainRegistration(targetTab.id);
-    await sendTabMessage(targetTab.id, { type: 'clear_tools', siteKey });
-    await injectAdapters(targetTab.id, targetTab.url).catch((error) => {
-      console.warn(`[WebMCP] Failed to restore official adapter after preview validation: ${error?.message || error}`);
-    });
+    if (began) await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
   }
 }
 
@@ -6787,21 +7795,45 @@ function shouldHandleTabUrl(url) {
     && !url.startsWith("chrome-extension://");
 }
 
-function sendTabMessage(tabId, message) {
+function sendTabMessage(tabId, message, timeoutMs = 2000) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, message, (response) => {
-      if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      resolve(response || { ok: true });
-    });
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      finish({ ok: false, error: `tab message timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+    try {
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        if (chrome.runtime.lastError) {
+          finish({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        finish(response || { ok: true });
+      });
+    } catch (error) {
+      finish({ ok: false, error: error?.message || String(error) });
+    }
   });
 }
 
 async function refreshAdapterTabs(adapterId) {
   const tabs = await chrome.tabs.query({});
   const matchedTabs = [];
+  const adapterManifest = await loadAdapterManifestAnywhere(adapterId);
+
+  await runDirectToolExclusive(async () => {
+    directAdapterLoadPromises.clear();
+    try {
+      await chrome.offscreen?.closeDocument?.();
+    } catch {
+      // No offscreen document exists yet.
+    }
+  });
 
   for (const tab of tabs) {
     if (!Number.isInteger(tab?.id) || !shouldHandleTabUrl(tab?.url)) continue;
@@ -6813,8 +7845,10 @@ async function refreshAdapterTabs(adapterId) {
       continue;
     }
 
-    const resolved = await resolveAdapterForHostname(hostname);
-    if (resolved.adapterId === adapterId) {
+    const matchesManifest = adapterManifest
+      ? adapterMatchesHostname(adapterManifest, hostname)
+      : hostname === adapterId || hostname.endsWith(`.${adapterId}`);
+    if (matchesManifest) {
       matchedTabs.push(tab);
     }
   }
@@ -6828,12 +7862,16 @@ async function refreshAdapterTabs(adapterId) {
 
   for (const tab of matchedTabs) {
     clearTabDomainRegistration(tab.id);
+    clearTabInjectedAdapters(tab.id);
     clearBadge(tab.id);
     await sendTabMessage(tab.id, { type: "clear_tools", siteKey: adapterId });
+    await chrome.tabs.reload(tab.id);
+    await waitForTabLoad(tab.id, 15000);
   }
 
   for (const tab of matchedTabs) {
-    await injectAdapters(tab.id, tab.url);
+    const refreshedTab = await chrome.tabs.get(tab.id);
+    await injectAdapters(tab.id, refreshedTab.url || tab.url);
   }
 
   const domainData = await waitForDomainTools(adapterId, 2500);
@@ -6860,31 +7898,43 @@ function hasTabInjectedAdapter(tabId, adapterId) {
 }
 function clearTabInjectedAdapters(tabId) {
   tabInjectedAdapters.delete(tabId);
+  hostAdapterRuntime?.invalidate(tabId);
 }
 
 /**
  * 检查给定 URL 的 Tab，注入已安装的 adapter（本地文件存在则注入）。
  */
-async function injectAdapters(tabId, url) {
+async function injectAdapters(tabId, url, selection = null) {
   let hostname;
   try { hostname = new URL(url).hostname; } catch { return; }
 
   console.log(`[WebMCP] injectAdapters called for tab ${tabId}, hostname: ${hostname}`);
 
-  const { adapterId, adapterMeta, adapterManifest } = await resolveAdapterForHostname(hostname);
+  const { adapterId, adapterMeta, adapterManifest } = selection || await resolveAdapterForHostname(hostname);
   console.log(`[WebMCP] Found adapter meta:`, adapterMeta || adapterManifest);
 
   if (!adapterId) {
     clearTabDomainRegistration(tabId);
     clearTabInjectedAdapters(tabId);
+    chrome.tabs.sendMessage(tabId, { type: 'clear_tools' }, () => void chrome.runtime.lastError);
     console.log(`[WebMCP] No adapter found for hostname: ${hostname}`);
     clearBadge(tabId);
     return;
   }
 
   // Guard against path traversal or unexpected characters in the adapter id
-  if (!SAFE_ADAPTER_ID_RE.test(adapterId)) {
+  if (!adapterManifest?._hostSnapshot && !SAFE_ADAPTER_ID_RE.test(adapterId)) {
     console.warn(`[WebMCP] Unsafe adapter id "${adapterId}", skipping`);
+    return;
+  }
+
+  if (adapterManifest?._hostSnapshot) {
+    try {
+      await getHostAdapterRuntime().execute(tabId, adapterManifest, url);
+      setAdapterInjectionStatus(adapterId, { ok: true, tabId });
+    } catch (error) {
+      setAdapterInjectionStatus(adapterId, { ok: false, tabId, error: error?.message || 'Adapter injection failed.' });
+    }
     return;
   }
 
@@ -6920,7 +7970,7 @@ async function injectAdapters(tabId, url) {
     try {
       if (isUser) {
         // 用户 adapter：文件在 ~/.weworker/adapters，无法用 {files} 注入，改为从 bridge 读内容后 {code} 注入
-        await injectUserAdapterWithCode(tabId, adapterId, supportFiles);
+        await injectUserAdapterWithCode(tabId, adapterId, supportFiles, url);
       } else {
         await chrome.scripting.executeScript({
           target: { tabId },
@@ -6951,27 +8001,33 @@ async function injectAdapters(tabId, url) {
  * @param {string} adapterId
  * @param {string[]} supportFiles 已归一化为 adapters/<id>/... 的包内路径（仅用于内置；用户 adapter 需转回相对路径）
  */
-async function injectUserAdapterWithCode(tabId, adapterId, supportFiles) {
-  const relPaths = supportFiles.map((p) => p.replace(`adapters/${adapterId}/`, ""));
-  // 先注入 support files（若有）
+async function injectV2AdapterWithCode(tabId, manifest, expectedUrl, suppliedBundle = null) {
+  const bundle = suppliedBundle || await getHostAdapterClient().bundle(manifest);
+  const { internal, commands } = v2InjectionFiles(bundle.manifest, Object.keys(bundle.files));
+  const scripts = [{ path: 'bootstrap.js', source: buildV2Bootstrap(bundle.manifest) }];
+  for (const relPath of [...internal, ...commands]) {
+    const source = bundle.files[relPath];
+    if (typeof source !== 'string') throw new Error(`Adapter source unavailable: ${relPath}`);
+    scripts.push({ path: relPath, source });
+  }
+  return injectAdapterSources({
+    tabId, scripts, expectedUrl,
+    borrowedSession: cdpAttachedTabs.has(tabId),
+    existingContexts: () => [...getCdpExecutionContextMap(tabId).values()],
+  });
+}
+async function injectUserAdapterWithCode(tabId, adapterId, supportFiles, expectedUrl) {
+  const relPaths = [...supportFiles.map((p) => p.replace(`adapters/${adapterId}/`, '')), 'index.js'];
+  const scripts = [];
   for (const relPath of relPaths) {
-    const code = await readUserAdapterFile(adapterId, relPath);
-    if (code === null) continue;
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "ISOLATED",
-      code,
-    });
+    const source = await readUserAdapterFile(adapterId, relPath);
+    if (source === null) throw new Error(`Adapter source unavailable: ${relPath}`);
+    scripts.push({ path: relPath, source });
   }
-  // 再注入 index.js
-  const indexCode = await readUserAdapterFile(adapterId, "index.js");
-  if (indexCode === null) {
-    throw new Error(`用户 adapter "${adapterId}" 缺少 index.js`);
-  }
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "ISOLATED",
-    code: indexCode,
+  return injectAdapterSources({
+    tabId, scripts, expectedUrl,
+    borrowedSession: cdpAttachedTabs.has(tabId),
+    existingContexts: () => [...getCdpExecutionContextMap(tabId).values()],
   });
 }
 
@@ -6998,6 +8054,12 @@ async function handleWecliRuntimeRequest(msg, sender) {
     case 'main_world_eval':
       traceLog(traceID, `[ServiceWorkerRuntime] main_world_eval`);
       return runRuntimeMainWorldEval(tab, payload);
+    case 'network_capture_start':
+      traceLog(traceID, `[ServiceWorkerRuntime] network_capture_start pattern=${String(payload.pattern || '')}`);
+      return startAdapterNetworkCapture(tab, payload, allowedHosts);
+    case 'network_capture_read':
+      traceLog(traceID, '[ServiceWorkerRuntime] network_capture_read');
+      return readAdapterNetworkCapture(tab, payload);
     case 'download':
       traceLog(traceID, `[ServiceWorkerRuntime] download ${String(payload.url || payload.filename || '')}`);
       return runRuntimeDownload(tab, payload, allowedHosts);
@@ -7007,6 +8069,8 @@ async function handleWecliRuntimeRequest(msg, sender) {
         selector: payload.selector,
         files: payload.files,
       });
+    case 'native_input':
+      return runRuntimeNativeInput(tab.id, payload);
     case 'backend_fetch':
       return runRuntimeBridgeRequest('wecli_backend_fetch', payload, traceID);
     case 'browser_fetch':
@@ -7052,7 +8116,7 @@ async function runRuntimeBridgeRequest(type, payload, traceID = null) {
       ok: result?.result?.ok,
       url: result?.result?.url,
       replay: result?.result?.replay,
-      body: summarizeDirectTraceBody(result?.result?.body, 800),
+      body: payload?.redactBodyInTrace === true ? '[redacted]' : summarizeDirectTraceBody(result?.result?.body, 800),
     })}`);
   } else {
     traceLog(traceID, `[ServiceWorkerRuntime] ${label} <- bridge ok`);
@@ -7352,6 +8416,39 @@ async function runRuntimeMainWorldEval(tab, payload) {
   return { value: result };
 }
 
+// Fixed input operations for editors that require trusted browser events.
+// This does not expose an arbitrary CDP method or caller-selected tab.
+async function runRuntimeNativeInput(tabId, payload = {}) {
+  const keys = { Enter: 13, PageDown: 34, Escape: 27, Backspace: 8, Tab: 9 };
+  if (payload.type === 'text') {
+    if (typeof payload.text !== 'string' || payload.text.length > 20000) throw createRuntimeHelperError('INVALID_ARGS', 'native_input text must be a string of at most 20000 characters');
+  } else if (payload.type === 'key') {
+    if (!Object.hasOwn(keys, payload.key)) throw createRuntimeHelperError('INVALID_ARGS', 'Unsupported native_input key');
+  } else throw createRuntimeHelperError('INVALID_ARGS', 'native_input supports text and key only');
+  const borrowed = cdpAttachedTabs.has(tabId);
+  let owned = false;
+  try {
+    const target = { tabId };
+    if (!borrowed) {
+      await chrome.debugger.attach(target, '1.3');
+      cdpAttachedTabs.add(tabId);
+      owned = true;
+    }
+    if (payload.type === 'text') await chrome.debugger.sendCommand(target, 'Input.insertText', { text: payload.text });
+    else {
+      const fields = { key: payload.key, code: payload.key, windowsVirtualKeyCode: keys[payload.key], nativeVirtualKeyCode: keys[payload.key] };
+      await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', { type: 'keyDown', ...fields, ...(payload.key === 'Enter' ? { text: '\r' } : {}) });
+      await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', { type: 'keyUp', ...fields });
+    }
+    return { success: true };
+  } finally {
+    if (owned) {
+      try { await chrome.debugger.detach({ tabId }); } catch { }
+      cdpAttachedTabs.delete(tabId);
+    }
+  }
+}
+
 function normalizeRuntimeBrowserFetchHeaders(headers = {}) {
   const result = {};
   for (const [name, value] of Object.entries(headers || {})) {
@@ -7423,6 +8520,7 @@ async function runRuntimeBrowserFetch(tab, payload = {}, allowedHosts = directRu
   if (result?.error) {
     throw createRuntimeHelperError('BROWSER_FETCH_ERROR', result.error, { url, tabId: tab.id });
   }
+  if (result?.redirected) assertRuntimeUrlAllowed(tab, result.url, allowedHosts);
   return {
     status: Number(result?.status || 0),
     ok: Boolean(result?.ok),
@@ -7457,9 +8555,10 @@ async function loadRuntimeAllowedHostsForTab(tab) {
   } catch {
     return [];
   }
-  // Page helpers only trust manifests bundled with the extension. A web page
-  // cannot expand its own cross-host authority through message payloads.
-  const manifest = await loadAdapterManifest(tabHost);
+  // Page helpers only trust host-managed/bundled manifests. A web page cannot
+  // expand its own cross-host authority through a runtime message payload.
+  const selected = await getHostAdapterClient().manifest(tabHost);
+  const manifest = selected.managed ? selected.manifest : await loadAdapterManifest(tabHost);
   return normalizeRouteHosts(manifest?.runtime_allowed_hosts);
 }
 

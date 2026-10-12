@@ -1,0 +1,121 @@
+{
+  "schema_version": 2,
+  "name": "36kr.com",
+  "version": "0.1.0",
+  "description": "36氪：热榜（人气/综合/收藏/热门资讯）、最新资讯 RSS、文章搜索与文章正文读取",
+  "match": [
+    "www.36kr.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "36氪",
+    "36kr",
+    "科技新闻",
+    "创投新闻",
+    "热榜"
+  ],
+  "commands": [
+    {
+      "id": "hot",
+      "runtime": "extension",
+      "module": "extension/commands/hot.js",
+      "routeDomain": "www.36kr.com",
+      "description": "读取 36氪热榜：catalog=热门资讯聚合页（默认），renqi=人气榜、zonghe=综合榜、shoucang=收藏榜按当日（UTC+8）日期访问对应官方榜单页。结果仅取经真实 DOM 核验的榜单区域，并轮询等待区域内出现可解析行（容器先渲染、行后填充的动态页不会误判为空）；页面标题须与请求榜单一致；catalog 聚合页每行 board/board_url 标注真实所属分区。不会用其他榜单或全页推荐链接冒充；页面无已验证空态标记，区域持续无条目按渲染/结构异常报错而非空结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回条数（1-50）",
+            "default": 20
+          },
+          "type": {
+            "type": "string",
+            "description": "榜单类型：renqi（人气）、zonghe（综合）、shoucang（收藏）、catalog（热门资讯）",
+            "default": "catalog",
+            "enum": [
+              "renqi",
+              "zonghe",
+              "shoucang",
+              "catalog"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "news",
+      "runtime": "extension",
+      "module": "extension/commands/news.js",
+      "routeDomain": "www.36kr.com",
+      "description": "读取 36氪官方 RSS 最新资讯；summary 为描述的前 120 字符摘要，不代表全文；date 为按标准 pubDate 解析的完整 ISO 8601 时间（缺失/非法为 null）。对 RSS 信封做有界结构校验：根/通道/条目未闭合或结构异常、条目存在但均无可用标题、HTTP 200 返回 HTML，均报解析/接口错误而非空结果；CDATA 内伪标记不算条目也不算错误信封；仅结构合法且确实零条目才报空。",
+      "safety": "read",
+      "execution": {
+        "type": "api",
+        "runtime": "background"
+      },
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回条数（1-50）",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.36kr.com",
+      "description": "在 36氪站内搜索文章；关键词严格 URL 编码。结果仅取结果区域 kr-search-result-list-main 的文章卡片；页面自带无结果提示才报空，区域未就绪/结构异常分别报错。当前卡片不暴露日期，date 为空串。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词（例如 AI、OpenAI）"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回条数（1-50）",
+            "default": 20
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "article",
+      "runtime": "extension",
+      "module": "extension/commands/article.js",
+      "routeDomain": "www.36kr.com",
+      "description": "读取 36氪文章正文：接受纯数字文章 ID 或完整官方文章路径（https://36kr.com 或 www.36kr.com 的 /p/<纯数字>，允许尾斜杠/查询/hash，其余拒绝）。正文按来源语义只截取前 800 字符，并以 body_length/body_truncated/content_status 明确标注截断与完整性；url 规范化为 https://www.36kr.com/p/<id>。不会把摘要或截断文本当成全文。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "36氪文章数字 ID 或完整文章 URL（https://www.36kr.com/p/<id>）"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

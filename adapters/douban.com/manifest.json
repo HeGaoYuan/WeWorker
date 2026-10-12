@@ -1,0 +1,323 @@
+{
+  "schema_version": 2,
+  "name": "douban.com",
+  "version": "0.1.1",
+  "description": "豆瓣电影、图书、音乐搜索与个人标记影评",
+  "match": [
+    "movie.douban.com",
+    "book.douban.com",
+    "search.douban.com",
+    "www.douban.com"
+  ],
+  "runtime_allowed_hosts": [
+    "accounts.douban.com",
+    "img1.doubanio.com",
+    "img2.doubanio.com",
+    "img3.doubanio.com",
+    "img9.doubanio.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "豆瓣",
+    "douban",
+    "电影",
+    "图书",
+    "影评"
+  ],
+  "commands": [
+    {
+      "id": "movie-hot",
+      "runtime": "extension",
+      "module": "extension/commands/movie-hot.js",
+      "routeDomain": "movie.douban.com",
+      "description": "豆瓣电影热门榜单",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回的电影数量",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "book-hot",
+      "runtime": "extension",
+      "module": "extension/commands/book-hot.js",
+      "routeDomain": "book.douban.com",
+      "description": "豆瓣图书热门榜单",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回的图书数量",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "subject",
+      "runtime": "extension",
+      "module": "extension/commands/subject.js",
+      "routeDomain": "movie.douban.com",
+      "description": "获取豆瓣条目详情",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "豆瓣条目 ID"
+          },
+          "type": {
+            "type": "string",
+            "description": "条目类型（movie=电影, book=图书）",
+            "default": "movie",
+            "enum": [
+              "movie",
+              "book"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "search.douban.com",
+      "description": "搜索豆瓣电影、图书或音乐",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "搜索类型（movie=电影, book=图书, music=音乐）",
+            "default": "movie",
+            "enum": [
+              "movie",
+              "book",
+              "music"
+            ]
+          },
+          "keyword": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回结果数量",
+            "default": 20
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "photos",
+      "runtime": "extension",
+      "module": "extension/commands/photos.js",
+      "routeDomain": "movie.douban.com",
+      "description": "获取电影海报/剧照图片列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "电影 subject ID"
+          },
+          "type": {
+            "type": "string",
+            "description": "豆瓣 photos 的 type 参数，默认 Rb（海报）",
+            "default": "Rb"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "最多返回多少张图片",
+            "default": 120
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "marks",
+      "runtime": "extension",
+      "module": "extension/commands/marks.js",
+      "routeDomain": "movie.douban.com",
+      "description": "导出个人观影标记",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "标记类型: collect(看过), wish(想看), do(在看), all(全部)",
+            "default": "collect",
+            "enum": [
+              "collect",
+              "wish",
+              "do",
+              "all"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "description": "导出数量， 0 表示全部",
+            "default": 50
+          },
+          "uid": {
+            "type": "string",
+            "description": "用户ID，不填则使用当前登录账号"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reviews",
+      "runtime": "extension",
+      "module": "extension/commands/reviews.js",
+      "routeDomain": "movie.douban.com",
+      "description": "导出个人影评",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "导出数量",
+            "default": 20
+          },
+          "uid": {
+            "type": "string",
+            "description": "用户ID，不填则使用当前登录账号"
+          },
+          "full": {
+            "type": "boolean",
+            "description": "获取完整影评内容",
+            "default": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "top250",
+      "runtime": "extension",
+      "module": "extension/commands/top250.js",
+      "routeDomain": "movie.douban.com",
+      "description": "豆瓣电影 Top250",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回结果数量",
+            "default": 250
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "movie.douban.com",
+      "description": "Verify current identity",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "movie.douban.com",
+      "description": "Open official login; manual interaction",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "download",
+      "runtime": "extension",
+      "module": "extension/commands/download.js",
+      "routeDomain": "movie.douban.com",
+      "description": "下载电影海报/剧照图片",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "电影 subject ID"
+          },
+          "type": {
+            "type": "string",
+            "default": "Rb",
+            "description": "豆瓣 photos 的 type 参数，默认 Rb（海报）"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 120,
+            "description": "最多下载多少张图片"
+          },
+          "photo-id": {
+            "type": "string",
+            "description": "只下载指定 photo_id 的图片"
+          },
+          "output": {
+            "type": "string",
+            "default": "./douban-downloads",
+            "description": "输出目录"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

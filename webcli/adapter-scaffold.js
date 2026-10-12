@@ -1,13 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAdaptersDir } from './paths.js';
-import { buildApiSourceEvidence } from './generation-harness/source-evidence.js';
+import { bindGenerationPlan } from './generation-harness/plan-binding.js';
+import { draftCommandId, resolveGeneratedPackageRoot, writePackageDraft } from './generation-harness/package-draft.js';
+import {
+    buildApiSourceEvidence,
+    normalizeRequestBodyEvidence,
+    normalizeResponseBodyEvidence
+} from './generation-harness/source-evidence.js';
 const log = {
     info () {}
 };
 const DEFAULT_ADAPTER_ROOT = resolveAdaptersDir();
 const GENERATED_SUBDIR = 'webcli-generated';
+export function writeAdapterPackageFromSiteMemory(memory, options = {}) {
+    return writeScaffoldFromSiteMemory(memory, { ...options, outputRoot: resolveGeneratedPackageRoot(options.outputRoot), packageFormat: 2 });
+}
 export function writeScaffoldFromSiteMemory(memory, options = {}) {
+    memory = sanitizeScaffoldMemory(memory);
+    if (options.plan) memory = bindGenerationPlan(memory, options.plan);
     const adapterRoot = options.outputRoot ?? DEFAULT_ADAPTER_ROOT;
     const adapterDir = path.join(adapterRoot, memory.siteKey);
     const generatedDir = path.join(adapterDir, GENERATED_SUBDIR);
@@ -30,9 +41,6 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const updateManifest = options.updateManifest ?? true;
     const existing = detectExistingAdapterState(adapterDir, manifestPath, indexPath);
     const mode = existing.indexExists || existing.manifestExists ? 'augment_existing_adapter' : 'bootstrap_adapter_draft';
-    fs.mkdirSync(generatedDir, {
-        recursive: true
-    });
     const initialActionCandidates = selectActionCandidates(memory);
     const { primary, secondary } = selectApis(memory, initialActionCandidates);
     const semanticConfig = buildScaffoldSemanticConfig(memory, {
@@ -52,6 +60,7 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const normalizedActionToolNames = collectNormalizedActionToolNames(memory.siteKey, actionCandidates);
     const semanticToolNames = collectSemanticReadToolNames(memory.siteKey, actionCandidates);
     const toolNames = buildGeneratedToolNames(memory.siteKey, {
+        allowedToolNames: memory.generationPlanToolNames,
         hasPrimary: Boolean(primary),
         hasSecondary: Boolean(primary && secondary),
         includeDetailHints,
@@ -75,6 +84,8 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         secondaryToolName,
         detailToolName
     });
+    if (options.packageFormat === 2) return writePackageDraft({ memory, adapterDir, supportBundle, paths: options.adapterPaths });
+    fs.mkdirSync(generatedDir, { recursive: true });
     const retainedGeneratedToolSupportFiles = collectRetainedGeneratedToolSupportFiles(manifestPath, adapterDir, supportBundle.supportFiles);
     const finalToolNames = mergeToolNamesWithRetainedGeneratedTools(memory.siteKey, toolNames, retainedGeneratedToolSupportFiles);
     const finalSupportFiles = mergeSupportFilesWithRetainedGeneratedTools(supportBundle.supportFiles, retainedGeneratedToolSupportFiles, supportFileRel);
@@ -84,8 +95,8 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         supportFiles: finalSupportFiles,
         supportFileRel,
         indexSnippetRel,
-        manifestPath,
-        indexPath,
+        manifestPath: 'manifest.json',
+        indexPath: 'index.js',
         toolNames: finalToolNames,
         primary,
         secondary,
@@ -271,7 +282,7 @@ function readManifestOrDefault(memory, manifestPath, semanticConfig) {
         ],
         homepage_url: memory.canonicalEntryUrl || memory.siteOrigin,
         requires_auth: true,
-        auth_check_tool: undefined,
+        auth_check_tool: memory.siteHost.endsWith('.example.com') ? 'login.example.com.check_login_status' : undefined,
         version: memory.updatedAt,
         author: 'site-memory-scaffold',
         quick_prompts: buildQuickPrompts(memory, semanticConfig),
@@ -522,6 +533,7 @@ function buildSupportBundle(memory, context) {
     const semanticReadCandidate = selectSemanticReadCandidate(context.actionCandidates);
     const actionHintRegistry = buildActionHintRegistry(memory.siteKey, context.actionCandidates, semanticReadCandidate);
     const toolNames = buildGeneratedToolNames(memory.siteKey, {
+        allowedToolNames: memory.generationPlanToolNames,
         hasPrimary: Boolean(context.primary),
         hasSecondary: Boolean(context.primary && context.secondary),
         includeDetailHints: context.includeDetailHints,
@@ -566,6 +578,7 @@ function buildSupportBundle(memory, context) {
             relPath: module.relPath,
             absPath: path.join(context.adapterDir, module.relPath),
             content: module.content,
+            v2Content: module.v2Content,
             toolDefinition: module.toolDefinition || null
         }));
     const sharedRuntime = {
@@ -1167,7 +1180,7 @@ function buildToolModuleRel(siteKey, toolName) {
 function createGeneratedToolModule(siteKey, toolName, functionSource, toolDefinitionSource) {
     const definitionSource = typeof toolDefinitionSource === 'string' ? toolDefinitionSource : toolDefinitionSource.source;
     const toolDefinition = typeof toolDefinitionSource === 'string' ? null : toolDefinitionSource.metadata;
-    return {
+    const output = {
         toolName,
         relPath: buildToolModuleRel(siteKey, toolName),
         toolDefinition,
@@ -1205,14 +1218,22 @@ ${functionSource ? `${functionSource}\n\n` : ''}  registerTool(siteKey, ${defini
 })();
 `
     };
+    if (toolDefinitionSource.handlerSource && toolDefinition) {
+        const local = toolName.slice(siteKey.length + 1);
+        const registration = `  const handler = ${toolDefinitionSource.handlerSource};\n  registerTool(siteKey, { name: ${serializeJsValue(toolName)}, handler });\n  window.__webcliRegisterCommand(${serializeJsValue(draftCommandId(local))}, handler);`;
+        output.v2Content = output.content.replace(`  registerTool(siteKey, ${definitionSource});`, registration);
+    }
+    return output;
 }
 function buildGeneratedToolDefinitionSource(input) {
     const generationSource = input.generationSource || null;
+    const accessSource = input.access ? `\n    access: ${serializeJsValue(input.access)},` : '';
     return {
+        handlerSource: input.handlerSource,
         source: `{
     name: ${serializeJsValue(input.toolName)},
     description: ${serializeJsValue(input.description)},
-    parameters: ${JSON.stringify(input.parameters, null, 6)},
+    parameters: ${JSON.stringify(input.parameters, null, 6)},${accessSource}
     generationSource: ${serializeJsValue(generationSource)},
     handler: ${input.handlerSource},
   }`,
@@ -1220,20 +1241,80 @@ function buildGeneratedToolDefinitionSource(input) {
             name: input.toolName,
             description: input.description,
             parameters: input.parameters,
+            ...(input.access ? { access: input.access } : {}),
             generationSource
         }
     };
 }
 
+function structuralScaffoldUrl(input) {
+    try {
+        const url = new URL(String(input || ''));
+        for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, ':value');
+        url.hash = '';
+        url.username = '';
+        url.password = '';
+        return url.toString();
+    } catch {
+        return safeString(input).split('#', 1)[0];
+    }
+}
+
+function sanitizeScaffoldCandidate(candidate) {
+    if (!candidate || typeof candidate !== 'object') return candidate;
+    const requestEvidence = normalizeRequestBodyEvidence(candidate);
+    const responseEvidence = normalizeResponseBodyEvidence(candidate);
+    const responseHints = normalizeKnowledgeResponseHints(candidate.responseHints)
+        || summarizeKnowledgeResponsePreview(candidate.responsePreview ?? candidate.responseBodyPreview ?? candidate.responseBody);
+    const {
+        requestBodyPreview,
+        requestBody,
+        requestHeaders,
+        responsePreview,
+        responseBodyPreview,
+        responseBody,
+        ...safeCandidate
+    } = candidate;
+    return {
+        ...safeCandidate,
+        url: structuralScaffoldUrl(candidate.url),
+        requestEvidence,
+        responseEvidence,
+        responseHints,
+        sourceEvidence: buildApiSourceEvidence({ ...candidate, requestEvidence }, {
+            sourceKind: candidate?.actionName ? 'action_capture' : 'passive_list'
+        })
+    };
+}
+
+function sanitizeScaffoldMemory(memory) {
+    return {
+        ...(memory || {}),
+        siteOrigin: structuralScaffoldUrl(memory?.siteOrigin),
+        canonicalEntryUrl: structuralScaffoldUrl(memory?.canonicalEntryUrl),
+        canonicalResultUrl: structuralScaffoldUrl(memory?.canonicalResultUrl),
+        lastSourceUrl: structuralScaffoldUrl(memory?.lastSourceUrl),
+        verdictReason: structuralizeUrlsInText(memory?.verdictReason),
+        reason: structuralizeUrlsInText(memory?.reason),
+        listApiCandidates: (Array.isArray(memory?.listApiCandidates) ? memory.listApiCandidates : []).map(sanitizeScaffoldCandidate),
+        actionApiCandidates: (Array.isArray(memory?.actionApiCandidates) ? memory.actionApiCandidates : []).map(sanitizeScaffoldCandidate),
+        actionCaptureHistory: (Array.isArray(memory?.actionCaptureHistory) ? memory.actionCaptureHistory : []).map(sanitizeScaffoldCandidate)
+    };
+}
+
+function structuralizeUrlsInText(value) {
+    return safeString(value).replace(/https?:\/\/[^\s，。；）)]+/g, (url)=>structuralScaffoldUrl(url));
+}
+
 function resolveGenerationSource(candidate, sourceKind) {
-    return candidate?.sourceEvidence?.version === 'api-source-v1'
+    return /^api-source-v\d+$/.test(String(candidate?.sourceEvidence?.version || ''))
         ? candidate.sourceEvidence
         : buildApiSourceEvidence(candidate, { sourceKind });
 }
 function buildRequestInvokeLine(input) {
     const method = (input.method || 'POST').toUpperCase();
     if (input.transport === 'get_query') {
-        return `    return fetchGet(${serializeJsValue(input.url)}, ${input.payloadRef});`;
+        return `    return fetchGet(${serializeJsValue(stripRequestUrlQuery(input.url))}, ${input.payloadRef});`;
     }
     if (input.transport === 'post_form') {
         return `    return postForm(${serializeJsValue(input.url)}, ${input.payloadRef});`;
@@ -1273,7 +1354,14 @@ function buildListToolModule(input) {
     const { siteKey, candidate, toolName, description, parameterDescriptions = {}, parameterUiHints = {} } = input;
     const functionName = `run_${toSafeIdentifier(toolName)}`;
     const { defaults, transport } = deriveCandidateDefaults(candidate);
-    const schema = applySemanticParameterUiHints(buildCapturedFieldsSchema(defaults, '列表请求中的默认字段', parameterDescriptions), parameterUiHints);
+    const parameterNames = [
+        ...Object.keys(defaults),
+        ...((candidate.apiEvidence?.queryKeys) || []),
+        ...((candidate.apiEvidence?.requestShape?.keys) || []),
+        ...((candidate.sourceEvidence?.queryKeys) || []),
+        ...((candidate.sourceEvidence?.bodyKeys) || [])
+    ].filter((key)=>!isSensitiveKnowledgeKey(key));
+    const schema = applySemanticParameterUiHints(buildCapturedFieldsSchema(defaults, '列表请求中的默认字段', parameterDescriptions, parameterNames), parameterUiHints);
     const invokeLine = buildRequestInvokeLine({
         url: candidate.url,
         method: candidate.method,
@@ -1301,72 +1389,43 @@ function buildActionToolModules(siteKey, candidate, semanticConfig) {
     const sourceToolName = candidate.sourceToolName || candidate.toolName;
     const parameterDescriptions = semanticConfig?.getToolOverride(sourceToolName)?.parameterDescriptions || {};
     const parameterUiHints = semanticConfig?.getToolOverride(sourceToolName)?.parameterUiHints || {};
-    const baseSchema = transport === 'post_json'
-        ? buildActionToolSchema(parseActionRequestPreview(candidate.requestBodyPreview || ''), parameterDescriptions)
-        : buildCapturedFieldsSchema(defaults, '动作请求中的默认字段', parameterDescriptions);
     const isSideEffectingAction = transport !== 'get_query';
-    const sensitiveFieldConfigs = isSideEffectingAction ? buildSensitiveActionFieldConfigs(Object.keys(defaults)) : [];
-    const schema = markActionSchemaForConfirmation(applySemanticParameterUiHints(isSideEffectingAction ? buildConfirmedActionToolSchema(baseSchema) : baseSchema, parameterUiHints), candidate, isSideEffectingAction);
+    const baseSchema = isSideEffectingAction
+        ? {
+            type: 'object',
+            properties: {},
+            required: [],
+            'x-webcli-agent-authored': false
+        }
+        : buildCapturedFieldsSchema(defaults, '查询参数', parameterDescriptions, candidate?.sourceEvidence?.queryKeys || []);
+    const schema = markActionSchemaForConfirmation(applySemanticParameterUiHints(baseSchema, parameterUiHints), candidate, isSideEffectingAction);
     const handlerName = `run_${toSafeIdentifier(candidate.toolName)}`;
-    const invokeLine = buildRequestInvokeLine({
-        url: candidate.url,
-        method: candidate.method,
-        transport,
-        payloadRef: 'payload'
-    });
     const description = semanticConfig?.getDescription(sourceToolName, buildActionToolDescription(candidate, transport)) || buildActionToolDescription(candidate, transport);
     const functionSource = isSideEffectingAction ? `  async function ${handlerName}(args = {}) {
     const {
       __confirmed = false,
-      ...actionArgs
+      ...semanticArgs
     } = args || {};
-    const defaultPayload = ${serializeJsValue(defaults)};
-    const normalizedActionArgs = normalizeArgsWithDefaults(actionArgs, defaultPayload);
-    const payload = {
-      ...defaultPayload,
-      ...normalizedActionArgs,
-    };
-    const sensitiveFieldConfigs = ${serializeJsValue(sensitiveFieldConfigs)};
-    for (const config of sensitiveFieldConfigs) {
-      const fieldName = config?.fieldName || '';
-      if (fieldName && !hasOwnKey(normalizedActionArgs, fieldName)) {
-        delete payload[fieldName];
-      }
-    }
-    const missingSensitiveFields = sensitiveFieldConfigs.map((config) => config?.fieldName || '').filter((fieldName) => fieldName && !hasMeaningfulValue(payload[fieldName]));
-    const warnings = [];
-    if (missingSensitiveFields.length > 0) warnings.push('missing_sensitive_fields');
     if (!Boolean(__confirmed)) {
-      warnings.push('missing_confirmation');
-    }
-    if (warnings.length > 0) {
       return {
         ok: false,
         blocked: true,
         requiresConfirmation: true,
         actionToolName: ${serializeJsValue(candidate.toolName)},
-        payload,
-        warnings: Array.from(new Set(warnings)),
-        missingFields: missingSensitiveFields,
+        semanticArgs,
+        warnings: ['missing_confirmation'],
         confirmationHint: '该工具会触发真实业务动作，请由当前客户端或 Agent 宿主确认参数后再提交。',
       };
     }
-
-${invokeLine}
+    throw new Error('AGENT_AUTHORED_WRITE_REQUIRED');
   }` : `  async function ${handlerName}(args = {}) {
-    const defaultPayload = ${serializeJsValue(defaults)};
-    const normalizedActionArgs = normalizeArgsWithDefaults(args || {}, defaultPayload);
-    const payload = {
-      ...defaultPayload,
-      ...normalizedActionArgs,
-    };
-
-${invokeLine}
+    return fetchGet(${serializeJsValue(stripRequestUrlQuery(candidate.url))}, args || {});
   }`;
     modules.push(createGeneratedToolModule(siteKey, candidate.toolName, functionSource, buildGeneratedToolDefinitionSource({
         toolName: candidate.toolName,
         description,
         parameters: schema,
+        ...(isSideEffectingAction ? { access: 'write' } : {}),
         generationSource: resolveGenerationSource(candidate, 'action_capture'),
         handlerSource: `(args) => ${handlerName}(args || {})`
     })));
@@ -1749,7 +1808,8 @@ function normalizeExistingKnowledgeApi(api) {
         sourceActions: uniqueKnowledgeStrings(api.sourceActions || []),
         backingTools: uniqueKnowledgeStrings(api.backingTools || []),
         queryKeys: uniqueKnowledgeStrings(api.queryKeys || []).sort(),
-        examples: dedupeKnowledgeExamples(api.examples || []).slice(0, 3),
+        responseEvidence: normalizeResponseBodyEvidence({ responseEvidence: api.responseEvidence }),
+        examples: [],
         seenCount: Math.max(1, Number(api.seenCount || 1))
     };
 }
@@ -1765,9 +1825,11 @@ function normalizeKnowledgeApiCandidate(candidate, source, extra = {}) {
             .filter((key)=>!isSensitiveKnowledgeKey(key))
             .sort((left, right)=>left.localeCompare(right))
         : [];
-    const requestShape = summarizeKnowledgePayloadShape(candidate?.requestBodyPreview || candidate?.requestBody);
+    const requestEvidence = normalizeRequestBodyEvidence(candidate);
+    const requestShape = summarizeKnowledgeRequestEvidence(requestEvidence);
+    const responseEvidence = normalizeResponseBodyEvidence(candidate);
     const responseHints = normalizeKnowledgeResponseHints(candidate?.responseHints);
-    const responseShape = responseHints || summarizeKnowledgeResponsePreview(candidate?.responsePreview);
+    const responseShape = responseHints || summarizeKnowledgeResponseEvidence(responseEvidence);
     const id = buildKnowledgeApiFingerprint({
         method,
         pathName,
@@ -1775,7 +1837,6 @@ function normalizeKnowledgeApiCandidate(candidate, source, extra = {}) {
         requestShape
     });
     const requestSample = summarizeKnowledgeRequestSample(candidate, parsed, requestShape);
-    const responseSample = summarizeKnowledgeResponseSample(candidate?.responsePreview, responseShape);
     const purpose = safeString(candidate?.aiPurpose) || safeString(candidate?.purpose) || inferKnowledgeApiPurpose(candidate, extra);
     return {
         id,
@@ -1789,13 +1850,12 @@ function normalizeKnowledgeApiCandidate(candidate, source, extra = {}) {
         backingTools: [extra.toolName || candidate?.toolName].map(safeString).filter(Boolean),
         queryKeys,
         requestShape,
+        responseEvidence,
         responseShape,
         examples: [{
             source,
             request: requestSample,
-            responseSample,
-            capturedAt: safeString(candidate?.capturedAt)
-        }].filter((item)=>Object.keys(item.request || {}).length > 0 || item.responseSample),
+        }].filter((item)=>Object.keys(item.request || {}).length > 0),
         seenCount: 1,
         firstSeenAt: safeString(candidate?.capturedAt),
         lastSeenAt: safeString(candidate?.capturedAt),
@@ -1814,6 +1874,7 @@ function mergeKnowledgeApi(left, right) {
         backingTools: uniqueKnowledgeStrings([...(left.backingTools || []), ...(right.backingTools || [])]).slice(0, 12),
         queryKeys: uniqueKnowledgeStrings([...(left.queryKeys || []), ...(right.queryKeys || [])]).sort(),
         requestShape: mergeKnowledgeShape(left.requestShape, right.requestShape),
+        responseEvidence: right.responseEvidence || left.responseEvidence,
         responseShape: mergeKnowledgeResponseShape(left.responseShape, right.responseShape),
         examples,
         seenCount: Number(left.seenCount || 0) + Number(right.seenCount || 0),
@@ -1892,38 +1953,46 @@ function summarizeKnowledgeRequestSample(candidate, parsedUrl, requestShape) {
     const result = {};
     if (parsedUrl) {
         for (const key of [...parsedUrl.searchParams.keys()].slice(0, 20)) {
-            result[key] = isSensitiveKnowledgeKey(key)
-                ? '[REDACTED]'
-                : truncateKnowledgeText(parsedUrl.searchParams.get(key) || '', 160);
+            if (!isSensitiveKnowledgeKey(key)) result[key] = ':value';
         }
     }
-    const body = parseKnowledgeJsonLike(candidate?.requestBodyPreview || candidate?.requestBody);
-    if (body && typeof body === 'object' && !Array.isArray(body)) {
-        for (const [key, value] of Object.entries(body).slice(0, 30)) {
-            result[key] = isSensitiveKnowledgeKey(key) ? '[REDACTED]' : sanitizeKnowledgeSampleValue(value);
-        }
-    } else if (requestShape?.kind === 'form') {
-        const text = safeString(candidate?.requestBodyPreview || candidate?.requestBody);
-        for (const key of requestShape.keys || []) {
-            const match = text.match(new RegExp(`${escapeKnowledgeRegex(key)}=([^&\\s]+)`));
-            if (match) result[key] = truncateKnowledgeText(decodeURIComponent(match[1]), 160);
-        }
+    for (const key of (requestShape?.keys || []).slice(0, 30)) {
+        result[key] = `<${requestShape?.fieldTypes?.[key] || 'value'}>`;
     }
     return result;
 }
 
-function summarizeKnowledgeResponseSample(preview, responseShape) {
-    const parsed = parseKnowledgeJsonLike(preview);
-    if (!parsed) return truncateKnowledgeText(preview, 800);
-    const listPath = responseShape?.listPath || '';
-    const list = listPath ? getKnowledgePath(parsed, listPath) : null;
-    if (Array.isArray(list) && list.length > 0 && list[0] && typeof list[0] === 'object') {
-        return sanitizeKnowledgeObjectSample(list[0], 25);
+function summarizeKnowledgeResponseEvidence(evidence) {
+    const shape = evidence?.bodyShape;
+    if (!shape || shape.type !== 'object') return null;
+    const topLevelKeys = Object.keys(shape.properties || {}).slice(0, 40);
+    const firstArray = findKnowledgeArrayShape(shape, '');
+    const itemKeys = firstArray?.itemShape?.type === 'object'
+        ? Object.keys(firstArray.itemShape.properties || {}).slice(0, 80)
+        : [];
+    return {
+        topLevelKeys,
+        listPath: firstArray?.path || '',
+        itemKeys,
+        idLikeKeys: pickKnowledgeKeysByPattern(itemKeys, /(id|Id|ID)$/),
+        displayLikeKeys: pickKnowledgeKeysByPattern(itemKeys, /(name|title|code|text|label|display|roomcode|roomCode)$/),
+        availabilityLikeKeys: pickKnowledgeKeysByPattern(itemKeys, /(available|availability|status|meetingInfoMaps|calendar|slots?)/i),
+        preferredIdKey: pickKnowledgePreferredKey(itemKeys, ['id', 'roomId', 'resourceId']),
+        preferredDisplayKey: pickKnowledgePreferredKey(itemKeys, ['roomcode', 'roomCode', 'name', 'title', 'display']),
+        preferredAvailabilityKey: pickKnowledgePreferredKey(itemKeys, ['meetingInfoMaps', 'available', 'availability', 'status'])
+    };
+}
+
+function findKnowledgeArrayShape(shape, prefix) {
+    if (!shape || typeof shape !== 'object') return null;
+    if (shape.type === 'array') return { path: prefix, itemShape: shape.items };
+    if (shape.type !== 'object') return null;
+    for (const [key, nested] of Object.entries(shape.properties || {})) {
+        const pathName = prefix ? `${prefix}.${key}` : key;
+        const found = findKnowledgeArrayShape(nested, pathName);
+        if (found) return found;
     }
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return sanitizeKnowledgeObjectSample(parsed, 25);
-    }
-    return truncateKnowledgeText(JSON.stringify(parsed), 800);
+    return null;
 }
 
 function buildKnowledgeTools(toolDefinitions, actionHints) {
@@ -1946,7 +2015,7 @@ function summarizeKnowledgeToolParameters(schema) {
         required: required.has(name),
         description: truncateKnowledgeText(property?.description || '', 220),
         enum: Array.isArray(property?.enum) ? property.enum.map((item)=>String(item)).slice(0, 30) : undefined,
-        default: Object.prototype.hasOwnProperty.call(property || {}, 'default') ? sanitizeKnowledgeSampleValue(property.default) : undefined
+        hasDefault: Object.prototype.hasOwnProperty.call(property || {}, 'default') || undefined
     }));
 }
 
@@ -1980,11 +2049,15 @@ function inferKnowledgeBusinessMappings(memory, toolDefinitions) {
 }
 
 function inferKnowledgeAliases(field, schema, memory) {
-    const text = `${schema?.description || ''}\n${memory?.verdictReason || ''}\n${memory?.reason || ''}`;
     const aliases = {};
-    if (field === 'workplace' && schema.enum?.includes('总部大厦')) {
-        aliases['总部'] = '总部大厦';
-        aliases['总部办公区'] = '总部大厦';
+    if (field === 'workplace') {
+        for (const item of schema.enum || []) {
+            const canonical = String(item).trim();
+            const shortName = canonical.replace(/(?:研发中心|办公区|园区|中心|大厦|职场)$/u, '').trim();
+            if (shortName && shortName !== canonical && aliases[shortName] === undefined) {
+                aliases[shortName] = canonical;
+            }
+        }
     }
     return aliases;
 }
@@ -2276,22 +2349,6 @@ function getKnowledgePath(value, dotPath) {
     return current;
 }
 
-function sanitizeKnowledgeSampleValue(value) {
-    if (value === null || value === undefined) return value;
-    if (typeof value === 'string') return redactKnowledgeString(truncateKnowledgeText(value, 220));
-    if (typeof value === 'number' || typeof value === 'boolean') return value;
-    if (Array.isArray(value)) return value.slice(0, 5).map(sanitizeKnowledgeSampleValue);
-    if (typeof value === 'object') return sanitizeKnowledgeObjectSample(value, 12);
-    return String(value);
-}
-
-function sanitizeKnowledgeObjectSample(object, limit = 25) {
-    return Object.fromEntries(Object.entries(object || {}).slice(0, limit).map(([key, value])=>[
-            key,
-            isSensitiveKnowledgeKey(key) ? '[REDACTED]' : sanitizeKnowledgeSampleValue(value)
-        ]));
-}
-
 function isSensitiveKnowledgeKey(key) {
     return /token|access.?token|authorization|cookie|session|ticket|password|passwd|secret|credential|key/i.test(safeString(key));
 }
@@ -2355,7 +2412,6 @@ function dedupeKnowledgeExamples(examples) {
     for (const example of examples || []) {
         const key = JSON.stringify({
             request: example.request || {},
-            responseSample: example.responseSample || ''
         }).slice(0, 500);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -2470,7 +2526,9 @@ function buildGeneratedToolNames(siteKey, context) {
         names.push(name);
     }
     if (context.includeDetailHints) names.push(context.detailToolName || `${siteKey}.list_detail_candidates`);
-    return names;
+    return context.allowedToolNames
+        ? names.filter((name) => name === `${siteKey}.check_login_status` || context.allowedToolNames.includes(name))
+        : names;
 }
 function buildActionHintRegistry(siteKey, actionCandidates, semanticReadCandidate) {
     const entries = actionCandidates.filter((candidate)=>candidate.toolName).map((candidate)=>[
@@ -2585,7 +2643,11 @@ function canBuildPrepareActionTool(siteKey, candidate, semanticReadCandidate) {
     const planningHints = buildActionPlanningHints(siteKey, candidate, semanticReadCandidate);
     return typeof planningHints?.resourceIdParameter === 'string' && Boolean(planningHints.resourceIdParameter) && Array.isArray(planningHints.resourceLookupToolNames) && planningHints.resourceLookupToolNames.length > 0;
 }
-function selectApis(memory, actionCandidates) {
+export function selectApis(memory, actionCandidates = []) {
+    if (memory.generationPlanBound) return {
+        primary: memory.listApiCandidates[0] || null,
+        secondary: memory.listApiCandidates[1] || null
+    };
     const sorted = collectRankedListCandidates(memory, actionCandidates.length > 0);
     return {
         primary: sorted[0] || null,
@@ -2645,19 +2707,33 @@ function extractVerdictApiCandidates(verdictReason) {
     return candidates;
 }
 function scoreListCandidate(candidate) {
-    const probe = `${candidate.url} ${candidate.requestBodyPreview || ''}`.toLowerCase();
+    const probe = `${candidateUrlSignals(candidate.url)} ${candidate.requestBodyPreview || ''}`.toLowerCase();
     let score = 0;
     if (/get[a-z0-9]*list|\/list\b|search|query|getrooms|rooms|availability|calendar|schedule/.test(probe)) score += 3;
     if (/room|rooms|meeting|calendar|availability|schedule/.test(probe)) score += 2;
     if (hasPagingSignals(candidate)) score += 2;
     if (safeString(candidate.requestBodyPreview)) score += 1;
+    const method = safeString(candidate.method || 'GET').toUpperCase();
+    const responseContentType = safeString(candidate.responseContentType).toLowerCase();
+    const responseEvidence = normalizeResponseBodyEvidence(candidate);
+    if (method === 'GET' && (/(?:application|text)\/json/.test(responseContentType) || responseEvidence.bodyKind === 'json')) {
+        score += 2;
+    }
     if ((candidate.sourceSteps || []).some((step)=>step && step !== 'final_network')) score += 1;
     if ((candidate.sourceSteps || []).includes('verdict_reason')) score += 2;
-    if (/violation|audit|log|record|records|history|stat|report/.test(probe)) score -= 3;
+    if (/violation|audit|log|record|records|history|statistics|report/.test(probe)) score -= 3;
     if ((candidate.sourceSteps || []).every((step)=>step === 'final_network') && !safeString(candidate.requestBodyPreview) && !hasQueryParams(candidate.url)) {
         score -= 1;
     }
     return score;
+}
+function candidateUrlSignals(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl);
+        return `${parsed.pathname} ${parsed.search}`;
+    } catch {
+        return rawUrl;
+    }
 }
 function selectActionCandidates(memory) {
     const candidates = Array.isArray(memory.actionApiCandidates) ? [
@@ -2686,10 +2762,11 @@ function actionCandidateScore(candidate) {
     else if (candidate.primarySelection === 'ai' || candidate.aiIsPrimary) score += 30;
     if (candidate.intercepted) score += 4;
     if ((candidate.method || '').toUpperCase() !== 'GET') score += 3;
-    if (safeString(candidate.requestBodyPreview)) score += 1;
-    if (safeString(candidate.responsePreview)) score += 1;
+    const requestEvidence = normalizeRequestBodyEvidence(candidate);
+    if (!requestEvidence.bodyOmitted && requestEvidence.bodyKind !== 'none') score += 1;
+    if (normalizeResponseBodyEvidence(candidate).bodyKind !== 'none') score += 1;
     if ((candidate.responseContentType || '').toLowerCase().includes('json')) score += 1;
-    score += Math.min(countCandidatePreviewFields(candidate.requestBodyPreview), 8);
+    score += Math.min(Array.isArray(requestEvidence.bodyKeys) ? requestEvidence.bodyKeys.length : 0, 8);
     score += responseHintScore(candidate.responseHints);
     return score;
 }
@@ -2706,25 +2783,6 @@ function responseHintScore(hints) {
     if (hints.preferredAvailabilityKey) score += 1;
     return score;
 }
-function countCandidatePreviewFields(preview) {
-    const normalized = safeString(preview);
-    if (!normalized) return 0;
-    if (normalized.startsWith('{') || normalized.startsWith('[')) {
-        try {
-            const parsed = JSON.parse(normalized);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                return Object.keys(parsed).length;
-            }
-        } catch  {
-            return 0;
-        }
-    }
-    return [
-        ...new Set([
-            ...normalized.matchAll(/([A-Za-z0-9_]+)=/g)
-        ].map((match)=>match[1]).filter(Boolean))
-    ].length;
-}
 function hasUsefulDetailHints(memory) {
     return Boolean(memory.detailHints.bestCandidateHref || memory.detailHints.bestCandidateText || memory.detailHints.networkDetailCandidates.length > 0);
 }
@@ -2734,21 +2792,34 @@ function hasPagingSignals(candidate) {
 }
 function deriveCandidateDefaults(candidate) {
     const transport = inferCandidateTransport(candidate);
-    const queryDefaults = parseUrlQueryDefaults(candidate.url);
-    const bodyDefaults = parseCandidateBodyDefaults(candidate.requestBodyPreview || '');
     return {
-        defaults: {
-            ...queryDefaults,
-            ...bodyDefaults
-        },
+        defaults: {},
         transport
+    };
+}
+
+function summarizeKnowledgeRequestEvidence(evidence) {
+    if (!evidence || evidence.bodyKind === 'none') return { kind: 'empty', keys: [] };
+    if (evidence.bodyOmitted || evidence.bodyKind === 'opaque') {
+        return { kind: 'opaque', keys: [], bodyTruncated: Boolean(evidence.bodyTruncated), bodyOmitted: true };
+    }
+    const properties = evidence.bodyShape?.type === 'object' && evidence.bodyShape.properties && typeof evidence.bodyShape.properties === 'object'
+        ? evidence.bodyShape.properties
+        : {};
+    const keys = Object.keys(properties).filter((key)=>!isSensitiveKnowledgeKey(key)).sort().slice(0, 80);
+    return {
+        kind: evidence.bodyKind === 'form' ? 'form' : evidence.bodyShape?.type || evidence.bodyKind,
+        keys,
+        fieldTypes: Object.fromEntries(keys.map((key)=>[key, safeString(properties[key]?.type) || 'unknown'])),
+        bodyTruncated: Boolean(evidence.bodyTruncated),
+        bodyOmitted: Boolean(evidence.bodyOmitted)
     };
 }
 function inferCandidateTransport(candidate) {
     const method = (candidate.method || 'GET').toUpperCase();
     if (method === 'GET') return 'get_query';
-    const preview = safeString(candidate.requestBodyPreview);
-    if (preview.startsWith('{') || preview.startsWith('[')) return 'post_json';
+    const evidence = normalizeRequestBodyEvidence(candidate);
+    if (evidence.bodyKind === 'json') return 'post_json';
     return 'post_form';
 }
 function buildSensitiveActionFieldConfigs(parameterNames) {
@@ -2772,21 +2843,16 @@ function buildSensitiveActionFieldConfigs(parameterNames) {
 }
 function deriveActionCandidateDefaults(candidate) {
     const transport = inferActionCandidateTransport(candidate);
-    const queryDefaults = parseUrlQueryDefaults(candidate.url);
-    const bodyDefaults = parseCandidateBodyDefaults(candidate.requestBodyPreview || '');
     return {
-        defaults: transport === 'get_query' ? {
-            ...queryDefaults,
-            ...bodyDefaults
-        } : bodyDefaults,
+        defaults: {},
         transport
     };
 }
 function inferActionCandidateTransport(candidate) {
     const method = (candidate.method || 'GET').toUpperCase();
     if (method === 'GET') return 'get_query';
-    const preview = safeString(candidate.requestBodyPreview);
-    if (preview.startsWith('{') || preview.startsWith('[')) return 'post_json';
+    const evidence = normalizeRequestBodyEvidence(candidate);
+    if (evidence.bodyKind === 'json') return 'post_json';
     return 'post_form';
 }
 function parseCandidateBodyDefaults(preview) {
@@ -2795,8 +2861,10 @@ function parseCandidateBodyDefaults(preview) {
     if (normalized.startsWith('{') || normalized.startsWith('[')) {
         try {
             const parsed = JSON.parse(normalized);
-            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-        } catch  {
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? Object.fromEntries(Object.entries(parsed).filter(([, value])=>!isStructuralPlaceholderValue(value)))
+                : {};
+        } catch {
             return {};
         }
     }
@@ -2807,6 +2875,7 @@ function parseUrlQueryDefaults(input) {
         const parsed = new URL(input);
         const result = {};
         for (const [key, value] of parsed.searchParams.entries()){
+            if (isSensitiveKnowledgeKey(key) || isStructuralPlaceholderValue(value)) continue;
             result[key] = coerceStringValue(value);
         }
         return result;
@@ -2814,10 +2883,21 @@ function parseUrlQueryDefaults(input) {
         return {};
     }
 }
+function stripRequestUrlQuery(input) {
+    try {
+        const parsed = new URL(input);
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString();
+    } catch  {
+        return safeString(input).split(/[?#]/, 1)[0];
+    }
+}
 function parseFormBodyPreview(preview) {
     const params = new URLSearchParams(preview || '');
     const result = {};
     for (const [key, value] of params.entries()){
+        if (isStructuralPlaceholderValue(value)) continue;
         result[key] = coerceStringValue(value);
     }
     return result;
@@ -2828,19 +2908,23 @@ function parseActionRequestPreview(preview) {
     try {
         return JSON.parse(normalized);
     } catch  {
+        if (normalized.startsWith('{') || normalized.startsWith('[') || /\[truncated\]/i.test(normalized)) return {};
         const form = parseFormBodyPreview(normalized);
-        return Object.keys(form).length > 0 ? form : {
-            rawBody: normalized
-        };
+        return Object.keys(form).length > 0 ? form : {};
     }
 }
-function buildCapturedFieldsSchema(defaults, descriptionPrefix, parameterDescriptions = {}) {
+function isStructuralPlaceholderValue(value) {
+    return typeof value === 'string' && /^(?::value|<value>|\[redacted\])$/i.test(value.trim());
+}
+function buildCapturedFieldsSchema(defaults, descriptionPrefix, parameterDescriptions = {}, parameterNames = []) {
     const properties = {};
-    for (const [key, value] of Object.entries(defaults)){
+    for (const key of [...new Set([...Object.keys(defaults), ...parameterNames].filter(Boolean))]){
+        const hasDefault = Object.prototype.hasOwnProperty.call(defaults, key);
+        const value = defaults[key];
         properties[key] = {
-            ...inferJsonSchema(value),
+            ...(hasDefault ? inferJsonSchema(value) : { type: 'string' }),
             description: parameterDescriptions[key] || `${descriptionPrefix}: ${key}`,
-            default: value
+            ...(hasDefault ? { default: value } : {})
         };
     }
     return {
@@ -3174,7 +3258,16 @@ function isOptionalDefaultValue(value) {
     return false;
 }
 function candidateKey(candidate) {
-    return `${(candidate.method || 'GET').toUpperCase()} ${stripTrailingPunctuation(candidate.url)}`;
+    const method = (candidate.method || 'GET').toUpperCase();
+    const rawUrl = stripTrailingPunctuation(candidate.url);
+    try {
+        const parsed = new URL(rawUrl);
+        parsed.search = '';
+        parsed.hash = '';
+        return `${method} ${parsed.toString()}`;
+    } catch  {
+        return `${method} ${rawUrl.split(/[?#]/, 1)[0]}`;
+    }
 }
 function stripTrailingPunctuation(url) {
     return url.replace(/[，。；）)\],]+$/g, '');

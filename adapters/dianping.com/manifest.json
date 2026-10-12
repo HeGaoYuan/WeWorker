@@ -1,0 +1,108 @@
+{
+  "schema_version": 2,
+  "name": "dianping.com",
+  "version": "0.1.0",
+  "description": "大众点评店铺搜索、详情和登录",
+  "match": [
+    "www.dianping.com"
+  ],
+  "runtime_allowed_hosts": [
+    "account.dianping.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "大众点评",
+    "餐厅",
+    "点评",
+    "dianping"
+  ],
+  "commands": [
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "www.dianping.com",
+      "description": "大众点评店铺搜索（按关键词 + 城市）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "搜索关键词，例如 \"火锅\""
+          },
+          "city": {
+            "type": "string",
+            "description": "城市名（北京/上海/汕头/beijing/shantou/...）或 cityId 数字。未在静态表中的城市会通过 dianping.com 在线解析。不传则使用 cookie 默认城市"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回的店铺数量（最多 15，dianping 单页固定 15 条）",
+            "default": 15
+          }
+        },
+        "required": [
+          "keyword"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "shop",
+      "runtime": "extension",
+      "module": "extension/commands/shop.js",
+      "routeDomain": "www.dianping.com",
+      "description": "大众点评店铺详情（按 shop_id）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "shop_id": {
+            "type": "string",
+            "description": "店铺 ID（来自 search 的 shop_id 列，或 https://www.dianping.com/shop/<id> URL 段）"
+          }
+        },
+        "required": [
+          "shop_id"
+        ],
+        "additionalProperties": false
+      },
+      "aliases": [
+        "detail"
+      ]
+    },
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "www.dianping.com",
+      "description": "Verify current identity",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "www.dianping.com",
+      "description": "打开官方登录页，人工登录后以 whoami 验证；timeout兼容参数不启动轮询",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

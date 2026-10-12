@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import vm from 'node:vm'
+import { runServiceWorkerInContext } from './helpers/adapter-test-loader.mjs'
 
 const ROOT = process.cwd()
 
@@ -143,6 +144,7 @@ function loadServiceWorker(options = {}) {
   const createCalls = []
   const removeCalls = []
   const updateCalls = []
+  const browserFetchResult = options.browserFetchResult
   const tabs = [{
     active: true,
     status: 'complete',
@@ -184,6 +186,14 @@ function loadServiceWorker(options = {}) {
             }],
           }
         }
+        if (command === 'Network.getResponseBody') {
+          return {
+            body: options.networkResponseBase64
+              ? Buffer.from(options.networkResponseBody || '', 'utf8').toString('base64')
+              : options.networkResponseBody || '',
+            base64Encoded: Boolean(options.networkResponseBase64),
+          }
+        }
         if (command === 'DOM.getDocument') return { root: { nodeId: 1 } }
         if (command === 'DOM.querySelector') return { nodeId: 2 }
         if (command === 'DOM.setFileInputFiles') return {}
@@ -216,6 +226,7 @@ function loadServiceWorker(options = {}) {
               redirected: false,
               headers: { 'content-type': 'application/json' },
               body: '{"retCode":0,"data":{"data":[]}}',
+              ...(browserFetchResult || {}),
             },
           }]
         }
@@ -262,8 +273,12 @@ function loadServiceWorker(options = {}) {
     Map,
     Promise,
     Set,
+    TextDecoder,
+    TextEncoder,
+    Uint8Array,
     URL,
     WebSocket: FakeWebSocket,
+    atob: (value) => Buffer.from(value, 'base64').toString('binary'),
     btoa: (value) => Buffer.from(value, 'binary').toString('base64'),
     chrome,
     console: { log() {}, warn() {}, error() {} },
@@ -277,7 +292,7 @@ function loadServiceWorker(options = {}) {
     setTimeout: () => 0,
     clearTimeout() {},
   })
-  vm.runInContext(readFileSync(join(ROOT, 'extension/background/service-worker.js'), 'utf8'), context)
+  runServiceWorkerInContext(context, { repoRoot: ROOT })
 
   const request = (action, payload = {}) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`wecli_runtime_request "${action}" timed out`)), 100)
@@ -411,6 +426,77 @@ test('service worker allows ProjectDemo runtime helpers to read SDL sibling-doma
   assert.equal(rejected.error.code, 'HOST_NOT_ALLOWED')
 })
 
+test('service worker captures only matching same-host Adapter responses and releases its debugger', async () => {
+  const payload = JSON.stringify({ status: 0, data: { context: { finished: true }, items: [] } })
+  const worker = loadServiceWorker({
+    tab: { id: 7, url: 'https://api.example.com/online/list', windowId: 1 },
+    networkResponseBody: payload,
+    networkResponseBase64: true,
+  })
+  const started = await worker.request('network_capture_start', {
+    pattern: '/api/query',
+  })
+  assert.equal(started.ok, true)
+  const emitDebuggerEvent = worker.context.chrome.debugger.onEvent.listeners[0]
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
+    requestId: 'ignored',
+    request: { url: 'https://evil.example/api/query', method: 'POST' },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
+    requestId: 'response',
+    request: { url: 'https://api.example.com/api/query', method: 'POST' },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.responseReceived', {
+    requestId: 'response',
+    response: { status: 200, mimeType: 'application/json', headers: { 'content-type': 'application/json' } },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'response', encodedDataLength: payload.length })
+  const captured = await worker.request('network_capture_read', { waitMs: 0, finish: true })
+  assert.equal(captured.ok, true)
+  assert.deepEqual(plain(captured.result.entries), [{
+    kind: 'cdp',
+    url: 'https://api.example.com/api/query',
+    method: 'POST',
+    timestamp: captured.result.entries[0].timestamp,
+    responseStatus: 200,
+    responseContentType: 'application/json',
+    responsePreview: payload,
+    responseBodyFullSize: payload.length,
+    responseBodyTruncated: false,
+  }])
+  assert.deepEqual(plain(worker.debuggerAttachCalls), [{ tabId: 7 }])
+  assert.deepEqual(plain(worker.debuggerDetachCalls), [{ tabId: 7 }])
+  assert.equal(worker.context.ensureCdpState(7).entries.length, 0)
+})
+
+test('Adapter response capture enforces its body limit and keeps a borrowed debugger attached', async () => {
+  const payload = 'x'.repeat(8 * 1024 * 1024 + 1)
+  const worker = loadServiceWorker({
+    tab: { id: 7, url: 'https://api.example.com/online/list', windowId: 1 },
+    networkResponseBody: payload,
+  })
+  await worker.context.ensureCdpAttached(7)
+  const started = await worker.request('network_capture_start', { pattern: 'query' })
+  assert.equal(started.ok, true)
+  const emitDebuggerEvent = worker.context.chrome.debugger.onEvent.listeners[0]
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.requestWillBeSent', {
+    requestId: 'large-response',
+    request: { url: 'https://api.example.com/api/query', method: 'POST' },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.responseReceived', {
+    requestId: 'large-response',
+    response: { status: 200, mimeType: 'application/json', headers: {} },
+  })
+  await emitDebuggerEvent({ tabId: 7 }, 'Network.loadingFinished', { requestId: 'large-response' })
+  const captured = await worker.request('network_capture_read', { finish: true })
+  assert.equal(captured.ok, true)
+  assert.equal(captured.result.entries[0].responseBodyFullSize, payload.length)
+  assert.equal(captured.result.entries[0].responsePreview.length, 8 * 1024 * 1024)
+  assert.equal(captured.result.entries[0].responseBodyTruncated, true)
+  assert.deepEqual(plain(worker.debuggerAttachCalls), [{ tabId: 7 }])
+  assert.deepEqual(plain(worker.debuggerDetachCalls), [])
+})
+
 test('direct browser_fetch reuses the existing ITSM tab and browser credentials', async () => {
   const {
     directRequest,
@@ -476,6 +562,21 @@ test('direct browser fetch closes its inactive background tab when the target si
     { id: 8, update: { url: 'https://itsm.example.com/', active: false } },
   ])
   assert.deepEqual(removeCalls, [8, 8])
+})
+
+test('direct browser_fetch rejects a redirected response from an unapproved host', async () => {
+  const { directRequest } = loadServiceWorker({
+    browserFetchResult: { redirected: true, url: 'https://evil.example/leak' },
+  })
+
+  const response = await directRequest('browser_fetch', { url: 'https://itsm.example.com/api' })
+
+  assert.equal(response.ok, false)
+  assert.equal(response.error.code, 'HOST_NOT_ALLOWED')
+  assert.deepEqual(plain(response.error.details), {
+    tabHost: 'itsm.example.com',
+    targetHost: 'evil.example',
+  })
 })
 
 test('direct storage_get refreshes localStorage through a temporary inactive tab', async () => {
