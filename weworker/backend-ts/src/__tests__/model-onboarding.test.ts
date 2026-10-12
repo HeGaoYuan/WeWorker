@@ -15,6 +15,7 @@ const settings = (patch: Partial<Settings> = {}) => ({
 } as Settings)
 const chatResponse = () => Response.json({ choices: [{ message: { content: '{"ok":true}' } }] })
 const toolResponse = () => Response.json({ content: [{ type: 'tool_use', name: 'connection_check', input: { ok: true } }] })
+const anthropicTextResponse = () => Response.json({ content: [{ type: 'text', text: '{"ok":true}' }] })
 const mainInput = () => ({ provider: getProvider('custom')!, apiKey: 'fixture-main-key', model: 'fixture-model', anthropicBaseUrl: 'https://example.com/proxy', autoAuth: true })
 
 describe('main model onboarding', () => {
@@ -50,6 +51,21 @@ describe('main model onboarding', () => {
 
   it.each(['{}', '<html>OK</html>', '{"content":[{"type":"text","text":"hello"}]}'])('rejects false positive HTTP success: %s', async body => {
     expect(await probeMainConnection(mainInput(), vi.fn(async () => new Response(body)))).toMatchObject({ ok: false, error: 'protocol_mismatch' })
+  })
+
+  it('probes DeepSeek main models without forced tool_choice', async () => {
+    const fetchMock = vi.fn(async () => anthropicTextResponse())
+    expect(await probeMainConnection({
+      provider: getProvider('deepseek')!,
+      apiKey: 'fixture-deepseek-key',
+      model: 'deepseek-v4-flash',
+    }, fetchMock)).toMatchObject({ ok: true, protocol: 'anthropic_messages', model: 'deepseek-v4-flash' })
+    const [url, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://api.deepseek.com/anthropic/v1/messages')
+    const body = JSON.parse(options.body as string)
+    expect(body).toMatchObject({ model: 'deepseek-v4-flash' })
+    expect(body).not.toHaveProperty('tool_choice')
+    expect(body).not.toHaveProperty('tools')
   })
 })
 

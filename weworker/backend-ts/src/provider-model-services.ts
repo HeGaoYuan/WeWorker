@@ -142,6 +142,15 @@ function classifyProbeFailure(status: number, detail: string): ProbeErrorCode {
   return 'protocol_mismatch'
 }
 
+function shouldProbeWithAnthropicToolChoice(input: ProviderConnectionInput & { target: ProbeTarget; verifyResponse?: boolean }): boolean {
+  if (!input.verifyResponse || input.target !== 'weworker') return false
+  // DeepSeek's Anthropic-compatible endpoint rejects forced tool_choice when
+  // thinking/reasoning mode is active. Use a plain JSON text probe for this
+  // provider so the settings connection check does not fail before chat starts.
+  if (input.provider.id === 'deepseek') return false
+  return input.provider.weworker.protocol === 'anthropic_messages'
+}
+
 export async function probeProviderProtocol(
   input: ProviderConnectionInput & { target: ProbeTarget; verifyResponse?: boolean },
   fetchImpl: FetchLike = fetch,
@@ -161,12 +170,13 @@ export async function probeProviderProtocol(
     ? { ...buildAnthropicAuthHeaders(input.apiKey, input.provider.id, input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
     : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
+  const useAnthropicToolProbe = isAnthropic && shouldProbeWithAnthropicToolChoice(input)
   const body = isAnthropic
     ? {
         model: input.model,
         max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
-        ...(input.verifyResponse && input.target === 'weworker' ? {
+        ...(useAnthropicToolProbe ? {
           tools: [{ name: 'connection_check', description: 'Confirm the connection without performing any action.', input_schema: schema }],
           tool_choice: { type: 'tool', name: 'connection_check' },
         } : {}),
@@ -191,7 +201,7 @@ export async function probeProviderProtocol(
       if (input.verifyResponse) {
         try {
           const data = await response.json() as any
-          if (isAnthropic && input.target === 'weworker') {
+          if (useAnthropicToolProbe) {
             if (!data.content?.some((block: any) => block.type === 'tool_use' && block.name === 'connection_check' && block.input?.ok === true)) throw new Error()
           } else {
             const content = isAnthropic
@@ -200,7 +210,14 @@ export async function probeProviderProtocol(
             if (JSON.parse(content).ok !== true) throw new Error()
           }
         } catch {
-          return { ok: false, target: input.target, protocol, model: input.model, error: 'protocol_mismatch', detail: input.target === 'weworker' ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力' }
+          return {
+            ok: false,
+            target: input.target,
+            protocol,
+            model: input.model,
+            error: 'protocol_mismatch',
+            detail: useAnthropicToolProbe ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力',
+          }
         }
       }
       return { ok: true, target: input.target, protocol, model: input.model }
