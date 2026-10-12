@@ -1,0 +1,321 @@
+{
+  "schema_version": 2,
+  "name": "xueqiu.com",
+  "version": "0.1.0",
+  "description": "雪球：OpenCLI 对齐能力",
+  "match": [
+    "xueqiu.com",
+    "www.xueqiu.com",
+    "danjuanfunds.com",
+    "www.danjuanfunds.com"
+  ],
+  "requires_auth": false,
+  "discovery_terms": [
+    "xueqiu",
+    "雪球"
+  ],
+  "commands": [
+    {
+      "id": "whoami",
+      "runtime": "extension",
+      "module": "extension/commands/whoami.js",
+      "routeDomain": "xueqiu.com",
+      "description": "Show the current logged-in xueqiu account",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "login",
+      "runtime": "extension",
+      "module": "extension/commands/login.js",
+      "routeDomain": "xueqiu.com",
+      "description": "Open the xueqiu login page; finish signing in on the page, then verify with whoami",
+      "safety": "write",
+      "requires_confirmation": true,
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "comments",
+      "runtime": "extension",
+      "module": "extension/commands/comments.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取单只股票的讨论动态",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "Stock symbol, e.g. SH600519, AAPL, or 00700"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of discussion posts to return",
+            "default": 20
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "earnings-date",
+      "runtime": "extension",
+      "module": "extension/commands/earnings-date.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取股票预计财报发布日期（公司大事）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "股票代码，如 SH600519、SZ000858、00700"
+          },
+          "next": {
+            "type": "boolean",
+            "description": "仅返回最近一次未发布的财报日期",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回数量，默认 10",
+            "default": 10
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "feed",
+      "runtime": "extension",
+      "module": "extension/commands/feed.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球首页时间线（关注用户的动态）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "页码，默认 1",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "每页数量，默认 20",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "fund-holdings",
+      "runtime": "extension",
+      "module": "extension/commands/fund-holdings.js",
+      "routeDomain": "danjuanfunds.com",
+      "description": "获取蛋卷基金持仓明细（可用 --account 按子账户过滤）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "按子账户名称或 ID 过滤",
+            "default": ""
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "fund-snapshot",
+      "runtime": "extension",
+      "module": "extension/commands/fund-snapshot.js",
+      "routeDomain": "danjuanfunds.com",
+      "description": "获取蛋卷基金快照（总资产、子账户、持仓，推荐 -f json 输出）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "groups",
+      "runtime": "extension",
+      "module": "extension/commands/groups.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球自选股分组列表（含模拟组合）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hot",
+      "runtime": "extension",
+      "module": "extension/commands/hot.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球热门动态",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回数量，默认 20，最大 50",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "hot-stock",
+      "runtime": "extension",
+      "module": "extension/commands/hot-stock.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球热门股票榜",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回数量，默认 20，最大 50",
+            "default": 20
+          },
+          "type": {
+            "type": "string",
+            "description": "榜单类型 10=人气榜(默认) 12=关注榜",
+            "default": "10"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "kline",
+      "runtime": "extension",
+      "module": "extension/commands/kline.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球股票K线（历史行情）数据",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "股票代码，如 SH600519、SZ000858、AAPL"
+          },
+          "days": {
+            "type": "integer",
+            "description": "回溯天数（默认14天）",
+            "default": 14
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "search",
+      "runtime": "extension",
+      "module": "extension/commands/search.js",
+      "routeDomain": "xueqiu.com",
+      "description": "搜索雪球股票（代码或名称）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词，如 茅台、AAPL、腾讯"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回数量，默认 10",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "stock",
+      "runtime": "extension",
+      "module": "extension/commands/stock.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球股票实时行情",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "股票代码，如 SH600519、SZ000858、AAPL、00700"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "watchlist",
+      "runtime": "extension",
+      "module": "extension/commands/watchlist.js",
+      "routeDomain": "xueqiu.com",
+      "description": "获取雪球自选股/模拟组合股票列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "string",
+            "description": "分组ID：-1=全部(默认) -4=模拟 -5=沪深 -6=美股 -7=港股 -10=实盘 0=持仓（通过 xueqiu groups 获取）",
+            "default": "-1"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "默认 100",
+            "default": 100
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
