@@ -304,6 +304,9 @@ var __wave5 = (() => {
     if (isAntiBotHtml(response, envelopeText)) {
       return { kind: "anti-bot" };
     }
+    if (response.status === 0 && /failed to fetch|network/i.test(response.textSnippet || "")) {
+      return { kind: "anti-bot" };
+    }
     if (response.status === 401 || response.status === 403) {
       return { kind: "auth" };
     }
@@ -624,10 +627,11 @@ var __wave5 = (() => {
     const result = await page.evaluate(`(async () => {
     const res = await fetch(${JSON.stringify(url)}, { credentials: 'include' });
     if (!res.ok) return { __xqErr: res.status };
+    const text = await res.text();
     try {
-      return await res.json();
+      return JSON.parse(text);
     } catch {
-      return { __xqErr: 'parse' };
+      return { __xqErr: 'parse', contentType: res.headers.get('content-type') || '', textSnippet: text.slice(0, 500) };
     }
   })()`);
     const r = result;
@@ -637,11 +641,43 @@ var __wave5 = (() => {
         throw new AuthRequiredError("xueqiu.com", "\u672A\u767B\u5F55\u6216\u767B\u5F55\u5DF2\u8FC7\u671F");
       }
       if (code === "parse") {
+        const text = String(r.textSnippet || "");
+        if (/captcha|challenge|aliyun_waf|renderData|_waf_/i.test(`${r.contentType || ""} ${text}`)) {
+          throw new AuthRequiredError("xueqiu.com", "Xueqiu request requires login or challenge clearance");
+        }
         throw new CommandExecutionError("\u54CD\u5E94\u4E0D\u662F\u6709\u6548 JSON", "\u53EF\u80FD\u89E6\u53D1\u4E86\u98CE\u63A7\uFF0C\u8BF7\u68C0\u67E5\u767B\u5F55\u72B6\u6001\u6216\u7A0D\u540E\u91CD\u8BD5");
       }
       throw new CommandExecutionError(`HTTP ${code}`, "\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5\u6216\u767B\u5F55\u72B6\u6001");
     }
     return result;
+  }
+  function isXueqiuSymbolQuery(value) {
+    return /^[A-Z]{1,5}(?:[.-][A-Z]{1,2})?$|^(?:SH|SZ|BJ)\d{5,6}$|^\d{5,6}$|^\d{4,5}$/i.test(String(value || "").trim());
+  }
+  async function resolveXueqiuSymbolSearchFallback(page, query) {
+    const raw = String(query || "").trim().toUpperCase();
+    const candidates = [];
+    if (/^(?:SH|SZ|BJ)\d{5,6}$/.test(raw) || /^[A-Z]{1,5}(?:[.-][A-Z]{1,2})?$/.test(raw) || /^\d{4,5}$/.test(raw)) {
+      candidates.push(raw);
+    } else if (/^\d{6}$/.test(raw)) {
+      candidates.push(`SH${raw}`, `SZ${raw}`, `BJ${raw}`);
+    }
+    for (const symbol of candidates) {
+      const quoteUrl = `https://stock.xueqiu.com/v5/stock/batch/quote.json?symbol=${encodeURIComponent(symbol)}`;
+      const d = await fetchXueqiuJson(page, quoteUrl);
+      const item = d?.data?.items?.[0];
+      const q = item?.quote || {};
+      if (!q.symbol) continue;
+      return [{
+        symbol: q.symbol,
+        name: q.name,
+        exchange: q.exchange,
+        price: q.current,
+        changePercent: q.percent != null ? q.percent.toFixed(2) + "%" : null,
+        url: "https://xueqiu.com/S/" + q.symbol
+      }];
+    }
+    return [];
   }
 
   // webcli/scripts/opencli-wave5/upstream/xueqiu/earnings-date.js
@@ -911,7 +947,14 @@ var __wave5 = (() => {
       await page.goto("https://xueqiu.com");
       const url = `https://xueqiu.com/stock/search.json?code=${encodeURIComponent(String(kwargs.query))}&size=${kwargs.limit}`;
       const d = await fetchXueqiuJson(page, url);
-      return (d.stocks || []).slice(0, kwargs.limit).map((s) => {
+      if (!d || !Array.isArray(d.stocks)) {
+        if (isXueqiuSymbolQuery(kwargs.query)) {
+          const fallbackRows = await resolveXueqiuSymbolSearchFallback(page, kwargs.query);
+          if (fallbackRows.length) return fallbackRows.slice(0, kwargs.limit);
+        }
+        throw new AuthRequiredError("xueqiu.com", "Xueqiu search requires login or challenge clearance");
+      }
+      return d.stocks.slice(0, kwargs.limit).map((s) => {
         let symbol = "";
         if (s.exchange === "SH" || s.exchange === "SZ" || s.exchange === "BJ") {
           symbol = s.code.startsWith(s.exchange) ? s.code : s.exchange + s.code;
@@ -1054,6 +1097,7 @@ var __wave5 = (() => {
     async goto(raw) {
       const target = new URL(raw), current = new URL(location.href);
       const hostAllowed = domains[this.command.site]?.includes(target.hostname) || domainSuffix[this.command.site] && target.hostname.endsWith(domainSuffix[this.command.site]) && target.hostname !== domainSuffix[this.command.site].slice(1);
+      const currentHostAllowed = domains[this.command.site]?.includes(current.hostname) || domainSuffix[this.command.site] && current.hostname.endsWith(domainSuffix[this.command.site]) && current.hostname !== domainSuffix[this.command.site].slice(1);
       if (target.protocol !== "https:" || target.username || target.password || target.port || !hostAllowed) throw new ArgumentError("Untrusted navigation target");
       const markerKey = "__ww_wave5_navigation";
       if (current.origin === target.origin && current.pathname === target.pathname && [...target.searchParams].every(([k, v]) => current.searchParams.get(k) === v)) {
@@ -1065,7 +1109,13 @@ var __wave5 = (() => {
         previous = JSON.parse(sessionStorage.getItem(markerKey));
       } catch {
       }
-      if (previous?.url === target.href && Date.now() - previous.at < 105e3) throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      if (previous?.url === target.href && Date.now() - previous.at < 105e3) {
+        if (current.protocol === "https:" && currentHostAllowed) {
+          sessionStorage.removeItem(markerKey);
+          return;
+        }
+        throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      }
       sessionStorage.setItem(markerKey, JSON.stringify({ url: target.href, at: Date.now() }));
       this.pending = { __webcli_navigation: { version: 1, url: target.href, resume: this.command.access !== "write" } };
       throw new CommandExecutionError("Navigation required");

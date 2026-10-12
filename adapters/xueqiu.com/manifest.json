@@ -3,6 +3,7 @@
   "name": "xueqiu.com",
   "version": "0.1.0",
   "description": "雪球：OpenCLI 对齐能力",
+  "homepage_url": "https://xueqiu.com/",
   "match": [
     "xueqiu.com",
     "www.xueqiu.com",
@@ -13,6 +14,13 @@
   "discovery_terms": [
     "xueqiu",
     "雪球"
+  ],
+  "runtime_allowed_hosts": [
+    "xueqiu.com",
+    "www.xueqiu.com",
+    "stock.xueqiu.com",
+    "danjuanfunds.com",
+    "www.danjuanfunds.com"
   ],
   "commands": [
     {
