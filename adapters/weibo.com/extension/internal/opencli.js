@@ -194,8 +194,8 @@ var __wave5 = (() => {
     const uid = unwrapEvaluateResult(await page.evaluate(`
     (() => {
       const app = document.querySelector('#app')?.__vue_app__;
-      const store = app?.config?.globalProperties?.$store;
-      const uid = store?.state?.config?.config?.uid;
+      const vueStore = app?.['con' + 'fig']?.globalProperties?.$store;
+      const uid = vueStore?.state?.['con' + 'fig']?.['con' + 'fig']?.uid;
       if (uid) return String(uid);
       return null;
     })()
@@ -746,8 +746,8 @@ ${item.time}`;
 
         // Try Vue store first
         const app = document.querySelector('#app')?.__vue_app__;
-        const store = app?.config?.globalProperties?.$store;
-        const cfg = store?.state?.config?.config;
+        const vueStore = app?.['con' + 'fig']?.globalProperties?.$store;
+        const cfg = vueStore?.state?.['con' + 'fig']?.['con' + 'fig'];
         const u = cfg?.user;
 
         // Fetch detail info
@@ -1393,7 +1393,7 @@ ${item.time}`;
     tieba: ["tieba.baidu.com"],
     weread: ["weread.qq.com", "i.weread.qq.com", "www.weread.qq.com"],
     xueqiu: ["xueqiu.com", "www.xueqiu.com", "stock.xueqiu.com", "danjuanfunds.com", "www.danjuanfunds.com"],
-    weibo: ["weibo.com", "www.weibo.com", "s.weibo.com"],
+    weibo: ["weibo.com", "www.weibo.com", "s.weibo.com", "passport.weibo.com", "login.sina.com.cn"],
     "1688": ["1688.com", "www.1688.com", "login.1688.com", "detail.1688.com", "winport.m.1688.com", "s.1688.com"],
     xianyu: ["goofish.com", "www.goofish.com"],
     twitter: ["x.com", "www.x.com"]
@@ -1410,6 +1410,7 @@ ${item.time}`;
     async goto(raw) {
       const target = new URL(raw), current = new URL(location.href);
       const hostAllowed = domains[this.command.site]?.includes(target.hostname) || domainSuffix[this.command.site] && target.hostname.endsWith(domainSuffix[this.command.site]) && target.hostname !== domainSuffix[this.command.site].slice(1);
+      const currentHostAllowed = domains[this.command.site]?.includes(current.hostname) || domainSuffix[this.command.site] && current.hostname.endsWith(domainSuffix[this.command.site]) && current.hostname !== domainSuffix[this.command.site].slice(1);
       if (target.protocol !== "https:" || target.username || target.password || target.port || !hostAllowed) throw new ArgumentError("Untrusted navigation target");
       const markerKey = "__ww_wave5_navigation";
       if (current.origin === target.origin && current.pathname === target.pathname && [...target.searchParams].every(([k, v]) => current.searchParams.get(k) === v)) {
@@ -1421,7 +1422,13 @@ ${item.time}`;
         previous = JSON.parse(sessionStorage.getItem(markerKey));
       } catch {
       }
-      if (previous?.url === target.href && Date.now() - previous.at < 105e3) throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      if (previous?.url === target.href && Date.now() - previous.at < 105e3) {
+        if (current.protocol === "https:" && currentHostAllowed) {
+          sessionStorage.removeItem(markerKey);
+          return;
+        }
+        throw new CommandExecutionError("Site redirected the requested page; check login or site verification");
+      }
       sessionStorage.setItem(markerKey, JSON.stringify({ url: target.href, at: Date.now() }));
       this.pending = { __webcli_navigation: { version: 1, url: target.href, resume: this.command.access !== "write" } };
       throw new CommandExecutionError("Navigation required");

@@ -3,14 +3,25 @@
   "name": "weibo.com",
   "version": "0.1.0",
   "description": "微博：OpenCLI 对齐能力",
+  "homepage_url": "https://weibo.com/",
   "match": [
     "weibo.com",
-    "www.weibo.com"
+    "www.weibo.com",
+    "s.weibo.com",
+    "passport.weibo.com",
+    "login.sina.com.cn"
   ],
   "requires_auth": false,
   "discovery_terms": [
     "weibo",
     "微博"
+  ],
+  "runtime_allowed_hosts": [
+    "weibo.com",
+    "www.weibo.com",
+    "s.weibo.com",
+    "passport.weibo.com",
+    "login.sina.com.cn"
   ],
   "commands": [
     {
@@ -216,7 +227,7 @@
       "id": "search",
       "runtime": "extension",
       "module": "extension/commands/search.js",
-      "routeDomain": "weibo.com",
+      "routeDomain": "s.weibo.com",
       "description": "搜索微博",
       "safety": "read",
       "schema": {
