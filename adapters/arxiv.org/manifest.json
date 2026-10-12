@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "arxiv.org",
   "version": "0.1.0",
-  "description": "arXiv 论文：OpenCLI 对齐能力",
+  "description": "arXiv 论文：论文搜索、论文详情、作者论文和分类最新提交",
   "match": [
     "arxiv.org",
     "export.arxiv.org"
@@ -11,6 +11,40 @@
   "discovery_terms": [
     "arxiv",
     "arXiv 论文"
+  ],
+  "scenarios": [
+    {
+      "id": "paper-search",
+      "title": "搜索论文",
+      "summary": "按关键词搜索 arXiv 论文并返回标题、作者、摘要和链接",
+      "tool_names": [
+        "search"
+      ]
+    },
+    {
+      "id": "paper-detail",
+      "title": "查看论文详情",
+      "summary": "按 arXiv ID 读取论文详情",
+      "tool_names": [
+        "paper"
+      ]
+    },
+    {
+      "id": "author-papers",
+      "title": "查看作者论文",
+      "summary": "按作者名称列出最新论文",
+      "tool_names": [
+        "author"
+      ]
+    },
+    {
+      "id": "recent-submissions",
+      "title": "查看分类新提交",
+      "summary": "按分类读取 arXiv 最新提交",
+      "tool_names": [
+        "recent"
+      ]
+    }
   ],
   "commands": [
     {

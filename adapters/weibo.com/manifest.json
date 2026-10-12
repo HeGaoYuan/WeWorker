@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "weibo.com",
   "version": "0.1.0",
-  "description": "微博：OpenCLI 对齐能力",
+  "description": "微博：热搜、搜索、微博/评论读取、收藏列表、发布和登录检查",
   "homepage_url": "https://weibo.com/",
   "match": [
     "weibo.com",
@@ -22,6 +22,46 @@
     "s.weibo.com",
     "passport.weibo.com",
     "login.sina.com.cn"
+  ],
+  "scenarios": [
+    {
+      "id": "hot-and-search",
+      "title": "热搜和搜索",
+      "summary": "读取微博热搜并按关键词搜索微博",
+      "tool_names": [
+        "hot",
+        "search"
+      ]
+    },
+    {
+      "id": "post-detail",
+      "title": "查看微博和评论",
+      "summary": "读取单条微博、评论和用户微博列表",
+      "tool_names": [
+        "post",
+        "comments",
+        "user-posts"
+      ]
+    },
+    {
+      "id": "feed-and-favorites",
+      "title": "时间线和收藏",
+      "summary": "读取微博时间线、个人资料和收藏列表",
+      "tool_names": [
+        "feed",
+        "me",
+        "favorites"
+      ]
+    },
+    {
+      "id": "publish-post",
+      "title": "发布微博",
+      "summary": "在用户明确确认后发布文本微博；也支持删除自己的微博",
+      "tool_names": [
+        "publish",
+        "delete"
+      ]
+    }
   ],
   "commands": [
     {

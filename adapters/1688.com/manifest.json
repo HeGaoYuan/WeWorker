@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "1688.com",
   "version": "0.1.0",
-  "description": "1688 批发：OpenCLI 对齐能力",
+  "description": "1688 批发：商品搜索、商品/店铺详情、素材提取和登录检查",
   "homepage_url": "https://www.1688.com/",
   "match": [
     "1688.com",
@@ -31,6 +31,41 @@
     "detail.1688.com",
     "detail.m.1688.com",
     "winport.m.1688.com"
+  ],
+  "scenarios": [
+    {
+      "id": "product-search",
+      "title": "搜索商品",
+      "summary": "按关键词搜索 1688 商品，返回候选商品、卖家链接、价格、起订量和销量文本",
+      "tool_names": [
+        "search"
+      ]
+    },
+    {
+      "id": "product-detail",
+      "title": "查看商品详情",
+      "summary": "读取 1688 商品公开字段、价格阶梯和卖家基础信息",
+      "tool_names": [
+        "item"
+      ]
+    },
+    {
+      "id": "store-info",
+      "title": "查看店铺信息",
+      "summary": "读取 1688 店铺或供应商公开信息、主营内容和服务信号",
+      "tool_names": [
+        "store"
+      ]
+    },
+    {
+      "id": "product-assets",
+      "title": "提取商品素材",
+      "summary": "列出商品页可提取的图片和视频素材 URL 与文件名",
+      "tool_names": [
+        "assets",
+        "download"
+      ]
+    }
   ],
   "commands": [
     {

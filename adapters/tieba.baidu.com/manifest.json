@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "tieba.baidu.com",
   "version": "0.1.0",
-  "description": "百度贴吧：OpenCLI 对齐能力",
+  "description": "百度贴吧：热议话题、帖子搜索、吧内帖子和主题阅读",
   "match": [
     "tieba.baidu.com"
   ],
@@ -10,6 +10,40 @@
   "discovery_terms": [
     "tieba",
     "百度贴吧"
+  ],
+  "scenarios": [
+    {
+      "id": "hot-topics",
+      "title": "查看热议话题",
+      "summary": "读取百度贴吧热议话题",
+      "tool_names": [
+        "hot"
+      ]
+    },
+    {
+      "id": "post-search",
+      "title": "搜索帖子",
+      "summary": "跨贴吧搜索帖子",
+      "tool_names": [
+        "search"
+      ]
+    },
+    {
+      "id": "forum-posts",
+      "title": "浏览吧内帖子",
+      "summary": "浏览指定贴吧的帖子列表",
+      "tool_names": [
+        "posts"
+      ]
+    },
+    {
+      "id": "thread-read",
+      "title": "阅读主题",
+      "summary": "读取贴吧主题帖内容",
+      "tool_names": [
+        "read"
+      ]
+    }
   ],
   "commands": [
     {

@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "toutiao.com",
   "version": "0.1.1",
-  "description": "今日头条：OpenCLI 对齐能力",
+  "description": "今日头条：热榜、推荐流、创作者文章和登录检查",
   "match": [
     "toutiao.com",
     "www.toutiao.com",
@@ -12,6 +12,41 @@
   "discovery_terms": [
     "toutiao",
     "今日头条"
+  ],
+  "scenarios": [
+    {
+      "id": "hot-news",
+      "title": "查看热榜",
+      "summary": "读取今日头条首页热榜公开内容",
+      "tool_names": [
+        "hot"
+      ]
+    },
+    {
+      "id": "recommend-feed",
+      "title": "读取推荐流",
+      "summary": "读取今日头条频道推荐流公开内容",
+      "tool_names": [
+        "recommend"
+      ]
+    },
+    {
+      "id": "creator-articles",
+      "title": "查看创作者文章",
+      "summary": "读取头条号创作者后台文章列表和指标",
+      "tool_names": [
+        "articles"
+      ]
+    },
+    {
+      "id": "login-status",
+      "title": "登录检查",
+      "summary": "打开头条号登录页并检查当前身份",
+      "tool_names": [
+        "whoami",
+        "login"
+      ]
+    }
   ],
   "commands": [
     {
