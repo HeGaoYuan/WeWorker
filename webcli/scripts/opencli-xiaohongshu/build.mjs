@@ -94,7 +94,12 @@ manifest.commands = commands.map(command => ({
 const original = JSON.parse(fs.readFileSync(path.join(dir, 'legacy-manifest.json')));
 for (const id of ['search-notes', 'open-note', 'read-comments', 'check-login-status']) {
   const command = original.commands.find(c => c.id === id);
-  command.description = '兼容旧调用；使用 OpenCLI 对齐实现。笔记读取需要带 xsec_token 的完整 URL。';
+  command.description = {
+    'search-notes': '搜索小红书笔记并返回可继续打开的笔记结果。',
+    'open-note': '打开指定小红书笔记并读取正文、作者和互动数据。',
+    'read-comments': '读取指定小红书笔记的评论列表。',
+    'check-login-status': '检查当前浏览器是否已登录小红书。'
+  }[id];
   delete command.schema.required; command.routeDomain = id === 'check-login-status' ? 'creator.xiaohongshu.com' : 'www.xiaohongshu.com';
   if (id === 'search-notes') command.schema.properties.limit = { type: 'integer', default: 20, description: '结果数量，1..100' };
   if (id === 'read-comments') {

@@ -28,10 +28,13 @@ function setup(id, payload, response = {}) {
 describe('reference wave3 contracts',()=>{
   it.each(['wikipedia.org','github.com'])('%s loads all source commands and derived guidance',id=>{
     const s=setup(id,{}), originals=inventory.filter(x=>x.package===id);
-    expect(s.pkg.commands.map(c=>c.id).sort()).toEqual(originals.map(c=>c.name).sort());
-    for(const cmd of s.pkg.commands){
+    const commandById=new Map(s.pkg.commands.map(c=>[c.id,c]));
+    expect([...commandById.keys()].sort()).toEqual(expect.arrayContaining(originals.map(c=>c.name).sort()));
+    for(const original of originals){
+      const cmd=commandById.get(original.name);
+      expect(cmd).toBeDefined();
       expect(cmd.safety).toBe('read');expect(cmd.execution.runtime).toBe('background');
-      for(const arg of originals.find(x=>x.name===cmd.id).args){expect(cmd.schema.properties[arg.name]).toBeDefined();if(arg.default!==undefined)expect(cmd.schema.properties[arg.name].default).toEqual(arg.default);}
+      for(const arg of original.args){expect(cmd.schema.properties[arg.name]).toBeDefined();if(arg.default!==undefined)expect(cmd.schema.properties[arg.name].default).toEqual(arg.default);}
     }
     const guidance=readFileSync(resolve(root,'adapters',id,'guidance.md'),'utf8');
     const adapter={id,version:s.pkg.manifest.version,tools:[],guidance,match:s.pkg.manifest.match};

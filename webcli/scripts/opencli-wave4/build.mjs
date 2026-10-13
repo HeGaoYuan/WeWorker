@@ -62,7 +62,7 @@ for (const config of configs) {
   const commands = [...context.__wave4.commands.values()];
   const pkg = path.join(repo, 'adapters', config.pkg);
   fs.mkdirSync(path.join(pkg,'extension/internal'), { recursive: true }); fs.mkdirSync(path.join(pkg,'extension/commands'), { recursive: true });
-  const manifest = { schema_version: 2, name: config.pkg, version: config.site === 'toutiao' ? '0.1.1' : '0.1.0', description: config.title + '：OpenCLI 对齐能力',
+  const manifest = { schema_version: 2, name: config.pkg, version: config.site === 'toutiao' ? '0.1.1' : '0.1.0', description: config.title + '：WeWorker Adapter 能力',
     match: config.match, requires_auth: false, discovery_terms: [config.site, config.title],
     commands: commands.map(c => ({ id: c.name, runtime: 'extension', module: `extension/commands/${c.name}.js`,
       routeDomain: c.name === 'search' && config.site === 'smzdm' ? 'search.smzdm.com' : c.domain || config.pkg,

@@ -206,14 +206,14 @@
       "runtime": "extension",
       "module": "extension/commands/bookmark-folder.js",
       "routeDomain": "x.com",
-      "description": "Read the tweets inside a single Twitter/X bookmark folder. Get the folder id from `opencli twitter bookmark-folders`.",
+      "description": "Read the tweets inside a single Twitter/X bookmark folder. Get the folder id from the bookmark-folders tool.",
       "safety": "read",
       "schema": {
         "type": "object",
         "properties": {
           "folder-id": {
             "type": "string",
-            "description": "Folder id from `opencli twitter bookmark-folders`."
+            "description": "Folder id returned by the bookmark-folders tool."
           },
           "limit": {
             "type": "integer",
@@ -603,7 +603,7 @@
         "properties": {
           "listId": {
             "type": "string",
-            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+            "description": "Numeric ID of the list you own, for example from the lists tool."
           },
           "username": {
             "type": "string",
@@ -630,7 +630,7 @@
         "properties": {
           "listId": {
             "type": "string",
-            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+            "description": "Numeric ID of the list you own, for example from the lists tool."
           },
           "usernames": {
             "type": "string",
@@ -699,7 +699,7 @@
         "properties": {
           "listId": {
             "type": "string",
-            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+            "description": "Numeric ID of the list you own, for example from the lists tool."
           },
           "confirm": {
             "type": "boolean",
@@ -731,7 +731,7 @@
         "properties": {
           "listId": {
             "type": "string",
-            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+            "description": "Numeric ID of the list you own, for example from the lists tool."
           },
           "username": {
             "type": "string",
@@ -758,7 +758,7 @@
         "properties": {
           "listId": {
             "type": "string",
-            "description": "Numeric ID of the list you own (e.g. from `opencli twitter lists`)"
+            "description": "Numeric ID of the list you own, for example from the lists tool."
           },
           "usernames": {
             "type": "string",
@@ -794,7 +794,7 @@
         "properties": {
           "listId": {
             "type": "string",
-            "description": "Numeric ID of a Twitter/X list (e.g. from `opencli twitter lists`)"
+            "description": "Numeric ID of a Twitter/X list, for example from the lists tool."
           },
           "limit": {
             "type": "integer",
