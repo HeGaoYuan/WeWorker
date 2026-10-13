@@ -14,6 +14,31 @@ afterEach(() => {
 })
 
 describe('chat model settings integration', () => {
+  it('deletes an independent model configuration and refreshes the provider list', async () => {
+    globalThis.window = {}
+    globalThis.fetch = async (url, options) => {
+      assert.ok(url.endsWith('/settings/provider/delete'))
+      assert.deepEqual(JSON.parse(options.body), { provider: 'model-fixture' })
+      return Response.json({ active_provider: 'builtin', providers: { builtin: { has_key: true, model: 'fixture-model' } } })
+    }
+    await useSettingsStore.getState().deleteProvider('model-fixture')
+    assert.deepEqual(useSettingsStore.getState().providers, { builtin: { has_key: true, model: 'fixture-model' } })
+  })
+
+  it('saves a configuration name without sending service settings or changing the selected model', async () => {
+    globalThis.window = {}
+    const providers = { builtin: { name: '内置助手', has_key: true, model: 'fixture-model' } }
+    globalThis.fetch = async (url, options) => {
+      assert.ok(url.endsWith('/settings/provider'))
+      assert.deepEqual(JSON.parse(options.body), { provider: 'builtin', name: '内置助手' })
+      return Response.json({ active_provider: 'builtin', model: 'fixture-model', providers })
+    }
+    await useSettingsStore.getState().saveProvider('builtin', { name: '内置助手' })
+    assert.equal(useSettingsStore.getState().providers.builtin.name, '内置助手')
+    assert.equal(useSettingsStore.getState().activeProvider, 'builtin')
+    assert.equal(useSettingsStore.getState().model, 'fixture-model')
+  })
+
   it('saves the OpenAI full URL mode independently from the Claude Code URL mode', async () => {
     globalThis.window = {}
     const updates = { base_url_is_full: false, openai_base_url: 'https://example.com/custom/?version=2', openai_base_url_is_full: true }

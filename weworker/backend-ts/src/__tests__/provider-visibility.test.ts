@@ -43,9 +43,26 @@ describe('provider visibility', () => {
     expect(normalizeAddedProviders(['unregistered', 'anthropic'])).toEqual(['anthropic'])
   })
 
-  it('retains the current registered provider before its first save', () => {
+  it('does not add the active default provider before its first save', () => {
     expect(isProviderVisible('anthropic', {
-      addedProviders: [], activeProvider: 'anthropic', legacy: {},
-    })).toBe(true)
+      addedProviders: [], activeProvider: 'anthropic',
+      legacy: { anthropic: { hasKey: false, model: 'default-model', defaultModels: ['default-model'] } },
+    })).toBe(false)
+  })
+
+  it('retains active and inactive legacy credentials, selected models and explicit empty additions', () => {
+    for (const activeProvider of ['anthropic', 'deepseek']) {
+      expect(isProviderVisible('anthropic', {
+        addedProviders: [], activeProvider,
+        legacy: { anthropic: { hasKey: true, model: 'default-model', defaultModels: ['default-model'] } },
+      })).toBe(true)
+      expect(isProviderVisible('anthropic', {
+        addedProviders: [], activeProvider,
+        legacy: { anthropic: { hasKey: false, model: 'saved-model', defaultModels: ['default-model'] } },
+      })).toBe(true)
+      expect(isProviderVisible('anthropic', {
+        addedProviders: ['anthropic'], activeProvider, legacy: {},
+      })).toBe(true)
+    }
   })
 })

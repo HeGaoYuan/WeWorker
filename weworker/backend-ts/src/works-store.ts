@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { LoadedSkillContext } from './skill-context.js'
+import { ensureUserDirectory } from './config.js'
 
 const DB_DIR = path.join(os.homedir(), '.weworker')
 const DB_FILE = path.join(DB_DIR, 'works.db')
@@ -14,11 +15,22 @@ export interface Work {
   id: string
   title: string
   label: LabelColor
+  project_id: string | null
   zcf_role: string | null
   zcf_mode: string | null
   created_at: string
   updated_at: string
 }
+
+export interface Project {
+  id: string
+  name: string
+  folder_path: string
+  created_at: string
+  updated_at: string
+}
+
+export type ProjectSummary = Omit<Project, 'folder_path'>
 
 export interface Message {
   id: string
@@ -77,6 +89,15 @@ function db(): DatabaseSync {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       label TEXT DEFAULT NULL,
+      project_id TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      folder_path TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -138,14 +159,108 @@ function db(): DatabaseSync {
   } catch {
     // Column already exists — ignore
   }
+  try {
+    _db.exec('ALTER TABLE works ADD COLUMN project_id TEXT DEFAULT NULL REFERENCES projects(id) ON DELETE SET NULL')
+  } catch {
+    // Column already exists — ignore
+  }
   return _db
 }
 
-export function createWork(title = ''): Work {
+function toProjectSummary(project: Project): ProjectSummary {
+  const { folder_path: _folderPath, ...summary } = project
+  return summary
+}
+
+function normalizeProjectName(value: string): string {
+  const name = String(value || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+  if (!name || name === '.' || name === '..') throw new Error('project name is required')
+  return name.slice(0, 120)
+}
+
+function projectFolderPath(name: string): string {
+  return path.join(ensureUserDirectory(), name)
+}
+
+function assertProjectFolderInsideUserDirectory(folderPath: string): void {
+  const root = path.resolve(ensureUserDirectory())
+  const target = path.resolve(folderPath)
+  if (target === root || !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error('project folder must be inside the user directory')
+  }
+}
+
+export function listProjects(): ProjectSummary[] {
+  const projects = db().prepare('SELECT id, name, folder_path, created_at, updated_at FROM projects ORDER BY updated_at DESC').all() as unknown as Project[]
+  return projects.map(toProjectSummary)
+}
+
+export function getProject(id: string): Project | null {
+  return (db().prepare('SELECT id, name, folder_path, created_at, updated_at FROM projects WHERE id = ?').get(id) as unknown as Project) ?? null
+}
+
+export function createProject(rawName: string): ProjectSummary {
+  const name = normalizeProjectName(rawName)
+  const folderPath = projectFolderPath(name)
+  assertProjectFolderInsideUserDirectory(folderPath)
+  if (fs.existsSync(folderPath)) throw new Error('project folder already exists')
+  const now = new Date().toISOString()
+  const project: Project = { id: randomUUID(), name, folder_path: folderPath, created_at: now, updated_at: now }
+  fs.mkdirSync(folderPath)
+  try {
+    db().prepare('INSERT INTO projects (id, name, folder_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(
+      project.id, project.name, project.folder_path, project.created_at, project.updated_at,
+    )
+  } catch (error) {
+    fs.rmdirSync(folderPath)
+    throw error
+  }
+  return toProjectSummary(project)
+}
+
+export function renameProject(id: string, rawName: string): ProjectSummary | null {
+  const project = getProject(id)
+  if (!project) return null
+  const name = normalizeProjectName(rawName)
+  if (name === project.name) return toProjectSummary(project)
+  const nextFolderPath = projectFolderPath(name)
+  assertProjectFolderInsideUserDirectory(nextFolderPath)
+  if (fs.existsSync(nextFolderPath)) throw new Error('project folder already exists')
+  fs.renameSync(project.folder_path, nextFolderPath)
+  const updatedAt = new Date().toISOString()
+  try {
+    db().prepare('UPDATE projects SET name = ?, folder_path = ?, updated_at = ? WHERE id = ?').run(name, nextFolderPath, updatedAt, id)
+  } catch (error) {
+    try { fs.renameSync(nextFolderPath, project.folder_path) } catch { /* preserve original error */ }
+    throw error
+  }
+  return { id: project.id, name, created_at: project.created_at, updated_at: updatedAt }
+}
+
+export function deleteProject(id: string): void {
+  const project = getProject(id)
+  if (!project) throw new Error('project not found')
+  const workCount = (db().prepare('SELECT COUNT(*) AS count FROM works WHERE project_id = ?').get(id) as { count: number }).count
+  if (workCount > 0) throw new Error('project must be empty before deletion')
+  assertProjectFolderInsideUserDirectory(project.folder_path)
+  if (fs.existsSync(project.folder_path)) {
+    const entries = fs.readdirSync(project.folder_path)
+    if (entries.length > 0) throw new Error('project folder must be empty before deletion')
+    fs.rmdirSync(project.folder_path)
+  }
+  db().prepare('DELETE FROM projects WHERE id = ?').run(id)
+}
+
+export function createWork(title = '', projectId: string | null = null): Work {
+  if (projectId && !getProject(projectId)) throw new Error('project not found')
   const now = new Date().toISOString()
   const id = randomUUID()
-  db().prepare('INSERT INTO works (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, title, now, now)
-  return { id, title, label: null, zcf_role: null, zcf_mode: null, created_at: now, updated_at: now }
+  db().prepare('INSERT INTO works (id, title, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, title, projectId, now, now)
+  return { id, title, label: null, project_id: projectId, zcf_role: null, zcf_mode: null, created_at: now, updated_at: now }
 }
 
 export function updateWorkZcfPrefs(
@@ -518,6 +633,15 @@ export function _initTestDb(): void {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       label TEXT DEFAULT NULL,
+      project_id TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      folder_path TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

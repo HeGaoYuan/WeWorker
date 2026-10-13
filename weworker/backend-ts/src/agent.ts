@@ -60,6 +60,7 @@ import {
 import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic-auth.js'
 import { renderPrompt } from './prompt-loader.js'
 import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
+import { resolveThinkingEffort } from './thinking-effort.js'
 
 const log = createLogger('agent')
 
@@ -938,6 +939,7 @@ async function* streamChatWithBaseUrl(
     previousTaskFailed?: boolean;
     forceCompaction?: boolean;
     compactionOnly?: boolean;
+    thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   } = {},
 ): AsyncGenerator<SSEEvent> {
   // Claude Code discovers user Skills when each query starts. If a website was
@@ -992,6 +994,7 @@ async function* streamChatWithBaseUrl(
     : opts.streaming !== false
 
   const textBlockBuf: { id: string; text: string }[] = []
+  const thinkingEffort = resolveThinkingEffort(settings.active_provider, settings.model, opts.thinkingEffort)
   const queryStartTime = Date.now()
   log.info(` calling Claude API 鈥?model=${settings.model}`)
 
@@ -1283,6 +1286,7 @@ async function* streamChatWithBaseUrl(
       includePartialMessages,
       cwd: agentCwd,
       settingSources,
+      effort: thinkingEffort,
       pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
       spawnClaudeCodeProcess,
       env: envWithWebcli,

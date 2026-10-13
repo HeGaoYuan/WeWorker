@@ -22,8 +22,16 @@ export function resolveWebwrightModelConfig(settings: Settings) {
   const customOpenAiBaseUrlIsFull = configuration ? configuration.openai_base_url_is_full === true : settings.openai_base_url_is_full_custom === true
   const independent = Boolean(settings.exploration_base_url)
   const independentFullUrl = independent && settings.exploration_base_url_is_full === true
-  const apiKey = independent && settings.exploration_use_main_key === false ? settings.exploration_api_key : settings.api_key
-  const model = independent && settings.exploration_model ? settings.exploration_model : settings.model
+  const apiKey = independent && settings.exploration_use_main_key === false
+    ? settings.exploration_api_key
+    : configuration?.provider_id === 'custom'
+      ? configuration.openai_api_key || configuration.api_key
+      : settings.active_provider === 'custom' ? settings.openai_api_key_custom || settings.api_key : settings.api_key
+  const model = independent && settings.exploration_model
+    ? settings.exploration_model
+    : configuration?.provider_id === 'custom'
+      ? configuration.openai_model || configuration.model
+      : settings.active_provider === 'custom' ? settings.openai_model_custom || settings.model : settings.model
   if (!configuredProvider || !apiKey || !model) throw new Error('请先配置 API Key 和模型')
   const provider = isBuiltinProvider(configuredProvider.id)
     ? builtinProviderAccess(configuredProvider).provider

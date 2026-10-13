@@ -15,6 +15,16 @@ export function normalizeOwnerUserId(value) {
   return String(value ?? '').trim()
 }
 
+export function getOwnerPermissionSelection(ownerId, permission) {
+  if (!normalizeOwnerUserId(ownerId)) return 'qa_only'
+  return ['qa_only', 'no_bash', 'full'].includes(permission) ? permission : 'qa_only'
+}
+
+export function hasUnsavedOwnerPermission(ownerId, permission, saved = {}) {
+  return normalizeOwnerUserId(ownerId) !== normalizeOwnerUserId(saved.owner_user_id)
+    || getOwnerPermissionSelection(ownerId, permission) !== getOwnerPermissionSelection(saved.owner_user_id, saved.owner_permission_level)
+}
+
 export function validateOwnerUserId(channel, value) {
   const id = normalizeOwnerUserId(value)
   if (!id) return null

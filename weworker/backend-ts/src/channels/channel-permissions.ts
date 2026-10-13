@@ -40,7 +40,7 @@ export function validateOwnerUserId(channel: ChannelName, value: unknown): strin
 export function normalizeOwnerPermissionLevel(value: unknown): OwnerPermissionLevel {
   const next = String(value ?? '').trim()
   if (next === 'qa_only' || next === 'no_bash' || next === 'full') return next
-  return 'full'
+  return 'qa_only'
 }
 
 export function resolveChannelName(channelType: string): ChannelName | null {

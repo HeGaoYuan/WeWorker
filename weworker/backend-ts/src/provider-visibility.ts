@@ -1,10 +1,11 @@
 import { PROVIDERS, getProvider } from './provider-registry.js'
+import type { Settings } from './config.js'
 
 // Provider visibility / "added" state for the model picker.
 // Registered providers stay hidden until the
 // user explicitly adds them through settings. Existing installs that already
-// carry credentials/config stay visible (backward compatibility), and the
-// currently active provider is always shown as a safety fallback.
+// carry credentials/config stay visible (backward compatibility). An untouched
+// default provider is not considered added just because it is active.
 
 // Preset provider ids offered in the "add provider" dialog.
 export const PRESET_PROVIDER_IDS = PROVIDERS.filter(provider => provider.id !== 'custom').map(provider => provider.id)
@@ -54,10 +55,23 @@ export interface ProviderVisibilityInput {
 
 export function isProviderVisible(id: string, input: ProviderVisibilityInput): boolean {
   if (!getProvider(id)) return false
-  if (input.activeProvider === id) return true
   for (const added of input.addedProviders) {
     if (added === id) return true
   }
   const legacy = input.legacy[id]
   return legacy ? hasLegacyProviderConfig(legacy) : false
+}
+
+export function buildProviderVisibility(s: Settings) {
+  const legacy: Record<string, ProviderLegacyConfig> = {
+    anthropic: { hasKey: !!s.api_key_anthropic, model: s.model_anthropic, defaultModels: [getProvider('anthropic')?.defaultModel ?? ''] },
+    glm: { hasKey: !!s.api_key_glm, model: s.model_glm, defaultModels: [getProvider('glm')?.defaultModel ?? ''] },
+    deepseek: { hasKey: !!s.api_key_deepseek, model: s.model_deepseek, defaultModels: [getProvider('deepseek')?.defaultModel ?? ''] },
+    custom: { hasKey: !!s.api_key_custom, model: s.model_custom, baseUrl: s.base_url_custom, openaiBaseUrl: s.openai_base_url_custom },
+  }
+  return (id: string) => isProviderVisible(id, {
+    addedProviders: s.added_providers || [],
+    activeProvider: s.active_model_configuration ? '' : s.active_provider,
+    legacy,
+  })
 }

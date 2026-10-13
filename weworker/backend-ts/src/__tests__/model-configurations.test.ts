@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Settings } from '../config.js'
-import { createModelConfiguration, getModelConfiguration, activateModelConfiguration, updateModelConfiguration, publicModelConfigurations } from '../model-configurations.js'
+import { createModelConfiguration, getModelConfiguration, activateModelConfiguration, updateModelConfiguration, publicModelConfigurations, buildModelConfigurationNames, renameModelConfiguration, validateModelConfigurationName, deleteModelConfiguration } from '../model-configurations.js'
 import { applySecrets, clearSecretsOnDisk, extractSecrets } from '../settings-secrets.js'
 import { resolveWebwrightModelConfig, suggestExplorationBaseUrl } from '../webwright-model-config.js'
 
@@ -16,6 +16,106 @@ function legacySettings(): Settings {
 }
 
 describe('multiple model configurations', () => {
+  it('creates blank custom drafts without inheriting legacy or existing configuration data', () => {
+    const legacy = { ...legacySettings(), api_key_custom: 'fixture-legacy-key',
+      openai_api_key_custom: 'fixture-legacy-openai-key', model_custom: 'fixture-legacy-model',
+      openai_model_custom: 'fixture-legacy-openai-model', custom_auth_type: 'auth_token' as const,
+      base_url_is_full_custom: true, openai_base_url_is_full_custom: true,
+      models_url_custom: 'https://example.com/catalog', models_url_is_full_custom: true,
+      models_auth_type_custom: 'auth_token' as const,
+      openai_models_url_custom: 'https://example.org/catalog', openai_models_url_is_full_custom: true,
+    }
+    const blank = {
+      provider_id: 'custom', model: '', api_key: '', base_url: '', base_url_is_full: false,
+      openai_model: '', openai_api_key: '', openai_base_url: '', openai_base_url_is_full: false,
+      auth_type: 'api_key', models_url: '', models_url_is_full: false, models_auth_type: 'inherit',
+      openai_models_url: '', openai_models_url_is_full: false,
+    }
+    const first = createModelConfiguration(legacy, 'custom')
+    expect(first.updates.model_configurations[first.id]).toMatchObject(blank)
+    let state = { ...legacy, ...first.updates }
+    state = { ...state, ...updateModelConfiguration(state, first.id, {
+      api_key: 'fixture-existing-key', model: 'fixture-existing-model',
+      base_url: 'https://example.com/messages', base_url_is_full: true,
+      openai_api_key: 'fixture-existing-openai-key', openai_model: 'fixture-existing-openai-model',
+      openai_base_url: 'https://example.org/completions', openai_base_url_is_full: true,
+      auth_type: 'auth_token', models_url: 'https://example.com/models', models_url_is_full: true,
+      models_auth_type: 'auth_token', openai_models_url: 'https://example.org/models', openai_models_url_is_full: true,
+    }) }
+    const original = structuredClone(state)
+    const second = createModelConfiguration(state, 'custom')
+    expect(second.updates.model_configurations[second.id]).toMatchObject(blank)
+    expect(second.updates.model_configurations[first.id]).toEqual(original.model_configurations[first.id])
+    expect(state).toEqual(original)
+    const next = { ...state, ...second.updates }
+    expect(publicModelConfigurations(next)[second.id]).toMatchObject({ has_key: false, has_openai_key: false })
+    expect(() => activateModelConfiguration(next, second.id)).toThrow('请先保存')
+    const reloaded = applySecrets(clearSecretsOnDisk(next), extractSecrets(next))
+    expect(reloaded.model_configurations?.[second.id]).toMatchObject(blank)
+  })
+
+  it('numbers new configurations while preserving and naming historical configurations', () => {
+    const legacy = legacySettings()
+    const original = structuredClone(legacy)
+    const first = createModelConfiguration(legacy, 'deepseek')
+    expect(first.updates.model_configuration_names?.deepseek).toBe('DeepSeek(1)')
+    expect(first.updates.model_configurations[first.id].name).toBe('DeepSeek(2)')
+    const state = { ...legacy, ...first.updates }
+    const second = createModelConfiguration(state, 'deepseek')
+    expect(second.updates.model_configurations[second.id].name).toBe('DeepSeek(3)')
+    expect(legacy).toEqual(original)
+    const fresh = { added_providers: [] } as unknown as Settings
+    const newFirst = createModelConfiguration(fresh, 'deepseek')
+    expect(newFirst.updates.model_configurations[newFirst.id].name).toBe('DeepSeek(1)')
+  })
+
+  it('reserves explicit names before generating names for older unnamed entries', () => {
+    const first = createModelConfiguration(legacySettings(), 'deepseek')
+    const state = { ...legacySettings(), ...first.updates, model_configuration_names: {} }
+    state.model_configurations[first.id].name = 'DeepSeek(1)'
+    expect(buildModelConfigurationNames(state)).toMatchObject({ deepseek: 'DeepSeek(2)', [first.id]: 'DeepSeek(1)' })
+    expect(createModelConfiguration(state, 'deepseek').updates.model_configuration_names?.deepseek).toBe('DeepSeek(2)')
+  })
+
+  it('renames legacy, built-in and incomplete active configurations without changing service settings', () => {
+    const created = createModelConfiguration(legacySettings(), 'deepseek')
+    let state = { ...legacySettings(), ...created.updates, active_model_configuration: created.id }
+    state.model_configurations[created.id].api_key = ''
+    const original = structuredClone(state)
+    state = { ...state, ...renameModelConfiguration(state, created.id, '  工作模型  ') }
+    state = { ...state, ...renameModelConfiguration(state, 'deepseek', '历史模型') }
+    state = { ...state, ...renameModelConfiguration(state, 'builtin', '内置助手') }
+    expect(state.model_configurations[created.id]).toEqual({ ...original.model_configurations[created.id], name: '工作模型' })
+    expect(state.model_configuration_names).toMatchObject({ deepseek: '历史模型', builtin: '内置助手' })
+    for (const field of ['api_key', 'model', 'api_key_deepseek', 'model_deepseek', 'base_url_custom', 'openai_base_url_custom', 'active_model_configuration'] as const) {
+      expect(state[field]).toEqual(original[field])
+    }
+    expect(() => renameModelConfiguration(state, 'unregistered', 'name')).toThrow()
+  })
+
+  it('deletes only inactive independent configurations and refuses built-in or active entries', () => {
+    const first = createModelConfiguration(legacySettings(), 'deepseek')
+    const second = createModelConfiguration({ ...legacySettings(), ...first.updates }, 'deepseek')
+    const state = { ...legacySettings(), ...first.updates, ...second.updates }
+    const updates = deleteModelConfiguration(state, first.id)
+    expect(updates.model_configurations?.[first.id]).toBeUndefined()
+    expect(updates.model_configurations?.[second.id]).toBeDefined()
+    expect(() => deleteModelConfiguration({ ...state, active_model_configuration: second.id }, second.id)).toThrow('当前使用中')
+    expect(() => deleteModelConfiguration(state, 'builtin')).toThrow('模型配置不存在')
+  })
+
+  it('validates names and keeps names in public responses without exposing credentials', () => {
+    for (const name of ['', '   ', null, 123, 'x'.repeat(81)]) {
+      expect(() => validateModelConfigurationName(name)).toThrow()
+    }
+    expect(validateModelConfigurationName('  自定义配置  ')).toBe('自定义配置')
+    const created = createModelConfiguration(legacySettings(), 'deepseek')
+    const state = { ...legacySettings(), ...created.updates }
+    const updates = updateModelConfiguration(state, created.id, { name: '  开发模型  ' })
+    expect(publicModelConfigurations({ ...state, ...updates })[created.id].name).toBe('开发模型')
+    expect(JSON.stringify(publicModelConfigurations({ ...state, ...updates }))).not.toContain('legacy-key')
+  })
+
   it('does not combine a cleared per-configuration OpenAI URL with the legacy full URL mode', () => {
     const legacy = { ...legacySettings(), openai_base_url_custom: 'https://example.com/inference/?version=1', openai_base_url_is_full_custom: true }
     const first = createModelConfiguration(legacy, 'custom')
@@ -64,6 +164,24 @@ describe('multiple model configurations', () => {
     expect(() => updateModelConfiguration(state, created.id, { base_url: '' })).toThrow()
     expect(() => updateModelConfiguration(state, created.id, { context_limit: -1 })).toThrow()
     expect(() => createModelConfiguration(state, 'builtin')).toThrow()
+    expect(() => createModelConfiguration(state, 'builtin_dev')).toThrow()
+  })
+
+  it('keeps custom website exploration credentials and model independent from Claude Code', () => {
+    const created = createModelConfiguration(legacySettings(), 'custom')
+    let state = { ...legacySettings(), ...created.updates }
+    state = { ...state, ...updateModelConfiguration(state, created.id, {
+      api_key: 'fixture-claude-key', model: 'fixture-claude-model',
+      base_url: 'https://example.com/anthropic',
+      openai_api_key: 'fixture-openai-key', openai_model: 'fixture-openai-model',
+      openai_base_url: 'https://example.org/v1',
+    }) }
+    state = { ...state, ...activateModelConfiguration(state, created.id) }
+
+    expect(state).toMatchObject({ api_key: 'fixture-claude-key', model: 'fixture-claude-model' })
+    expect(resolveWebwrightModelConfig(state)).toMatchObject({
+      api_key: 'fixture-openai-key', model: 'fixture-openai-model', base_url: 'https://example.org/v1',
+    })
   })
 
   it('redacts each key from public responses and includes it in encrypted secret storage', () => {
@@ -120,7 +238,7 @@ describe('multiple model configurations', () => {
       const initial = config.getSettings()
       const first = createModelConfiguration(initial, 'deepseek')
       let state = config.updateSettings(first.updates)
-      state = config.updateSettings(updateModelConfiguration(state, first.id, { model: 'saved-one', api_key: 'persisted-one', context_limit: 250000 }))
+      state = config.updateSettings(updateModelConfiguration(state, first.id, { name: 'saved configuration', model: 'saved-one', api_key: 'persisted-one', context_limit: 250000 }))
       const second = createModelConfiguration(state, 'deepseek')
       state = config.updateSettings(second.updates)
       state = config.updateSettings(updateModelConfiguration(state, second.id, { model: 'saved-two', api_key: 'persisted-two', context_limit: 500000 }))
@@ -131,7 +249,10 @@ describe('multiple model configurations', () => {
         base_url: 'https://example.com/arbitrary/endpoint?version=1', base_url_is_full: true,
         openai_base_url: 'https://example.com/openai/custom?version=2', openai_base_url_is_full: true,
         api_key: 'custom-test-key', model: 'custom-test-model',
+        models_url: 'https://example.org/models?version=1', models_url_is_full: true, models_auth_type: 'auth_token', openai_models_url: 'https://example.org/v1', openai_models_url_is_full: false,
       }))
+      state = config.updateSettings(renameModelConfiguration(config.getSettings(), 'builtin', 'built-in assistant'))
+      config.updateSettings(renameModelConfiguration(state, 'deepseek', 'legacy assistant'))
       const raw = fs.readFileSync(path.join(directory, '.weworker', 'settings.json'), 'utf8')
       expect(raw).not.toContain('persisted-one')
       expect(raw).not.toContain('persisted-two')
@@ -139,10 +260,12 @@ describe('multiple model configurations', () => {
       const restored = config.getSettings()
       expect(restored.active_model_configuration).toBe(first.id)
       expect(restored.context_limit).toBe(250000)
-      expect(restored.model_configurations?.[first.id]).toMatchObject({ model: 'saved-one', api_key: 'persisted-one' })
+      expect(restored.model_configurations?.[first.id]).toMatchObject({ name: 'saved configuration', model: 'saved-one', api_key: 'persisted-one' })
+      expect(restored.model_configuration_names).toMatchObject({ builtin: 'built-in assistant', deepseek: 'legacy assistant' })
       expect(restored.model_configurations?.[second.id]).toMatchObject({ model: 'saved-two', api_key: 'persisted-two' })
       expect(restored.model_deepseek).toBe(initial.model_deepseek)
       expect(restored.model_configurations?.[custom.id]).toMatchObject({
+        models_url: 'https://example.org/models?version=1', models_url_is_full: true, models_auth_type: 'auth_token', openai_models_url: 'https://example.org/v1', openai_models_url_is_full: false,
         base_url: 'https://example.com/arbitrary/endpoint?version=1', base_url_is_full: true,
         openai_base_url: 'https://example.com/openai/custom?version=2', openai_base_url_is_full: true,
       })

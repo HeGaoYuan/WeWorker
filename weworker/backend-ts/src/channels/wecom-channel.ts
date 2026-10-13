@@ -13,6 +13,7 @@
  */
 
 import WebSocket from 'ws'
+import { ProbeError, probeExistingWecomSocket } from './channel-probe.js'
 import { randomUUID } from 'node:crypto'
 import crypto from 'node:crypto'
 
@@ -77,6 +78,16 @@ export class WecomChannel implements Channel {
 
   getStatus(): ChannelStatus {
     return this._status
+  }
+
+  async probeConnection(config: { bot_id: string; secret: string }): Promise<void> {
+    if (config.bot_id !== this._config.bot_id || config.secret !== this._config.secret) {
+      throw new ProbeError('企业微信凭证已修改，请先保存再检测，避免中断正在使用的连接')
+    }
+    if (!this._ws || this._status.status !== 'connected') {
+      throw new ProbeError('企业微信尚未连接，请检查凭证和网络后重试')
+    }
+    await probeExistingWecomSocket(this._ws)
   }
 
   async start(): Promise<void> {

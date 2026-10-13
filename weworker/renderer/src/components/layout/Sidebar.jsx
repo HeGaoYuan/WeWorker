@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
+import { DropdownMenuPortal } from '../common/DropdownMenuPortal.jsx'
 import WorksList, { LABEL_COLORS, LABEL_OPTIONS } from '../sidebar/WorksList.jsx'
 import ScheduledTasksList from '../sidebar/ScheduledTasksList.jsx'
 import Tooltip from '../Tooltip.jsx'
@@ -7,17 +8,26 @@ import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
 import { useExplorationPageStore } from '../../store/exploration-page.js'
 import { leaveWebsiteExploration } from '../../store/website-exploration.js'
+import { showAlert } from '../../store/dialog.js'
 
-export default function Sidebar({ section, collapsed, onCollapse, width }) {
+export default function Sidebar({ section, collapsed, width }) {
   const createWork = useWorksStore((s) => s.createWork)
+  const createProject = useWorksStore((s) => s.createProject)
   const createTask = useScheduledTasksStore((s) => s.createTask)
   const loadTasks = useScheduledTasksStore((s) => s.loadTasks)
   const activeTaskId = useScheduledTasksStore((s) => s.activeTaskId)
   const toolPackageOpen = useToolPackagePageStore((s) => s.open)
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
+  const [showNewMenu, setShowNewMenu] = useState(false)
+  const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [projectName, setProjectName] = useState('')
+  const projectNameInputRef = useRef(null)
   const [showLabelFilter, setShowLabelFilter] = useState(false)
   const labelFilterRef = useRef(null)
+  const newMenuRef = useRef(null)
+  const newMenuPortalRef = useRef(null)
+  const newMenuTriggerRef = useRef(null)
   const hasLabeled = useWorksStore((s) => (Array.isArray(s.works) ? s.works : []).some((w) => w.label))
   const labelFilter = useWorksStore((s) => s.labelFilter)
   const setLabelFilter = useWorksStore((s) => s.setLabelFilter)
@@ -37,30 +47,63 @@ export default function Sidebar({ section, collapsed, onCollapse, width }) {
     return () => document.removeEventListener('mousedown', close)
   }, [showLabelFilter])
 
+  useEffect(() => {
+    if (!showNewMenu) return undefined
+    const close = (event) => {
+      if (newMenuRef.current?.contains(event.target)) return
+      if (newMenuPortalRef.current?.contains(event.target)) return
+      setShowNewMenu(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [showNewMenu])
+
+  useEffect(() => {
+    if (!showProjectDialog || !projectNameInputRef.current) return
+    projectNameInputRef.current.focus()
+    projectNameInputRef.current.select()
+  }, [showProjectDialog])
+
   const handleCreateTask = async () => {
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
     useToolPackagePageStore.getState().closePage()
-    // If there's already an unconfigured task (empty prompt), just select it
-    const tasks = useScheduledTasksStore.getState().tasks
-    const unconfigured = tasks.find(t => !t.prompt_template && t.title === '新定时任务')
-    if (unconfigured) {
-      useScheduledTasksStore.getState().selectTask(unconfigured.id)
-      return
-    }
-    createTask({
+    const task = await createTask({
       title: '新定时任务',
       cron_expression: '0 * * * *',
       prompt_template: '',
       enabled: false,
     })
+    if (!task) showAlert('创建定时任务失败，请确认后端服务已启动后重试')
   }
 
   const handleCreateWork = async () => {
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
     useToolPackagePageStore.getState().closePage()
-    createWork()
+    setShowNewMenu(false)
+    await createWork({ forceNew: true, projectId: null })
+  }
+
+  const handleCreateProject = async () => {
+    if (!await leaveWebsiteExploration()) return
+    useExplorationPageStore.getState().closePage()
+    useToolPackagePageStore.getState().closePage()
+    setShowNewMenu(false)
+    setProjectName('')
+    setShowProjectDialog(true)
+  }
+
+  const submitCreateProject = async () => {
+    const name = projectName.trim()
+    if (!name) return
+    try {
+      const project = await createProject(name)
+      setShowProjectDialog(false)
+      await createWork({ forceNew: true, projectId: project.id })
+    } catch (error) {
+      showAlert(error instanceof Error ? error.message : '创建项目失败，请稍后重试')
+    }
   }
 
   const handleOpenWorksSection = async () => {
@@ -83,6 +126,7 @@ export default function Sidebar({ section, collapsed, onCollapse, width }) {
   const tasksSectionActive = section === 'tasks' && !toolPackageOpen
 
   return (
+    <>
     <div className="workspace-sidebar" style={{
       width: collapsed ? 0 : width,
       minWidth: collapsed ? 0 : width,
@@ -96,11 +140,12 @@ export default function Sidebar({ section, collapsed, onCollapse, width }) {
     }}>
       {section === 'conversation' && (
       <div className="sidebar-task-section" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-        <div style={{
+        <div className="sidebar-conversation-header" style={{
           padding: '10px 12px 4px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          position: 'relative',
           WebkitAppRegion: 'no-drag',
         }}>
           <button
@@ -143,7 +188,7 @@ export default function Sidebar({ section, collapsed, onCollapse, width }) {
                     position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 100,
                     background: 'var(--bg-primary, #fff)', border: '1px solid var(--border, #e5e7eb)',
                     borderRadius: 8, padding: '6px 0', minWidth: 120,
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                    boxShadow: 'none',
                   }}>
                     <button
                       onClick={() => { setLabelFilter(null); setShowLabelFilter(false) }}
@@ -199,53 +244,54 @@ export default function Sidebar({ section, collapsed, onCollapse, width }) {
               </svg>
             </button>
             </Tooltip>
-            <Tooltip text="新任务">
-              <button
-                type="button"
-                data-weworker-new-work="true"
-                onClick={handleCreateWork}
-                style={{
-                WebkitAppRegion: 'no-drag',
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                fontSize: 20,
-                lineHeight: 1,
-                padding: '2px 4px',
-                borderRadius: 4,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-            >
-              +
-            </button>
-            </Tooltip>
-            <Tooltip text="收起侧边栏">
-              <button
-                onClick={onCollapse}
-                style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                fontSize: 14,
-                lineHeight: 1,
-                padding: '2px 4px',
-                borderRadius: 4,
-                display: 'flex',
-                alignItems: 'center',
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
-              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                <line x1="9" y1="3" x2="9" y2="21"/>
-                <polyline points="14 8 10 12 14 16"/>
-              </svg>
-            </button>
-            </Tooltip>
+            <div ref={newMenuRef} style={{ position: 'relative' }}>
+              <Tooltip text="新建对话或项目">
+                <button
+                  type="button"
+                  ref={newMenuTriggerRef}
+                  data-weworker-new-work="true"
+                  aria-haspopup="menu"
+                  aria-expanded={showNewMenu}
+                  onClick={() => setShowNewMenu((current) => !current)}
+                  style={{
+                    WebkitAppRegion: 'no-drag',
+                    background: showNewMenu ? 'var(--bg-hover)' : 'none',
+                    border: 'none',
+                    color: showNewMenu ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: 20,
+                    lineHeight: 1,
+                    padding: '2px 4px',
+                    borderRadius: 4,
+                  }}
+                >
+                  +
+                </button>
+              </Tooltip>
+              <DropdownMenuPortal
+                ref={newMenuPortalRef}
+                open={showNewMenu}
+                anchorRef={newMenuTriggerRef}
+                minWidth={214}
+                align="end"
+                offsetY={6}
+                zIndex={5000}
+                className="sidebar-new-menu"
+              >
+                <div role="menu">
+                  <button type="button" role="menuitem" onClick={handleCreateWork}>
+                    <NewConversationIcon />
+                    <span>新对话</span>
+                    <small>默认工作区</small>
+                  </button>
+                  <button type="button" role="menuitem" onClick={handleCreateProject}>
+                    <NewProjectIcon />
+                    <span>新项目</span>
+                    <small>创建项目文件夹</small>
+                  </button>
+                </div>
+              </DropdownMenuPortal>
+            </div>
           </div>
         </div>
         {showSearch && (
@@ -325,6 +371,56 @@ export default function Sidebar({ section, collapsed, onCollapse, width }) {
       </div>
       )}
     </div>
+    {showProjectDialog && (
+      <div
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShowProjectDialog(false)
+        }}
+        style={{
+          position: 'fixed', inset: 0, zIndex: 2000,
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-start',
+          paddingTop: 116, paddingLeft: width + 72,
+          background: 'rgba(0, 0, 0, 0.08)',
+          WebkitAppRegion: 'no-drag',
+        }}
+      >
+        <form
+          role="dialog"
+          aria-modal="true"
+          aria-label="新建项目"
+          onSubmit={(event) => { event.preventDefault(); submitCreateProject() }}
+          style={{
+            width: 280, padding: 16, border: '1px solid var(--border)',
+            borderRadius: 10, background: 'var(--bg-primary)',
+            color: 'var(--text-primary)',
+            WebkitAppRegion: 'no-drag',
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 12 }}>新建项目</div>
+          <input
+            ref={projectNameInputRef}
+            value={projectName}
+            onChange={(event) => setProjectName(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Escape') setShowProjectDialog(false) }}
+            placeholder="项目名称"
+            aria-label="项目名称"
+            style={{
+              width: '100%', boxSizing: 'border-box', height: 32,
+              padding: '0 9px', border: '1px solid var(--border)',
+              borderRadius: 6, outline: 'none', background: 'var(--bg-primary)',
+              color: 'var(--text-primary)', font: 'inherit', fontSize: 13,
+              WebkitAppRegion: 'no-drag',
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+            <button type="button" onClick={() => setShowProjectDialog(false)} style={projectDialogButtonStyle}>取消</button>
+            <button type="submit" disabled={!projectName.trim()} style={{ ...projectDialogButtonStyle, background: 'var(--accent)', color: '#fff', opacity: projectName.trim() ? 1 : 0.5 }}>创建</button>
+          </div>
+        </form>
+      </div>
+    )}
+    </>
   )
 }
 
@@ -347,6 +443,24 @@ function ScheduledNavIcon({ size = 15 }) {
   )
 }
 
+function NewConversationIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" />
+      <path d="M12 9v5M9.5 11.5h5" />
+    </svg>
+  )
+}
+
+function NewProjectIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2v-9.5a2 2 0 0 1 2-2Z" />
+      <path d="M12 11v5M9.5 13.5h5" />
+    </svg>
+  )
+}
+
 const sidebarSectionButtonStyle = {
   border: 'none',
   background: 'none',
@@ -360,4 +474,16 @@ const sidebarSectionButtonStyle = {
   fontSize: 11,
   fontWeight: 600,
   textAlign: 'left',
+}
+
+const projectDialogButtonStyle = {
+  height: 30,
+  padding: '0 12px',
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  background: 'var(--bg-secondary)',
+  color: 'var(--text-secondary)',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: 12,
 }

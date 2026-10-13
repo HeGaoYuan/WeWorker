@@ -5,6 +5,7 @@ import ComplexTaskPlanPanel from './ComplexTaskPlanPanel.jsx'
 import { useWorksStore } from '../../store/works.js'
 import { applyPausedTodoState, applyStreamingTodoProgress, buildDisplayTodoSnapshots, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { backendFetch } from '../../api/http.js'
+import { showConfirm } from '../../store/dialog.js'
 
 const API = 'http://127.0.0.1:8765'
 const TIME_GAP_MS = 5 * 60 * 1000 // 5 minutes
@@ -91,7 +92,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
   const handleDeleteSelected = async () => {
     if (selected.size === 0) return
     const ids = [...selected].sort((a, b) => a - b).map(i => messages[i]?.id).filter(Boolean)
-    if (!ids.length || !window.confirm(`确定删除 ${ids.length} 条消息？`)) return
+    if (!ids.length || !await showConfirm(`确定删除 ${ids.length} 条消息？`, '删除消息')) return
     exitSelectMode()
     try {
       await backendFetch(`${API}/works/${workId}/messages/delete`, {
@@ -104,7 +105,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
 
   const handleDeleteSingle = async (i) => {
     const msg = messages[i]
-    if (!msg?.id || !window.confirm('确定删除这条消息？')) return
+    if (!msg?.id || !await showConfirm('确定删除这条消息？', '删除消息')) return
     try {
       await backendFetch(`${API}/works/${workId}/messages/delete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -315,7 +316,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
               fontSize: 12,
               fontFamily: 'inherit',
               cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+              boxShadow: 'none',
               display: 'flex',
               alignItems: 'center',
               gap: 4,
@@ -341,7 +342,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
           background: 'var(--bg-secondary)',
           border: '1px solid var(--border)',
           borderRadius: 12,
-          boxShadow: '0 10px 28px rgba(0, 0, 0, 0.10)',
+          boxShadow: 'none',
           padding: '8px 10px 8px 12px',
           display: 'flex',
           alignItems: 'center',
@@ -373,7 +374,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
           background: 'var(--bg-secondary)',
           border: '1px solid var(--border)',
           borderRadius: 12,
-          boxShadow: '0 10px 28px rgba(0, 0, 0, 0.10)',
+          boxShadow: 'none',
           padding: '8px 10px 8px 12px',
           display: 'flex',
           alignItems: 'center',

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { appBotQrState } from '../utils/app-bot-qr-save.js'
 import {
   DEFAULT_RESOURCE_PREVIEW_EXTENSIONS,
   getEffectivePreviewExtensions,
@@ -135,7 +136,7 @@ export const useSettingsStore = create((set, get) => ({
   providers: {
     builtin:   { has_key: false, model: 'ark-code-latest', context_limit: 1000000, readonly: true, added: true, visible: true },
     builtin_dev: { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, readonly: true, added: true, visible: true },
-    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000, added: true, visible: true },
+    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000, added: false, visible: false },
     glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000, added: false, visible: false },
     deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, added: false, visible: false },
     custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token', added: false, visible: false },
@@ -167,6 +168,17 @@ export const useSettingsStore = create((set, get) => ({
     if (!res.ok) throw new Error(data.detail || '添加模型失败')
     set(settingsPatch(data, get()))
     return data.created_provider
+  },
+
+  deleteProvider: async (provider) => {
+    const res = await backendFetch(`${API}/settings/provider/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '删除模型失败')
+    set(settingsPatch(data, get()))
   },
 
   saveProvider: async (provider, updates) => {
@@ -304,6 +316,26 @@ export const useSettingsStore = create((set, get) => ({
     return data.open_browser_allowed_origins || []
   },
 
+  // Keep unsuccessful imports across page unmounts, in memory only.
+  ...appBotQrState(set, get),
+  wecomQrPending: null,
+  wecomQrSaving: false,
+  saveWecomQr: async (credentials = get().wecomQrPending) => {
+    if (get().wecomQrSaving) throw new Error('机器人配置正在保存，请稍候')
+    if (!credentials?.bot_id || !credentials?.secret) throw new Error('未获取完整机器人配置')
+    const pending = { bot_id: credentials.bot_id, secret: credentials.secret }
+    set({ wecomQrPending: pending, wecomQrSaving: true })
+    try {
+      // Omitted fields retain saved owner/permissions and other channels.
+      await get().saveChannels({ wecom: { ...pending, enabled: true } })
+      set({ wecomQrPending: null })
+    } catch {
+      throw new Error('机器人已创建，但配置保存失败。请点击“重试保存”，无需重新扫码。')
+    } finally {
+      set({ wecomQrSaving: false })
+    }
+  },
+
   saveChannels: async (updates) => {
     const res = await backendFetch(`${API}/settings/channels`, {
       method: 'POST',
@@ -312,7 +344,8 @@ export const useSettingsStore = create((set, get) => ({
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '保存失败')
-    set({ channels: data })
+    // Concurrent QR imports must not replace another channel with an older snapshot.
+    set(state => ({ channels: { ...state.channels, ...Object.fromEntries(Object.keys(updates).filter(key => data[key]).map(key => [key, data[key]])) } }))
   },
 
   saveZcfDefaults: async ({ zcfDefaultRole, zcfDefaultMode, zcfLang }) => {

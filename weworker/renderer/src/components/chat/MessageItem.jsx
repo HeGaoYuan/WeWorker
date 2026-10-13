@@ -222,7 +222,7 @@ export default function MessageItem({ message, streaming, compacting = false, is
           style={{
           position: 'fixed', left: menuPos.x, top: menuPos.y, zIndex: 1000,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 8, padding: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          borderRadius: 8, padding: 4, boxShadow: 'none',
           minWidth: 120, userSelect: 'none', WebkitUserSelect: 'none',
         }}>
           <MenuItem label="复制" onClick={handleCopy} />

@@ -3,6 +3,7 @@ import { useExplorationPageStore } from '../../store/exploration-page.js'
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useWorksStore } from '../../store/works.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
+import { showAlert, showConfirm } from '../../store/dialog.js'
 
 const LABEL_COLORS = {
   red: '#ef4444',
@@ -37,21 +38,37 @@ function getWorkFolderName(work) {
   return String(candidate || '默认工作区').trim() || '默认工作区'
 }
 
-function groupWorksByFolder(works) {
+function groupWorksByFolder(works, projects = []) {
   const groups = new Map()
   for (const work of works) {
-    const name = getWorkFolderName(work)
-    if (!groups.has(name)) groups.set(name, [])
-    groups.get(name).push(work)
+    const projectId = work?.project_id || null
+    const project = projectId ? projects.find((item) => item.id === projectId) : null
+    const legacyName = getWorkFolderName(work)
+    const key = project ? `project:${project.id}` : (legacyName === '默认工作区' ? 'default' : `legacy:${legacyName}`)
+    if (!groups.has(key)) groups.set(key, { key, id: project?.id || null, name: project?.name || legacyName, items: [] })
+    groups.get(key).items.push(work)
   }
-  return [...groups.entries()].map(([name, items]) => ({ name, items }))
+  for (const project of projects) {
+    const key = `project:${project.id}`
+    if (!groups.has(key)) groups.set(key, { key, id: project.id, name: project.name, items: [] })
+  }
+  const defaultGroup = groups.get('default')
+  const projectGroups = [...groups.values()].filter((group) => group.id)
+  return [
+    ...(defaultGroup ? [defaultGroup] : []),
+    ...projectGroups,
+  ]
 }
 
 export default function WorksList({ searchQuery = '' }) {
   const works = useWorksStore((s) => Array.isArray(s.works) ? s.works : [])
+  const projects = useWorksStore((s) => Array.isArray(s.projects) ? s.projects : [])
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
   const selectWork = useWorksStore((s) => s.selectWork)
   const deleteWork = useWorksStore((s) => s.deleteWork)
+  const createWork = useWorksStore((s) => s.createWork)
+  const renameProject = useWorksStore((s) => s.renameProject)
+  const deleteProject = useWorksStore((s) => s.deleteProject)
   const labelFilter = useWorksStore((s) => s.labelFilter)
   const closeToolPackagePage = useToolPackagePageStore((s) => s.closePage)
   const closeExplorationPage = useExplorationPageStore((s) => s.closePage)
@@ -64,6 +81,17 @@ export default function WorksList({ searchQuery = '' }) {
       return {}
     }
   })
+  const [hoveredFolderId, setHoveredFolderId] = useState(null)
+  const [renamingProjectId, setRenamingProjectId] = useState(null)
+  const [renameProjectValue, setRenameProjectValue] = useState('')
+  const renameProjectInputRef = useRef(null)
+
+  useEffect(() => {
+    if (renamingProjectId && renameProjectInputRef.current) {
+      renameProjectInputRef.current.focus()
+      renameProjectInputRef.current.select()
+    }
+  }, [renamingProjectId])
 
   const filtered = works.filter((w) => {
     if (labelFilter && w.label !== labelFilter) return false
@@ -76,7 +104,7 @@ export default function WorksList({ searchQuery = '' }) {
     return true
   })
 
-  if (!works.length) {
+  if (!works.length && !projects.length) {
     return (
       <div style={{ padding: '12px', color: 'var(--text-muted)', fontSize: 12 }}>
         No works yet. Click + to start.
@@ -92,7 +120,7 @@ export default function WorksList({ searchQuery = '' }) {
     )
   }
 
-  const folderGroups = groupWorksByFolder(filtered)
+  const folderGroups = groupWorksByFolder(filtered, projects)
   const toggleFolder = (folderName) => {
     setCollapsedFolders((current) => {
       const next = { ...current, [folderName]: !current[folderName] }
@@ -105,23 +133,107 @@ export default function WorksList({ searchQuery = '' }) {
     })
   }
 
+  const startProjectRename = (group) => {
+    if (!group.id) return
+    setRenamingProjectId(group.id)
+    setRenameProjectValue(group.name)
+  }
+
+  const commitProjectRename = async () => {
+    const id = renamingProjectId
+    const name = renameProjectValue.trim()
+    if (!id) return
+    if (!name) {
+      setRenamingProjectId(null)
+      return
+    }
+    const project = projects.find((item) => item.id === id)
+    if (project?.name === name) {
+      setRenamingProjectId(null)
+      return
+    }
+    try {
+      await renameProject(id, name)
+      setRenamingProjectId(null)
+    } catch (error) {
+      showAlert(error instanceof Error ? error.message : '重命名项目失败，请稍后重试')
+    }
+  }
+
+  const createProjectWork = async (projectId) => {
+    if (!await leaveWebsiteExploration()) return
+    closeExplorationPage()
+    closeToolPackagePage()
+    await createWork({ forceNew: true, projectId })
+  }
+
+  const handleDeleteProject = async (group) => {
+    if (!group.id || group.items.length > 0) return
+    if (!await showConfirm(`确定删除项目“${group.name}”及其空文件夹吗？`, '删除项目')) return
+    try {
+      await deleteProject(group.id)
+    } catch (error) {
+      showAlert(error instanceof Error ? error.message : '删除项目失败，请稍后重试')
+    }
+  }
+
   return (
     <div className="work-folder-list">
       {folderGroups.map((group) => {
-        const collapsed = Boolean(collapsedFolders[group.name])
+        const folderKey = group.key
+        const collapsed = Boolean(collapsedFolders[folderKey])
+        // The default workspace has no project id. Keep it in display mode
+        // instead of treating the initial null state as an active rename.
+        const renaming = Boolean(group.id) && renamingProjectId === group.id
         return (
-          <section className={`work-folder-group${collapsed ? ' is-collapsed' : ''}`} key={group.name}>
-            <button
-              type="button"
-              className="work-folder-heading"
-              aria-expanded={!collapsed}
-              onClick={() => toggleFolder(group.name)}
-            >
-              <ChevronIcon size={13} collapsed={collapsed} />
-              <FolderIcon size={15} />
-              <span className="work-folder-heading__name">{group.name}</span>
-              <span className="work-folder-heading__count">{group.items.length}</span>
-            </button>
+          <section
+            className={`work-folder-group${collapsed ? ' is-collapsed' : ''}`}
+            key={folderKey}
+            onMouseEnter={() => setHoveredFolderId(group.id)}
+            onMouseLeave={() => setHoveredFolderId(null)}
+          >
+            <div className="work-folder-heading">
+              <button
+                type="button"
+                className="work-folder-heading__toggle"
+                aria-expanded={!collapsed}
+                onClick={() => toggleFolder(folderKey)}
+              >
+                <ChevronIcon size={13} collapsed={collapsed} />
+                <FolderIcon size={15} />
+                {renaming ? (
+                  <input
+                    ref={renameProjectInputRef}
+                    value={renameProjectValue}
+                    onChange={(event) => setRenameProjectValue(event.target.value)}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') { event.preventDefault(); commitProjectRename() }
+                      if (event.key === 'Escape') { event.preventDefault(); setRenamingProjectId(null) }
+                      event.stopPropagation()
+                    }}
+                    onBlur={commitProjectRename}
+                    aria-label="项目名称"
+                  />
+                ) : (
+                  <span className="work-folder-heading__name">{group.name}</span>
+                )}
+                <span className="work-folder-heading__count">{group.items.length}</span>
+              </button>
+              {group.id && !renaming && (hoveredFolderId === group.id || group.items.length === 0) && (
+                <span className="work-folder-heading__actions">
+                  <button type="button" title="项目中创建新对话" aria-label={`在${group.name}中创建新对话`} onClick={() => createProjectWork(group.id)}>
+                    <ProjectPlusIcon />
+                  </button>
+                  <button type="button" title={group.items.length ? '请先删除项目中的对话' : '删除项目'} aria-label={`删除项目${group.name}`} disabled={group.items.length > 0} onClick={() => handleDeleteProject(group)}>
+                    <ProjectTrashIcon />
+                  </button>
+                  <button type="button" title="重命名项目" aria-label={`重命名项目${group.name}`} onClick={() => startProjectRename(group)}>
+                    <RenameIcon size={12} />
+                  </button>
+                </span>
+              )}
+            </div>
             {!collapsed && (
               <div className="work-folder-items">
                 {group.items.map((w) => (
@@ -152,6 +264,23 @@ function FolderIcon({ size = 15 }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2v-9.5a2 2 0 0 1 2-2Z" />
       <path d="M2.5 9h18" />
+    </svg>
+  )
+}
+
+function ProjectPlusIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2v-9.5a2 2 0 0 1 2-2Z" />
+      <path d="M15 11v5M12.5 13.5h5" />
+    </svg>
+  )
+}
+
+function ProjectTrashIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M10 4h4l1 3H9l1-3ZM7 7l1 13h8l1-13M10 10v7M14 10v7" />
     </svg>
   )
 }
@@ -226,7 +355,7 @@ function WorkItem({ work, active, onSelect, onDelete }) {
       cancelRename()
     } catch (e) {
       console.error('[works] rename failed:', e)
-      window.alert('重命名失败，请稍后重试')
+      showAlert('重命名失败，请稍后重试')
     } finally {
       setIsSavingRename(false)
     }
@@ -382,7 +511,7 @@ const WorkContextMenu = React.forwardRef(({ x, y, currentLabel, onRename, onSele
         position: 'fixed', left: x, top: y, zIndex: 9999,
         background: 'var(--bg-primary, #fff)', border: '1px solid var(--border, #e5e7eb)',
         borderRadius: 8, padding: '6px 0', minWidth: 160,
-        boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+        boxShadow: 'none',
       }}
     >
       <button

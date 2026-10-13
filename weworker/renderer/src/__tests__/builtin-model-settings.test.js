@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { mergeDevelopmentBuiltinProviders, PROVIDERS, useSettingsStore } from '../store/settings.js'
+import { buildSettingsProviderLists } from '../utils/model-selection.js'
 
 const initialState = useSettingsStore.getState()
 const previousFetch = globalThis.fetch
@@ -16,6 +17,11 @@ test('built-in metadata is visible before configuration without claiming a key e
   assert.ok(PROVIDERS.some(provider => provider.id === 'builtin_dev'))
   assert.equal(initialState.providers.builtin.has_key, false)
   assert.equal(initialState.providers.builtin.readonly, true)
+})
+
+test('renderer initial state lists only built-in models before settings load', () => {
+  const { visible } = buildSettingsProviderLists(PROVIDERS, initialState.providers)
+  assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev'])
 })
 
 test('development restores built-ins missing from a stale injected provider list', () => {

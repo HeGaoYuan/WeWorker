@@ -6,6 +6,7 @@ export const SECRET_FIELD_PATHS = [
   ['api_key_glm'],
   ['api_key_deepseek'],
   ['api_key_custom'],
+  ['openai_api_key_custom'],
   ['exploration_api_key'],
   ['channels', 'qq', 'app_secret'],
   ['channels', 'weixin', 'token'],
@@ -26,6 +27,7 @@ function secretFieldPaths(settings: unknown): readonly (readonly string[])[] {
   return [
     ...SECRET_FIELD_PATHS,
     ...Object.keys(configurations || {}).map(id => ['model_configurations', id, 'api_key']),
+    ...Object.keys(configurations || {}).map(id => ['model_configurations', id, 'openai_api_key']),
   ]
 }
 

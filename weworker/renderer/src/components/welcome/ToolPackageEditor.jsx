@@ -1,3 +1,4 @@
+import { DropdownMenuCheck } from '../common/AppDropdownSelect.jsx'
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createSiteScenario, deleteSiteScenario, fetchCustomSkillDirectory, fetchPublicSkillDirectory, importCustomSkillResources, importPublicSkillResources, loadSkillResourcePreview, resetSiteScenario, updateSiteCustomSkills, updateSiteScenario } from '../../api/sites-api.js'
 import { buildPreviewExtensionSet, enrichResourcesForPreview, isReadableResourceName } from '../../utils/resource-preview-extensions.js'
@@ -37,6 +38,7 @@ import {
   findDuplicateCustomSkillNameForSkill,
 } from '../../utils/custom-skill-duplicates.js'
 import { backendFetch } from '../../api/http.js'
+import { showAlert, showConfirm } from '../../store/dialog.js'
 
 const SKILLS_API = 'http://127.0.0.1:8765'
 const PUBLIC_BUILTIN_SKILL_NAMES = new Set(['webcli', 'personal-codewords', 'complex-task-planner'])
@@ -1245,7 +1247,7 @@ export default function ToolPackageEditor({
           setCustomSkillBlockedSaveSiteId(siteId)
           return
         }
-        window.alert(e instanceof Error ? e.message : '保存自定义 skill 失败')
+        showAlert(e instanceof Error ? e.message : '保存自定义 skill 失败')
         await onReloadSites?.()
       }
     }, 700)
@@ -1298,7 +1300,7 @@ export default function ToolPackageEditor({
           setPublicCustomSaveTick(0)
           return
         }
-        window.alert(e instanceof Error ? e.message : '保存公共 skill 失败')
+        showAlert(e instanceof Error ? e.message : '保存公共 skill 失败')
       }
     }, 700)
     return () => clearTimeout(timer)
@@ -1412,14 +1414,14 @@ export default function ToolPackageEditor({
     setResizingSide(side)
   }
 
-  const confirmDiscardScenarioChanges = () => !scenarioDirty || window.confirm(UNSAVED_SCENARIO_MESSAGE)
+  const confirmDiscardScenarioChanges = async () => !scenarioDirty || await showConfirm(UNSAVED_SCENARIO_MESSAGE, '未保存的修改')
 
   const markScenarioCleanAfterLeave = () => {
     if (scenarioDirty) setScenarioDirty(false)
   }
 
-  const handleClose = () => {
-    if (!confirmDiscardScenarioChanges()) return
+  const handleClose = async () => {
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     onClose?.()
   }
@@ -1442,34 +1444,34 @@ export default function ToolPackageEditor({
       }
     } catch (error) {
       console.error('[tool-package] refresh skills failed:', error)
-      window.alert(error instanceof Error ? error.message : '刷新 skills 失败')
+      showAlert(error instanceof Error ? error.message : '刷新 skills 失败')
     } finally {
       setRefreshingSkills(false)
     }
   }
 
-  const selectTool = (tool) => {
+  const selectTool = async (tool) => {
     const nextKey = toolKey(tool)
     if (workspaceTab === WORKSPACE_TAB_SKILLS && selectedToolKey === nextKey) return
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     setSelectedToolKey(nextKey)
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
   }
 
-  const selectScenario = (scenario) => {
+  const selectScenario = async (scenario) => {
     const nextKey = scenarioKey(scenario)
     if (workspaceTab === WORKSPACE_TAB_SCENARIOS && selectedScenarioId === nextKey) return
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     setSelectedScenarioId(nextKey)
     setWorkspaceTab(WORKSPACE_TAB_SCENARIOS)
   }
 
-  const switchWorkspaceTab = (nextTab) => {
+  const switchWorkspaceTab = async (nextTab) => {
     if (nextTab === workspaceTab) return
     if (workspaceTab === WORKSPACE_TAB_SCENARIOS && nextTab === WORKSPACE_TAB_SKILLS) {
-      if (!confirmDiscardScenarioChanges()) return
+      if (!await confirmDiscardScenarioChanges()) return
       markScenarioCleanAfterLeave()
     }
     setWorkspaceTab(nextTab)
@@ -1563,7 +1565,7 @@ export default function ToolPackageEditor({
       throw new Error('官方场景不可删除')
     }
     const scenarioName = selectedScenario.title || '未命名场景'
-    if (!window.confirm(`确定删除自定义场景「${scenarioName}」吗？删除后无法直接恢复。`)) return false
+    if (!await showConfirm(`确定删除自定义场景「${scenarioName}」吗？删除后无法直接恢复。`, '删除场景')) return false
     const scenarioSiteId = resolveScenarioSiteId(selectedScenario, scenarioSiteIds, site.id)
     const apiScenarioId = resolveScenarioApiId(selectedScenario)
     const listKey = scenarioKey(selectedScenario)
@@ -1582,12 +1584,12 @@ export default function ToolPackageEditor({
 
   const addScenario = async () => {
     if (creatingScenario) return
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     const scenarioSiteId = selectedScenarioSiteId
     const scenarioSite = editableSites.find((item) => item.id === scenarioSiteId) || site
     if (!scenarioSiteId) {
-      window.alert('请先选择站点')
+      showAlert('请先选择站点')
       return
     }
     const id = makeScenarioId()
@@ -1615,7 +1617,7 @@ export default function ToolPackageEditor({
       await onReloadSites?.()
     } catch (error) {
       console.error('[tool-package] create scenario failed:', error)
-      window.alert(error instanceof Error ? error.message : '新增场景失败')
+      showAlert(error instanceof Error ? error.message : '新增场景失败')
     } finally {
       setCreatingScenario(false)
     }
@@ -1647,7 +1649,7 @@ export default function ToolPackageEditor({
   }
 
   const addCustomSkill = async (baseTool) => {
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     if (isPublicScope) {
       const next = baseTool
@@ -1675,7 +1677,7 @@ export default function ToolPackageEditor({
   const deleteCustomSkill = async () => {
     if (!selectedIsCustom || !selectedTool) return
     const skillName = selectedTool.name || selectedTool.id || '未命名 skill'
-    if (!window.confirm(`确定删除自定义 skill「${skillName}」吗？删除后无法直接恢复。`)) return
+    if (!await showConfirm(`确定删除自定义 skill「${skillName}」吗？删除后无法直接恢复。`, '删除 Skill')) return
     if (selectedTool.source === 'public-custom') {
       const diskName = selectedTool.id || selectedTool.name
       try {
@@ -2016,6 +2018,7 @@ function FilterSelect({
               className={dropdownMenuItemClassName({ selected: value === option.value })}
             >
               {option.label}
+              <DropdownMenuCheck selected={value === option.value} />
             </button>
           ))}
         </div>
@@ -2167,6 +2170,7 @@ function DropdownSelect({
               className={dropdownMenuItemClassName({ selected: value === option.value })}
             >
               {option.label}
+              <DropdownMenuCheck selected={value === option.value} />
             </button>
           ))}
         </div>
@@ -2414,6 +2418,7 @@ function ScenarioSiteSelect({ sites, selectedId, onChange }) {
                 className={dropdownMenuItemClassName({ selected })}
               >
                 {site.name}
+                <DropdownMenuCheck selected={selected} />
               </button>
             )
           })}
@@ -3265,7 +3270,7 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
       setResourceImportProgress((current) => (current?.status === 'done' ? null : current))
     } catch (error) {
       console.error('[tool-package] upload resource files failed:', error)
-      window.alert(error instanceof Error ? error.message : '上传文件失败')
+      showAlert(error instanceof Error ? error.message : '上传文件失败')
       setResourceImportProgress(null)
     }
   }
@@ -3306,18 +3311,18 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
       setResourceImportProgress((current) => (current?.status === 'done' ? null : current))
     } catch (error) {
       console.error('[tool-package] upload resource folder failed:', error)
-      window.alert(error instanceof Error ? error.message : '上传文件夹失败')
+      showAlert(error instanceof Error ? error.message : '上传文件夹失败')
       setResourceImportProgress(null)
     }
   }
 
-  const handleDeleteResource = (relativePath, { isFolder = false } = {}) => {
+  const handleDeleteResource = async (relativePath, { isFolder = false } = {}) => {
     const normalized = normalizeResourcePath(relativePath)
     const name = normalized.split('/').filter(Boolean).pop() || normalized
     const confirmMessage = isFolder
       ? `确定删除文件夹「${name}」及其中的所有文件吗？`
       : `确定删除资源文件「${name}」吗？`
-    if (!window.confirm(confirmMessage)) return
+    if (!await showConfirm(confirmMessage, '删除资源')) return
     const nextResources = isFolder
       ? removeResourcePath(resources, relativePath)
       : removeResourceFile(resources, relativePath)
@@ -3342,7 +3347,7 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
 
   const handleRequestPreview = async (relativePath, resource) => {
     if (!resource || resource.is_directory || resource.readable === true) return
-    if (!window.confirm(buildForcePreviewConfirmMessage(resource))) return
+    if (!await showConfirm(buildForcePreviewConfirmMessage(resource), '预览资源')) return
 
     const normalizedPath = normalizeResourcePath(relativePath)
     markResourceExpanded(normalizedPath)
@@ -3350,7 +3355,7 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
     try {
       await loadResourcePreview(normalizedPath)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : '预览失败')
+      showAlert(error instanceof Error ? error.message : '预览失败')
     }
   }
 
@@ -3483,7 +3488,7 @@ function OpenSkillFolderButton({ site, tool }) {
           dirPath = data.path
         } catch (error) {
           if (error instanceof Error && error.message === 'Skill not found') {
-            window.alert('Skill folder not found. Please refresh the skill list.')
+            showAlert('Skill folder not found. Please refresh the skill list.')
             return
           }
           dirPath = await window.electronAPI?.resolveSkillDirectory?.({
@@ -3514,22 +3519,22 @@ function OpenSkillFolderButton({ site, tool }) {
           })
         }
       } else {
-        window.alert('当前 skill 没有本地文件夹')
+        showAlert('当前 skill 没有本地文件夹')
         return
       }
       if (!dirPath) {
-        window.alert('无法获取 skill 文件夹路径')
+        showAlert('无法获取 skill 文件夹路径')
         return
       }
       const openPath = window.electronAPI?.openPath
       if (!openPath) {
-        window.alert('当前环境无法打开文件夹')
+        showAlert('当前环境无法打开文件夹')
         return
       }
       const err = await openPath(dirPath)
-      if (err) window.alert(err)
+      if (err) showAlert(err)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : '打开文件夹失败')
+      showAlert(error instanceof Error ? error.message : '打开文件夹失败')
     } finally {
       setOpening(false)
     }
@@ -5010,7 +5015,7 @@ const builtinHelpPanelStyle = {
   border: '1px solid var(--border)',
   borderRadius: 10,
   background: 'var(--bg-primary)',
-  boxShadow: '0 14px 36px rgba(15, 23, 42, 0.16)',
+  boxShadow: 'none',
   padding: '12px 14px',
   boxSizing: 'border-box',
 }

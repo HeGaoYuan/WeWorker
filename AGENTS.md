@@ -53,6 +53,7 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 - 测试、Fixture、示例和文档中的本地路径不得包含真实用户名、真实组织名或真实机器路径。需要覆盖 Windows 绝对路径逻辑时，使用中性虚构路径，例如 `C:/weworker-fixtures/user-files` 或 `C:/Users/weworker-test/.weworker/user-files`；不得使用来自开发者电脑的 `C:/Users/<真实用户名>/...`、`D:/workspace/<真实项目>/...` 等路径。
 - 不在日志记录模型 Key、Token、密钥或用户数据路径。
 - 敏感信息扫描不放入公开自动化流程；合并前在受控环境进行检查。
+- 特殊情况：内置模型的真实api key允许写死进入代码，但不提供UI展示，该部分api key默认可服务端进行控制，与客户端完全隔离。
 
 ## 验证要求
 

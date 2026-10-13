@@ -211,12 +211,19 @@ export interface Settings {
   context_limit_deepseek: number
 
   api_key_custom: string
+  openai_api_key_custom: string
 
   model_custom: string
+  openai_model_custom: string
 
   context_limit_custom: number
 
   base_url_custom: string
+  models_url_custom?: string
+  models_url_is_full_custom?: boolean
+  models_auth_type_custom?: import('./model-catalog-config.js').ModelCatalogAuthType
+  openai_models_url_custom?: string
+  openai_models_url_is_full_custom?: boolean
   base_url_is_full_custom?: boolean
 
   openai_base_url_custom: string
@@ -235,6 +242,7 @@ export interface Settings {
   added_providers: string[]
 
   model_configurations?: Record<string, import('./model-configurations.js').ModelConfiguration>
+  model_configuration_names?: Record<string, string>
   active_model_configuration?: string
   active_auth_type?: import('./anthropic-auth.js').AnthropicAuthType
 
@@ -344,12 +352,17 @@ const DEFAULTS: Settings = {
   context_limit_deepseek: DEFAULT_CONTEXT_LIMIT,
 
   api_key_custom: '',
+  openai_api_key_custom: '',
 
   model_custom: '',
+  openai_model_custom: '',
 
   context_limit_custom: DEFAULT_CONTEXT_LIMIT,
 
   base_url_custom: '',
+  models_url_custom: '',
+  models_auth_type_custom: 'inherit',
+  openai_models_url_custom: '',
   base_url_is_full_custom: false,
 
   api_query_llm_route: true,
@@ -369,13 +382,13 @@ const DEFAULTS: Settings = {
 
   channels: {
 
-    qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
+    weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    feishu: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    feishu: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
   },
 
@@ -471,29 +484,30 @@ function readRawSettingsFile(): Record<string, unknown> | null {
 
 
 
-function normalizeOwnerPermissionLevel(value: unknown): OwnerPermissionLevel {
+function normalizeOwnerPermissionLevel(value: unknown, ownerId: string): OwnerPermissionLevel {
+  if (!ownerId?.trim()) return 'qa_only'
   const next = String(value ?? '').trim()
   if (next === 'qa_only' || next === 'no_bash' || next === 'full') return next
-  return 'full'
+  return 'qa_only'
 }
 
 function normalizeChannelsConfig(channels: ChannelsConfig): ChannelsConfig {
   return {
     qq: {
       ...channels.qq,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.qq.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.qq.owner_permission_level, channels.qq.owner_user_id),
     },
     weixin: {
       ...channels.weixin,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.weixin.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.weixin.owner_permission_level, channels.weixin.owner_user_id),
     },
     wecom: {
       ...channels.wecom,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level, channels.wecom.owner_user_id),
     },
     feishu: {
       ...channels.feishu,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.feishu.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.feishu.owner_permission_level, channels.feishu.owner_user_id),
     },
   }
 }

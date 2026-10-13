@@ -21,6 +21,7 @@ import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeI
 import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
 import ContextPanel from './ContextPanel.jsx'
 import ModelSelector from './ModelSelector.jsx'
+import { normalizeThinkingEffort } from '../../utils/thinking-effort.js'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
@@ -91,6 +92,14 @@ export default function InputBar({
   const textAttachmentThreshold = Math.max(1, Number(pasteTextAttachmentThreshold) || DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD)
   const overAttachmentLimit = attachments.length > attachmentLimit
   const [modelSelectionPending, setModelSelectionPending] = useState(false)
+  const [thinkingEffort, setThinkingEffort] = useState(() => {
+    try { return normalizeThinkingEffort(window.localStorage.getItem('weworker-thinking-effort')) } catch { return 'medium' }
+  })
+  const handleThinkingEffortChange = useCallback((value) => {
+    const next = normalizeThinkingEffort(value)
+    setThinkingEffort(next)
+    try { window.localStorage.setItem('weworker-thinking-effort', next) } catch {}
+  }, [])
   const inputDisabled = !!disabled || !!streaming || modelSelectionPending
   const isCommandMode = String(text || '').trimStart().startsWith('!')
   const [attachmentNotice, setAttachmentNotice] = useState('')
@@ -546,7 +555,7 @@ export default function InputBar({
         onTextChange('')
         onAttachmentsChange?.([])
         setAttachmentNotice('')
-        onSend(trimmed, attachments)
+        onSend(trimmed, attachments, thinkingEffort)
         textareaRef.current?.focus()
         return
       }
@@ -559,7 +568,7 @@ export default function InputBar({
       textareaRef.current?.focus()
       return
     }
-    onSend(trimmed, attachments)
+    onSend(trimmed, attachments, thinkingEffort)
     onTextChange('')
     onAttachmentsChange?.([])
     setAttachmentNotice('')
@@ -627,7 +636,7 @@ export default function InputBar({
     border: '1px solid color-mix(in srgb, var(--border) 68%, var(--text-muted))',
     borderRadius: 16,
     padding: 0,
-    boxShadow: '0 10px 28px rgba(0,0,0,0.07)',
+    boxShadow: 'none',
     pointerEvents: 'auto',
     overflow: 'hidden',
   }
@@ -776,7 +785,12 @@ export default function InputBar({
       </div>
       <div className="chat-input-toolbar-actions">
         <ContextPanel snapshot={contextSnapshot} contextLimit={contextLimit} />
-        <ModelSelector disabled={!!disabled || !!streaming} onPendingChange={setModelSelectionPending} />
+        <ModelSelector
+          disabled={!!disabled || !!streaming}
+          onPendingChange={setModelSelectionPending}
+          thinkingEffort={thinkingEffort}
+          onThinkingEffortChange={handleThinkingEffortChange}
+        />
         {actionBtn}
       </div>
     </div>
@@ -794,7 +808,7 @@ export default function InputBar({
       zIndex: 4000,
       border: '1px solid color-mix(in srgb, var(--border) 75%, var(--text-muted))',
       borderRadius: 12,
-      boxShadow: '0 12px 32px rgba(0,0,0,0.14)',
+      boxShadow: 'none',
       padding: SLASH_MENU_SHELL_PADDING,
     }
 

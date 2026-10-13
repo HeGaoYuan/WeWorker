@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { ConfigProvider } from 'antd'
+import { MinusOutlined, BorderOutlined, CloseOutlined } from '@ant-design/icons'
+import { RestoreWindowIcon } from './components/icons/PanelIcons'
 import zhCN from 'antd/locale/zh_CN'
 import Sidebar from './components/layout/Sidebar.jsx'
 import AppRail from './components/layout/AppRail.jsx'
@@ -9,6 +11,7 @@ import Tooltip from './components/Tooltip.jsx'
 import CapabilitiesToggleButton from './components/capabilities/CapabilitiesToggleButton.jsx'
 import GlobalFileDropLayer from './components/files/GlobalFileDropLayer.jsx'
 import NativeTitleTooltipLayer from './components/NativeTitleTooltipLayer.jsx'
+import DialogHost from './components/DialogHost.jsx'
 import { FolderIcon } from './components/icons/PanelIcons.jsx'
 import { useCapabilitiesPanelStore } from './store/capabilities-panel.js'
 import { useWorksStore } from './store/works.js'
@@ -44,6 +47,20 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [showExtensionGuide, setShowExtensionGuide] = useState(false)
+  const isMac = window.electronAPI?.platform === 'darwin'
+  const [windowMaximized, setWindowMaximized] = useState(false)
+
+  useEffect(() => {
+    if (isMac) return undefined
+    let active = true
+    window.electronAPI?.isWindowMaximized?.().then((value) => { if (active) setWindowMaximized(value === true) })
+    return () => { active = false }
+  }, [isMac])
+
+  useEffect(() => {
+    if (isMac) return undefined
+    return window.electronAPI?.onWindowMaximizedState?.((value) => setWindowMaximized(value === true))
+  }, [isMac])
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(v => setAppVersion(v || ''))
@@ -194,12 +211,14 @@ export default function App() {
   }
 
   const handleToggleUserFilesPanel = () => {
+    setShowSettings(false)
     useCapabilitiesPanelStore.getState().closePanel()
     useTerminalStore.getState().closePanel()
     toggleUserFilesPanel()
   }
 
   const handleOpenConversation = async () => {
+    setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
     setActiveSidebarSection('conversation')
@@ -215,6 +234,7 @@ export default function App() {
   }
 
   const handleOpenTasks = async () => {
+    setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
     setActiveSidebarSection('tasks')
@@ -228,6 +248,7 @@ export default function App() {
   }
 
   const handleOpenSkills = async () => {
+    setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
     useWorksStore.setState({ activeWorkId: null })
@@ -239,6 +260,7 @@ export default function App() {
   }
 
   const handleOpenExploration = async () => {
+    setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
     useToolPackagePageStore.getState().closePage()
     useWorksStore.setState({ activeWorkId: null })
@@ -250,6 +272,7 @@ export default function App() {
   }
 
   const handleOpenWebsiteExploration = async () => {
+    setShowSettings(false)
     if (websiteOpen) return
     if (!await leaveWebsiteExploration()) return
     useToolPackagePageStore.getState().closePage()
@@ -301,16 +324,18 @@ export default function App() {
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
-        paddingLeft: 80, /* leave room for macOS traffic lights */
-        paddingRight: 12,
+        paddingLeft: isMac ? 80 : 12,
+        paddingRight: isMac ? 12 : 0,
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', userSelect: 'none', gap: 8 }}>
-          {sidebarCollapsed && !showSettings && !focusedWorkspaceOpen && (
+          {!showSettings && !focusedWorkspaceOpen && (
             <>
-              <Tooltip text="展开侧边栏">
+              <Tooltip text={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}>
                 <button
-                  onClick={() => setSidebarCollapsed(false)}
+                  type="button"
+                  aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                  onClick={() => setSidebarCollapsed((current) => !current)}
                   style={{
                     WebkitAppRegion: 'no-drag',
                     background: 'none',
@@ -325,15 +350,29 @@ export default function App() {
                   onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
                   onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <line x1="9" y1="3" x2="9" y2="21"/>
+                  <svg
+                    className={`app-sidebar-toggle-icon${sidebarCollapsed ? ' is-collapsed' : ''}`}
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="9" y1="3" x2="9" y2="21" />
+                    <polyline points="14 8 10 12 14 16" />
                   </svg>
                 </button>
               </Tooltip>
-              <Tooltip text="新任务">
+              <Tooltip text="新对话">
                 <button
-                  onClick={createWork}
+                  type="button"
+                  aria-label="新对话"
+                  onClick={() => createWork({ forceNew: true, projectId: null })}
                   style={{
                     WebkitAppRegion: 'no-drag',
                     background: 'none',
@@ -361,78 +400,38 @@ export default function App() {
           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 2 }}>v{appVersion || ''}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, WebkitAppRegion: 'no-drag' }}>
-        {!focusedWorkspaceOpen && !showSettings && (
-        <Tooltip text={userFilesOpen ? '收起用户目录' : '打开用户目录'}>
-          <button
-            type="button"
-            onClick={handleToggleUserFilesPanel}
-            aria-label={userFilesOpen ? '收起用户目录' : '打开用户目录'}
-            aria-pressed={userFilesOpen}
-            style={{
-              width: 28,
-              height: 28,
-              background: userFilesOpen ? 'var(--bg-hover)' : 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '4px',
-              borderRadius: 4,
-              color: userFilesOpen ? 'var(--accent)' : 'var(--text-secondary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <FolderIcon size={16} />
-          </button>
-        </Tooltip>
-        )}
-        <Tooltip text={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>
-          <button
-            onClick={toggleTheme}
-            className={`app-theme-toggle app-theme-toggle--${theme}`}
-            aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-          >
-            <span key={theme} className="app-theme-toggle__icon" aria-hidden="true">
-              {theme === 'dark' ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="5" />
-                  <line x1="12" y1="1" x2="12" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="23" />
-                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                  <line x1="1" y1="12" x2="3" y2="12" />
-                  <line x1="21" y1="12" x2="23" y2="12" />
-                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-              )}
-            </span>
-          </button>
-        </Tooltip>
-        {!focusedWorkspaceOpen && !showSettings && <CapabilitiesToggleButton variant="titlebar" />}
         <UpdatePrompt />
+        {!isMac && (
+          <div className="app-window-controls" aria-label="窗口控制">
+            <button type="button" className="app-window-control" aria-label="最小化" onClick={() => window.electronAPI?.minimizeWindow?.()}>
+              <MinusOutlined aria-hidden="true" />
+            </button>
+            <button type="button" className="app-window-control" aria-label={windowMaximized ? '还原窗口' : '最大化'} onClick={() => window.electronAPI?.toggleMaximizeWindow?.()}>
+              {windowMaximized ? <RestoreWindowIcon size={12} /> : <BorderOutlined aria-hidden="true" />}
+            </button>
+            <button type="button" className="app-window-control app-window-control--close" aria-label="关闭窗口" onClick={() => window.electronAPI?.closeWindow?.()}>
+              <CloseOutlined aria-hidden="true" />
+            </button>
+          </div>
+        )}
         </div>
       </div>
 
-      <div className="app-workspace" data-workspace-content style={{ display: showSettings ? 'none' : 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div className="app-workspace" data-workspace-content style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <AppRail
-          activeSection={activeSidebarSection}
+          activeSection={showSettings ? 'settings' : activeSidebarSection}
+          settingsOpen={showSettings}
           onOpenConversation={handleOpenConversation}
           onOpenTasks={handleOpenTasks}
           onOpenSkills={handleOpenSkills}
           onOpenExploration={handleOpenExploration}
           onOpenWebsiteExploration={handleOpenWebsiteExploration}
-          onOpenExtension={() => setShowExtensionGuide(true)}
-          onOpenFiles={handleToggleUserFilesPanel}
-          onOpenSettings={() => setShowSettings(true)}
+          onOpenExtension={() => { setShowSettings(false); setShowExtensionGuide(true) }}
+          onOpenSettings={() => setShowSettings((current) => !current)}
         />
-        {!focusedWorkspaceOpen && (
+        {!showSettings && !focusedWorkspaceOpen && (
           <>
-            <Sidebar section={activeSidebarSection} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(true)} width={sidebarWidth} />
+            <Sidebar section={activeSidebarSection} collapsed={sidebarCollapsed} width={sidebarWidth} />
             {!sidebarCollapsed && (
               <div
                 onMouseDown={onResizeStart}
@@ -452,13 +451,54 @@ export default function App() {
             )}
           </>
         )}
-        <MainArea onOpenSettings={() => setShowSettings(true)} />
+        <div className="app-main-column">
+          {!showSettings && !focusedWorkspaceOpen && (
+            <div className="workspace-toolbar" aria-label="工作区工具栏">
+              <div id="workspace-toolbar-context" className="workspace-toolbar__context" />
+              <div className="workspace-toolbar__actions">
+                <Tooltip text={userFilesOpen ? '收起用户目录' : '打开用户目录'}>
+                  <button
+                    type="button"
+                    onClick={handleToggleUserFilesPanel}
+                    aria-label={userFilesOpen ? '收起用户目录' : '打开用户目录'}
+                    aria-pressed={userFilesOpen}
+                    className={`workspace-toolbar__button${userFilesOpen ? ' is-active' : ''}`}
+                  >
+                    <FolderIcon size={16} />
+                  </button>
+                </Tooltip>
+                <Tooltip text={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}>
+                  <button
+                    type="button"
+                    onClick={toggleTheme}
+                    className={`workspace-toolbar__button app-theme-toggle app-theme-toggle--${theme}`}
+                    aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+                  >
+                    <span key={theme} className="app-theme-toggle__icon" aria-hidden="true">
+                      {theme === 'dark' ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+                      )}
+                    </span>
+                  </button>
+                </Tooltip>
+                <CapabilitiesToggleButton variant="titlebar" />
+              </div>
+            </div>
+          )}
+          {showSettings
+            ? <SettingsPage onClose={() => setShowSettings(false)} />
+            : <MainArea onOpenSettings={() => setShowSettings((current) => !current)} />}
+        </div>
       </div>
-      {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
       {showExtensionGuide && <ExtensionGuide onClose={() => setShowExtensionGuide(false)} />}
       <GlobalFileDropLayer />
       <WebsiteExplorationGuard />
       <NativeTitleTooltipLayer />
+      <DialogHost />
     </div>
     </ConfigProvider>
   )

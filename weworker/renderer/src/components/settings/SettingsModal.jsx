@@ -1,5 +1,7 @@
+import AppSwitch from '../common/AppSwitch.jsx'
+import AppDropdownInput from '../common/AppDropdownInput.jsx'
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { MinusOutlined, PlusOutlined } from '@ant-design/icons'
+import { ApiOutlined, AppstoreAddOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DisconnectOutlined, DownOutlined, LinkOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import { isBuiltinProvider } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
@@ -8,8 +10,9 @@ import LogsTab from './LogsTab.jsx'
 import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
+import { DropdownMenuPortal, useDropdownDismiss } from '../common/DropdownMenuPortal.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, buildProbeResultRows, buildProviderProbeTargets, buildSettingsProviderLists, getVisibleModelRefreshDetail, shouldShowModelRefreshFailure } from '../../utils/model-selection.js'
+import { buildModelOptions, buildModelCatalogAccess, getModelCatalogIssue, getModelCatalogStatus, buildProbeResultRows, buildProviderProbeTargets, buildSettingsProviderLists } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
@@ -18,6 +21,7 @@ import './settings-theme.css'
 import { backendFetch } from '../../api/http.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
 import { getAnthropicUrlHint, getOpenAiUrlHint } from '../../utils/provider-url.js'
+import { showConfirm } from '../../store/dialog.js'
 
 const API = 'http://127.0.0.1:8765'
 const OFFICIAL_URL = 'http://weworker.weoa.com'
@@ -157,9 +161,8 @@ export default function SettingsPage({ onClose }) {
               ['logs', '日志'],
               ['about', '关于'],
             ].find(([key]) => key === tab)?.[1] || '设置'}</h3>
-            <button type="button" className="settings-btn settings-btn-secondary" onClick={onClose} autoFocus aria-label="返回工作界面">返回</button>
           </div>
-          <div className={`settings-body${tab === 'model' ? ' settings-body--model' : ''}`}>
+          <div className={`settings-body${tab === 'model' || tab === 'channels' ? ' settings-body--model' : ''}`}>
             {tab === 'channels' && <ChannelsTab />}
             {tab === 'permissions' && <PermissionsTab />}
             {tab === 'config' && <ConfigTab />}
@@ -322,18 +325,13 @@ function AboutTab({ appVersion, commitHash }) {
         >
           <div className="settings-update-settings">
             <label className="settings-switch-row">
-              <input
-                type="checkbox"
-                role="switch"
+              <AppSwitch
                 checked={updateSettings.autoCheckEnabled !== false}
                 onChange={(event) => setUpdateSettings((current) => ({
                   ...current,
                   autoCheckEnabled: event.target.checked,
                 }))}
               />
-              <span className="settings-switch-track" aria-hidden="true">
-                <span className="settings-switch-thumb" />
-              </span>
               <span className="settings-switch-label">启动自动检测更新</span>
             </label>
             <div className="settings-update-interval">
@@ -1037,15 +1035,15 @@ function ConfigTab() {
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
             <div className="settings-pill settings-pill--wide">
-              <select
-                className="settings-select"
+              <AppDropdownSelect
                 value={draftMatchMode}
-                onChange={(e) => { setDraftMatchMode(e.target.value); setBlacklistMessage(null) }}
-                style={{ width: 148, flexShrink: 0 }}
-              >
-                <option value="exact_path">路径精确匹配</option>
-                <option value="regex_path">路径正则匹配</option>
-              </select>
+                options={[{ value: 'exact_path', label: '路径精确匹配' }, { value: 'regex_path', label: '路径正则匹配' }]}
+                onChange={(value) => { setDraftMatchMode(value); setBlacklistMessage(null) }}
+                ariaLabel="黑名单匹配方式"
+                className="settings-blacklist-dropdown"
+                minMenuWidth={148}
+                matchAnchorWidth
+              />
               <input
                 className="settings-pill-input"
                 value={draftPattern}
@@ -1064,15 +1062,15 @@ function ConfigTab() {
                   const invalid = validateBlacklistEntry(entry)
                   return (
                     <div key={`${entry.type}-${entry.pattern}-${index}`} className="settings-pill settings-pill--wide">
-                      <select
-                        className="settings-select"
+                      <AppDropdownSelect
                         value={entry.type === 'regex_path' ? 'regex_path' : 'exact_path'}
-                        onChange={(e) => handleUpdateBlacklistEntry(index, 'type', e.target.value)}
-                        style={{ width: 148, flexShrink: 0 }}
-                      >
-                        <option value="exact_path">路径精确匹配</option>
-                        <option value="regex_path">路径正则匹配</option>
-                      </select>
+                        options={[{ value: 'exact_path', label: '路径精确匹配' }, { value: 'regex_path', label: '路径正则匹配' }]}
+                        onChange={(value) => handleUpdateBlacklistEntry(index, 'type', value)}
+                        ariaLabel="黑名单匹配方式"
+                        className="settings-blacklist-dropdown"
+                        minMenuWidth={148}
+                        matchAnchorWidth
+                      />
                       <input
                         className="settings-pill-input"
                         value={entry.pattern}
@@ -1240,21 +1238,53 @@ function ConfigTab() {
 }
 
 function ModelTab() {
-  const { activeProvider, providers, addProvider, saveProvider, activateProvider } = useSettingsStore()
+  const { activeProvider, providers, addProvider, deleteProvider, saveProvider, activateProvider } = useSettingsStore()
   const [selectedProvider, setSelectedProvider] = useState(activeProvider || null)
+  const [providerSearch, setProviderSearch] = useState('')
   const [addPickerOpen, setAddPickerOpen] = useState(false)
   const [addingProvider, setAddingProvider] = useState(null)
+  const [deletingProvider, setDeletingProvider] = useState(null)
+  const addTriggerRef = useRef(null)
+  const addMenuRef = useRef(null)
+  const closeAddPicker = () => setAddPickerOpen(false)
+  useDropdownDismiss(addPickerOpen, closeAddPicker, addTriggerRef, addMenuRef)
+
+  useEffect(() => {
+    if (!addPickerOpen) return undefined
+    const frame = requestAnimationFrame(() => addMenuRef.current?.querySelector('button')?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [addPickerOpen])
+
+  const handleAddMenuKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeAddPicker()
+      addTriggerRef.current?.focus()
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const items = [...(addMenuRef.current?.querySelectorAll('button:not(:disabled)') || [])]
+      const index = items.indexOf(document.activeElement)
+      const next = (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+      items[next]?.focus()
+    }
+  }
   const [advancedProviders, setAdvancedProviders] = useState({})
+  const [catalogAddressExpanded, setCatalogAddressExpanded] = useState({})
   const [forms, setForms] = useState({})
+  const formNameTouched = useRef({})
   const [catalogs, setCatalogs] = useState({})
-  const [catalogLoading, setCatalogLoading] = useState(null)
+  const [catalogLoading, setCatalogLoading] = useState({})
   const [probeResults, setProbeResults] = useState({})
+  const [probeChecks, setProbeChecks] = useState({})
+  const [probeExpanded, setProbeExpanded] = useState({})
+  const [probeLogsVisible, setProbeLogsVisible] = useState({})
   const catalogRequestIds = useRef({})
   const probeRequestIds = useRef({})
   const [saving, setSaving] = useState(null)
   const [saved, setSaved] = useState(null)
   const [activating, setActivating] = useState(null)
-  const [testing, setTesting] = useState(null)
+  const [testing, setTesting] = useState({})
+  const testingProviders = useRef(new Set())
   const [testResult, setTestResult] = useState(null)
 
   const singleProvider = PROVIDERS.length === 1
@@ -1262,8 +1292,14 @@ function ModelTab() {
     () => buildSettingsProviderLists(PROVIDERS, providers),
     [providers],
   )
+  const filteredProviders = useMemo(() => {
+    const query = providerSearch.trim().toLocaleLowerCase()
+    if (!query) return visibleProviders
+    return visibleProviders.filter((provider) => provider.name.toLocaleLowerCase().includes(query))
+  }, [visibleProviders, providerSearch])
   const providerType = (id) => providers[id]?.provider_id || id
   const providerDefinition = (id) => PROVIDERS.find(provider => provider.id === providerType(id))
+  const catalogKey = (id, target = 'weworker') => `${id}:${target}`
 
   useEffect(() => {
     setSelectedProvider((current) => {
@@ -1274,41 +1310,76 @@ function ModelTab() {
     })
   }, [visibleProviders, activeProvider])
 
+  // The first render can create a form from the build-time supplier name before
+  // settings load supplies the persisted/generated configuration name. Update
+  // only untouched defaults so an in-progress edit is never overwritten.
+  useEffect(() => {
+    setForms((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const provider of visibleProviders) {
+        if (formNameTouched.current[provider.id] || !next[provider.id] || next[provider.id].name === provider.name) continue
+        next[provider.id] = { ...next[provider.id], name: provider.name }
+        changed = true
+      }
+      return changed ? next : current
+    })
+  }, [visibleProviders])
+
   const getForm = (pid) => {
     if (forms[pid]) return forms[pid]
     const p = providerDefinition(pid)
     const stored = providers[pid] ?? {}
+    const name = visibleProviders.find(provider => provider.id === pid)?.name || p?.name || ''
     return {
+      name,
       api_key: '',
+      openai_api_key: '',
       model: stored.model || p?.models[0] || '',
+      openai_model: stored.openai_model ?? (stored.model || p?.models[0] || ''),
       context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
       base_url_is_full: stored.base_url_is_full === true,
       openai_base_url: stored.openai_base_url || '',
       openai_base_url_is_full: stored.openai_base_url_is_full === true,
       auth_type: stored.auth_type === 'api_key' ? 'api_key' : 'auth_token',
+      models_url: stored.models_url || '',
+      models_url_is_full: stored.models_url_is_full ?? Boolean(stored.models_url),
+      models_auth_type: stored.models_auth_type || 'inherit',
+      openai_models_url: stored.openai_models_url || '',
+      openai_models_url_is_full: stored.openai_models_url_is_full ?? Boolean(stored.openai_models_url),
     }
   }
 
   const setFormField = (pid, k, v) => {
+    if (k === 'name') formNameTouched.current[pid] = true
     setForms((f) => ({ ...f, [pid]: {
       ...getForm(pid),
       [k]: v,
     } }))
     setTestResult(null)
     probeRequestIds.current[pid] = (probeRequestIds.current[pid] || 0) + 1
-    setTesting((current) => current === pid ? null : current)
+    testingProviders.current.delete(pid)
+    setTesting((current) => ({ ...current, [pid]: false }))
     setProbeResults((results) => {
       const next = { ...results }
       delete next[pid]
       return next
     })
-    if (k === 'api_key' || k === 'base_url' || k === 'base_url_is_full' || k === 'openai_base_url' || k === 'openai_base_url_is_full' || k === 'auth_type') {
-      catalogRequestIds.current[pid] = (catalogRequestIds.current[pid] || 0) + 1
-      setCatalogLoading((current) => current === pid ? null : current)
+    setProbeChecks((checks) => {
+      const next = { ...checks }
+      delete next[pid]
+      return next
+    })
+    setProbeExpanded((expanded) => ({ ...expanded, [pid]: false }))
+    setProbeLogsVisible((visible) => ({ ...visible, [pid]: false }))
+    if (['api_key', 'openai_api_key', 'base_url', 'base_url_is_full', 'openai_base_url', 'openai_base_url_is_full', 'auth_type', 'models_url', 'models_url_is_full', 'models_auth_type', 'openai_models_url', 'openai_models_url_is_full'].includes(k)) {
+      const key = catalogKey(pid, k.startsWith('openai_') ? 'webwright' : 'weworker')
+      catalogRequestIds.current[key] = (catalogRequestIds.current[key] || 0) + 1
+      setCatalogLoading((current) => ({ ...current, [key]: false }))
       setCatalogs((current) => {
         const next = { ...current }
-        delete next[pid]
+        delete next[key]
         return next
       })
     }
@@ -1319,38 +1390,33 @@ function ModelTab() {
     return {
       provider: pid,
       api_key: f.api_key,
+      openai_api_key: f.openai_api_key,
       model: f.model,
+      openai_model: f.openai_model,
       ...(providerType(pid) === 'custom' ? { base_url: f.base_url, base_url_is_full: f.base_url_is_full, openai_base_url: f.openai_base_url, openai_base_url_is_full: f.openai_base_url_is_full, auth_type: f.auth_type } : {}),
     }
   }
 
-  const providerAccessBody = (pid) => {
-    const f = getForm(pid)
-    return {
-      provider: pid,
-      api_key: f.api_key,
-      ...(providerType(pid) === 'custom' ? { base_url: f.base_url, base_url_is_full: f.base_url_is_full, openai_base_url: f.openai_base_url, openai_base_url_is_full: f.openai_base_url_is_full, auth_type: f.auth_type } : {}),
-    }
-  }
-
-  const loadModels = async (pid, explicitRefresh = false) => {
-    const requestId = (catalogRequestIds.current[pid] || 0) + 1
-    catalogRequestIds.current[pid] = requestId
-    setCatalogLoading(pid)
+  const loadModels = async (pid, explicitRefresh = false, target = 'weworker') => {
+    const key = catalogKey(pid, target)
+    const requestId = (catalogRequestIds.current[key] || 0) + 1
+    catalogRequestIds.current[key] = requestId
+    const form = getForm(pid)
+    if (getModelCatalogIssue(providerType(pid), form, providers[pid], target)) return
+    setCatalogLoading((current) => ({ ...current, [key]: true }))
     try {
-      const data = await fetchProviderModels(providerAccessBody(pid))
-      if (catalogRequestIds.current[pid] !== requestId) return
-      setCatalogs((current) => ({ ...current, [pid]: { ...data, explicitRefresh } }))
+      const data = await fetchProviderModels(buildModelCatalogAccess(pid, providerType(pid), form, target))
+      if (catalogRequestIds.current[key] !== requestId) return
+      setCatalogs((current) => ({ ...current, [key]: { ...data, explicitRefresh } }))
     } catch (error) {
-      if (catalogRequestIds.current[pid] !== requestId) return
-      const provider = providerDefinition(pid)
+      if (catalogRequestIds.current[key] !== requestId) return
       setCatalogs((current) => ({
         ...current,
-        [pid]: { models: provider?.models || [], source: 'fallback', warning: error.message || '模型列表获取失败', explicitRefresh },
+        [key]: { models: [], source: 'fallback', warning: error.message || '模型列表获取失败', explicitRefresh },
       }))
     } finally {
-      if (catalogRequestIds.current[pid] === requestId) {
-        setCatalogLoading((current) => current === pid ? null : current)
+      if (catalogRequestIds.current[key] === requestId) {
+        setCatalogLoading((current) => ({ ...current, [key]: false }))
       }
     }
   }
@@ -1361,8 +1427,8 @@ function ModelTab() {
     try {
       const configurationId = await addProvider(pid)
       setAddPickerOpen(false)
+      setProviderSearch('')
       setSelectedProvider(configurationId)
-      void loadModels(configurationId)
     } catch (error) {
       setTestResult({ ok: false, message: error.message || '添加模型失败' })
     } finally {
@@ -1371,32 +1437,48 @@ function ModelTab() {
   }
 
   useEffect(() => {
-    if (singleProvider) void loadModels(PROVIDERS[0].id)
-  }, [])
+    if (!selectedProvider || isBuiltinProvider(selectedProvider)) return
+    void loadModels(selectedProvider)
+    if (providerType(selectedProvider) === 'custom') void loadModels(selectedProvider, false, 'webwright')
+  }, [selectedProvider])
 
   const handleSave = async (pid) => {
     setSaving(pid)
     setTestResult(null)
     const f = getForm(pid)
+    const name = f.name.trim()
+    if (!name || name.length > 80) {
+      setTestResult({ ok: false, message: '配置名称请输入 1 到 80 个字符' })
+      setSaving(null)
+      return
+    }
     const contextLimit = parseContextLimitInput(f.context_limit)
-    if (contextLimit === null) {
+    if (!isBuiltinProvider(pid) && contextLimit === null) {
       setTestResult({ ok: false, message: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
       setSaving(null)
       return
     }
-    const updates = { model: f.model, context_limit: contextLimit }
+    const updates = isBuiltinProvider(pid) ? { name } : { name, model: f.model, context_limit: contextLimit }
     if (f.api_key) updates.api_key = f.api_key
+    if (f.openai_api_key) updates.openai_api_key = f.openai_api_key
     if (providerType(pid) === 'custom') {
       updates.base_url = f.base_url
       updates.base_url_is_full = f.base_url_is_full
       updates.openai_base_url = f.openai_base_url
       updates.openai_base_url_is_full = f.openai_base_url_is_full
       updates.auth_type = f.auth_type
+      updates.models_url = f.models_url
+      updates.models_url_is_full = f.models_url_is_full
+      updates.models_auth_type = f.models_auth_type
+      updates.openai_models_url = f.openai_models_url
+      updates.openai_models_url_is_full = f.openai_models_url_is_full
+      if (f.openai_model) updates.openai_model = f.openai_model
     }
     try {
       await saveProvider(pid, updates)
       // Clear the api_key field after save
-      setForms((prev) => ({ ...prev, [pid]: { ...getForm(pid), api_key: '' } }))
+      formNameTouched.current[pid] = false
+      setForms((prev) => ({ ...prev, [pid]: { ...getForm(pid), name, api_key: '', openai_api_key: '' } }))
       setSaved(pid)
       setTestResult({ ok: true, message: '配置已保存' })
       setTimeout(() => setSaved(null), 2000)
@@ -1419,11 +1501,111 @@ function ModelTab() {
     }
   }
 
+  const handleDelete = async (pid) => {
+    const provider = visibleProviders.find(item => item.id === pid)
+    if (!provider || isBuiltinProvider(pid) || activeProvider === pid) return
+    if (!await showConfirm(`确定删除“${provider.name}”吗？此配置中的设置将被移除。`, '删除模型配置')) return
+    setDeletingProvider(pid)
+    setTestResult(null)
+    try {
+      await deleteProvider(pid)
+      setForms((current) => {
+        const next = { ...current }
+        delete next[pid]
+        return next
+      })
+      setSelectedProvider((current) => current === pid ? null : current)
+    } catch (error) {
+      setTestResult({ ok: false, message: error.message || '删除失败' })
+    } finally {
+      setDeletingProvider(null)
+    }
+  }
+
+  const renderProbeChecklist = (pid) => {
+    const checks = probeChecks[pid]
+    if (!checks?.length) return null
+    const expanded = probeExpanded[pid] === true
+    const logsVisible = probeLogsVisible[pid] === true
+    const allPassed = checks.every((check) => check.status === 'success')
+    const hasFailure = checks.some((check) => check.status === 'failure')
+    return (
+      <section className="model-probe-checklist" aria-label="连通性检查">
+        <button
+          type="button"
+          className="model-probe-checklist__toggle"
+          aria-expanded={expanded}
+          onClick={() => setProbeExpanded((current) => ({ ...current, [pid]: !expanded }))}
+        >
+          <span>
+            <strong>连通性检查</strong>
+            <span className={`model-probe-checklist__summary${allPassed ? ' is-success' : hasFailure ? ' is-error' : ''}`}>
+              {testing[pid] ? '正在检查…' : allPassed ? '全部通过' : hasFailure ? '检查未通过' : '检查完成'}
+            </span>
+          </span>
+          <span>{expanded ? '收起' : '展开'}</span>
+        </button>
+        {expanded && (
+          <div className="model-probe-checklist__items" role="list">
+            {checks.map((check) => (
+              <div key={check.target} className={`model-probe-checklist__item is-${check.status}`} role="listitem">
+                <span className="model-probe-checklist__status" aria-hidden="true">
+                  {check.status === 'running' ? <LoadingOutlined spin /> : check.status === 'success' ? <CheckOutlined /> : check.status === 'failure' ? <CloseOutlined /> : '—'}
+                </span>
+                <span className="model-probe-checklist__content">
+                  <span className="model-probe-checklist__label">{check.label}</span>
+                  {check.message && (
+                    <span
+                      className={`model-probe-checklist__message${logsVisible ? ' is-expanded' : ''}`}
+                      title={check.message}
+                    >
+                      {check.message}
+                    </span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {expanded && (
+          <div className="model-probe-checklist__footer">
+            <button
+              type="button"
+              className="model-probe-checklist__copy"
+              aria-label="复制检查日志"
+              title="复制检查日志"
+              onClick={() => {
+                const text = checks
+                  .map((check) => `${check.label}: ${check.message || check.status}`)
+                  .join('\n')
+                void navigator.clipboard?.writeText(text)
+              }}
+            >
+              <CopyOutlined />
+            </button>
+            <button
+              type="button"
+              className="model-probe-checklist__logs-toggle"
+              aria-expanded={logsVisible}
+              onClick={() => setProbeLogsVisible((current) => ({ ...current, [pid]: !logsVisible }))}
+            >
+              {logsVisible ? <UpOutlined /> : <DownOutlined />}
+              {logsVisible ? '隐藏日志' : '显示日志'}
+            </button>
+          </div>
+        )}
+      </section>
+    )
+  }
+
   const handleTest = async (pid) => {
+    if (testingProviders.current.has(pid)) return
+    testingProviders.current.add(pid)
     const requestId = (probeRequestIds.current[pid] || 0) + 1
     probeRequestIds.current[pid] = requestId
-    setTesting(pid)
+    setTesting((current) => ({ ...current, [pid]: true }))
     setProbeResults((results) => ({ ...results, [pid]: null }))
+    setProbeExpanded((current) => ({ ...current, [pid]: true }))
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 30000)
     try {
@@ -1452,20 +1634,43 @@ function ModelTab() {
         }
       }
       const targets = buildProviderProbeTargets(providerType(pid), getForm(pid).openai_base_url)
-      const results = await Promise.all(targets.map(probe))
+      const checks = targets.map((target) => ({
+        target,
+        label: target === 'weworker' ? 'WeWorker 对话接口（Claude Code 接口）' : '网站探索agent 接口（OpenAI 接口）',
+        status: 'running',
+        message: '',
+      }))
+      setProbeChecks((current) => ({ ...current, [pid]: checks }))
+      const results = []
+      for (const target of targets) {
+        const result = await probe(target)
+        results.push(result)
+        if (probeRequestIds.current[pid] !== requestId) return
+        setProbeChecks((current) => ({
+          ...current,
+          [pid]: (current[pid] || []).map((check) => check.target === target
+            ? { ...check, status: result.ok ? 'success' : 'failure', message: result.message }
+            : check),
+        }))
+      }
       if (providerType(pid) === 'custom' && !targets.includes('webwright')) {
         results.push({
           ok: null,
           protocol: 'openai_chat_completions',
           message: '未配置，仅影响网站探索 agent',
         })
+        setProbeChecks((current) => ({
+          ...current,
+          [pid]: [...(current[pid] || []), { target: 'webwright', label: '网站探索agent 接口（OpenAI 接口）', status: 'skipped', message: '未配置地址，跳过检查' }],
+        }))
       }
       if (probeRequestIds.current[pid] !== requestId) return
       setProbeResults((current) => ({ ...current, [pid]: buildProbeResultRows(results) }))
     } finally {
       clearTimeout(timer)
       if (probeRequestIds.current[pid] === requestId) {
-        setTesting((current) => current === pid ? null : current)
+        testingProviders.current.delete(pid)
+        setTesting((current) => ({ ...current, [pid]: false }))
       }
     }
   }
@@ -1477,63 +1682,127 @@ function ModelTab() {
           <div className="model-settings-sidebar__header">
             <div>
               <div className="model-settings-sidebar__title">模型列表</div>
-              <div className="model-settings-sidebar__count">{visibleProviders.length} 个配置</div>
+              <div className="model-settings-sidebar__count">
+                {filteredProviders.length === visibleProviders.length
+                  ? `${visibleProviders.length} 个配置`
+                  : `${filteredProviders.length} / ${visibleProviders.length} 个配置`}
+              </div>
             </div>
+            <label className="model-settings-search">
+              <SearchOutlined aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="搜索模型配置名称"
+                placeholder="搜索配置名称"
+                value={providerSearch}
+                onChange={(event) => setProviderSearch(event.target.value)}
+              />
+            </label>
             {addableProviders.length > 0 && (
               <button
+                ref={addTriggerRef}
                 type="button"
                 className="settings-btn settings-btn-primary model-settings-add"
+                disabled={Boolean(addingProvider)}
                 onClick={() => setAddPickerOpen((open) => !open)}
+                onKeyDown={handleAddMenuKeyDown}
+                aria-haspopup="menu"
+                aria-controls={addPickerOpen ? 'model-provider-add-menu' : undefined}
                 aria-expanded={addPickerOpen}
                 aria-label={addPickerOpen ? '收起添加模型' : '添加模型'}
                 title={addPickerOpen ? '收起' : '添加模型'}
               >
-                {addPickerOpen ? <MinusOutlined aria-hidden="true" /> : <PlusOutlined aria-hidden="true" />}
+                {addPickerOpen ? <CloseOutlined aria-hidden="true" /> : <AppstoreAddOutlined aria-hidden="true" />}
               </button>
             )}
           </div>
           <div className="model-settings-provider-list">
-            {visibleProviders.map((provider) => {
+            {filteredProviders.map((provider) => {
               const templateId = provider.providerId || provider.id
               const stored = providers[provider.id] ?? {}
               const isSelected = selectedProvider === provider.id
               const isActive = activeProvider === provider.id
+              const checks = probeChecks[provider.id] || []
+              const connectivityPassed = checks.length > 0 && checks.every((check) => check.status === 'success')
+              const connectivityFailed = checks.some((check) => check.status === 'failure')
               const providerColor = templateId === 'custom' ? 'var(--provider-custom)' : provider.color
               return (
+                <div key={provider.id} data-model-configuration={provider.id} className={`model-settings-provider-row${isSelected ? ' is-selected' : ''}`}>
+                  <button
+                    type="button"
+                    className={`model-settings-provider${isSelected ? ' is-selected' : ''}${isActive ? ' is-active' : ''}`}
+                    onClick={() => { setSelectedProvider(provider.id); setTestResult(null) }}
+                    aria-selected={isSelected}
+                  >
+                    <span className="model-settings-provider__icon" style={{ color: providerColor }}>{LOGOS[templateId]}</span>
+                    <span className="model-settings-provider__text">
+                      <span className="model-settings-provider__name" title={provider.name}>{provider.name}</span>
+                    </span>
+                  </button>
+                  <span className="model-settings-provider__actions" aria-label={`${provider.name}快捷操作`}>
+                    <button
+                      type="button"
+                      className={`model-settings-provider__action${isActive ? ' is-active' : ''}`}
+                      aria-label={isActive ? '当前使用' : '选择并使用'}
+                      title={isActive ? '当前使用' : stored.has_key ? '选择并使用' : '请先配置 API Key'}
+                      disabled={isActive || !stored.has_key || Boolean(activating)}
+                      onClick={(event) => { event.stopPropagation(); setSelectedProvider(provider.id); if (!isActive) void handleActivate(provider.id) }}
+                    >
+                      {activating === provider.id ? <LoadingOutlined spin /> : isActive ? <CheckCircleFilled /> : <CheckOutlined />}
+                    </button>
+                    <button
+                      type="button"
+                      className={`model-settings-provider__action${testing[provider.id] ? ' is-loading' : ''}${connectivityPassed ? ' is-connected' : connectivityFailed ? ' is-failed' : ''}`}
+                      aria-label="测试连通性"
+                      title={stored.has_key ? '测试连通性' : '请先配置 API Key'}
+                      disabled={!stored.has_key || Boolean(testing[provider.id])}
+                      onClick={(event) => { event.stopPropagation(); setSelectedProvider(provider.id); void handleTest(provider.id) }}
+                    >
+                      {testing[provider.id] ? <LoadingOutlined spin /> : connectivityPassed ? <LinkOutlined /> : connectivityFailed ? <DisconnectOutlined /> : <ApiOutlined />}
+                    </button>
+                    <button
+                      type="button"
+                      className="model-settings-provider__action is-danger"
+                      aria-label="删除配置"
+                      title={isBuiltinProvider(provider.id) ? '内置模型不能删除' : isActive ? '当前使用中的配置不能删除' : '删除配置'}
+                      disabled={isBuiltinProvider(provider.id) || isActive || deletingProvider === provider.id}
+                      onClick={(event) => { event.stopPropagation(); void handleDelete(provider.id) }}
+                    >
+                      {deletingProvider === provider.id ? <LoadingOutlined spin /> : <DeleteOutlined />}
+                    </button>
+                  </span>
+                </div>
+              )
+            })}
+            {filteredProviders.length === 0 && (
+              <div className="model-settings-provider-empty">
+                {providerSearch.trim() ? '没有匹配的模型配置' : '还没有模型配置，点击左侧 + 添加。'}
+              </div>
+            )}
+          </div>
+          <DropdownMenuPortal
+            ref={addMenuRef}
+            open={addPickerOpen && addableProviders.length > 0}
+            anchorRef={addTriggerRef}
+            align="end"
+            minWidth={180}
+            className="app-dropdown-menu model-settings-add-menu"
+          >
+            <div id="model-provider-add-menu" role="menu" aria-label="选择供应商" onKeyDown={handleAddMenuKeyDown}>
+              {addableProviders.map((provider) => (
                 <button
                   key={provider.id}
                   type="button"
-                  className={`model-settings-provider${isSelected ? ' is-selected' : ''}${isActive ? ' is-active' : ''}`}
-                  onClick={() => { setSelectedProvider(provider.id); setTestResult(null) }}
-                  aria-selected={isSelected}
+                  role="menuitem"
+                  className="app-dropdown-menu-item"
+                  onClick={() => handleAddProvider(provider.id)}
+                  disabled={Boolean(addingProvider)}
                 >
-                  <span className="model-settings-provider__icon" style={{ color: providerColor }}>{LOGOS[templateId]}</span>
-                  <span className="model-settings-provider__text">
-                    <span className="model-settings-provider__name">{provider.name}</span>
-                    <span className="model-settings-provider__model">{stored.model || provider.defaultModel || provider.subtitle || provider.models?.[0] || '尚未选择模型'}</span>
-                  </span>
-                  <span className={`model-settings-provider__state${isActive ? ' is-active' : ''}`} aria-label={isActive ? '当前使用' : ''}>
-                    {isActive ? '✓' : ''}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-          {addPickerOpen && addableProviders.length > 0 && (
-            <div className="model-settings-add-picker">
-              <div className="model-settings-add-picker__title">添加模型配置</div>
-              {addableProviders.filter((provider) => provider.id !== 'custom').map((provider) => (
-                <button key={provider.id} type="button" onClick={() => handleAddProvider(provider.id)} disabled={Boolean(addingProvider)}>
-                  {addingProvider === provider.id ? '添加中…' : provider.name}
+                  {addingProvider === provider.id ? '添加中…' : provider.id === 'custom' ? '自定义供应商' : provider.name}
                 </button>
               ))}
-              {addableProviders.some((provider) => provider.id === 'custom') && (
-                <button type="button" onClick={() => handleAddProvider('custom')} disabled={Boolean(addingProvider)}>
-                  {addingProvider === 'custom' ? '添加中…' : '自定义供应商'}
-                </button>
-              )}
             </div>
-          )}
+          </DropdownMenuPortal>
         </aside>
 
         <section className="model-settings-detail" aria-label="模型配置详情">
@@ -1541,21 +1810,76 @@ function ModelTab() {
           const isActive = singleProvider || activeProvider === p.id
           const stored = providers[p.id] ?? {}
           const f = getForm(p.id)
-          const catalog = catalogs[p.id]
-          const modelOptions = buildModelOptions(catalog?.models ?? p.models, f.model)
-          const catalogRefreshFailed = shouldShowModelRefreshFailure(catalog)
-          const catalogErrorDetail = getVisibleModelRefreshDetail(catalog)
-          const catalogHint = catalogLoading === p.id
-            ? '正在获取厂商模型列表…'
-            : catalog
-              ? catalogRefreshFailed
-                ? '刷新模型失败'
-                : catalog.source === 'remote' && catalog.models.length > 0
-                  ? `已获取 ${catalog.models.length} 个模型`
-                  : '内置模型列表'
-              : '展开后自动获取厂商模型列表'
           const templateId = p.providerId || p.id
+          const catalog = catalogs[catalogKey(p.id)]
+          const openAiCatalog = catalogs[catalogKey(p.id, 'webwright')]
+          const loadingModels = catalogLoading[catalogKey(p.id)]
+          const loadingOpenAiModels = catalogLoading[catalogKey(p.id, 'webwright')]
+          const catalogIssue = getModelCatalogIssue(templateId, f, stored)
+          const openAiCatalogIssue = getModelCatalogIssue(templateId, f, stored, 'webwright')
+          const { hint: catalogHint, failed: catalogRefreshFailed, detail: catalogErrorDetail } = getModelCatalogStatus(catalog, loadingModels, catalogIssue)
+          const openAiCatalogStatus = getModelCatalogStatus(openAiCatalog, loadingOpenAiModels, openAiCatalogIssue)
+          const modelOptions = buildModelOptions(!catalogIssue && catalog?.source === 'remote' ? catalog.models : [], f.model)
+          const openAiModelOptions = buildModelOptions(!openAiCatalogIssue && openAiCatalog?.source === 'remote' ? openAiCatalog.models : [], f.openai_model)
           const providerColor = templateId === 'custom' ? 'var(--provider-custom)' : p.color
+          const detailActions = (
+            <div className="settings-btn-group model-settings-header-actions">
+              <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing[p.id] || (isBuiltinProvider(p.id) && !stored.has_key)} className="settings-btn settings-btn-secondary">
+                {testing[p.id] ? '检测中…' : isBuiltinProvider(p.id) ? '测试连通性' : '测试模型可用性'}
+              </button>
+              {!singleProvider && !isActive && (
+                <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating || !stored.has_key} title={!stored.has_key ? '请先保存 API Key' : ''} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>
+                  {activating === p.id ? '切换中...' : '切换使用'}
+                </button>
+              )}
+              <button type="button" onClick={() => handleSave(p.id)} disabled={saving === p.id} className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}>
+                {saving === p.id ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
+              </button>
+            </div>
+          )
+          const actionFeedback = testResult && (
+            <div className={`settings-action-hint model-settings-feedback${testResult.ok ? ' is-success' : ' is-error'}`} role="status">
+              {testResult.message}
+            </div>
+          )
+          const identityFields = (
+            <div className="model-settings-grid" role="group" aria-label="基本信息">
+              <Field label="配置名称">
+                <input aria-label="配置名称" className="settings-input" value={f.name} maxLength={80} onChange={(e) => setFormField(p.id, 'name', e.target.value)} />
+              </Field>
+              <Field label="供应商">
+                <input aria-label="供应商" className="settings-input" value={p.supplierName} readOnly />
+              </Field>
+            </div>
+          )
+          const catalogAddressFields = (openai = false) => {
+            const field = openai ? 'openai_models_url' : 'models_url'
+            const mode = openai ? 'openai_models_url_is_full' : 'models_url_is_full'
+            const target = openai ? 'webwright' : 'weworker'
+            const key = catalogKey(p.id, target)
+            const expanded = catalogAddressExpanded[key] ?? Boolean(f[field])
+            return (
+              <details className="settings-catalog-address" open={expanded}
+                onToggle={(event) => { const open = event.currentTarget.open; if (open !== expanded) setCatalogAddressExpanded(current => ({ ...current, [key]: open })) }}>
+                <summary>单独设置模型列表地址（可选）</summary>
+                <Field label="模型列表地址" hint={f[mode] ? '原样使用完整 URL；留空自动推导' : '默认补全 /v1/models，已有后缀不重复追加；留空自动推导'}>
+                  <label className="settings-url-mode">
+                    <AppSwitch aria-label={openai ? 'OpenAI 模型列表使用完整 URL' : 'Claude Code 模型列表使用完整 URL'}
+                      checked={f[mode]} onChange={(e) => setFormField(p.id, mode, e.target.checked)} />
+                    使用完整 URL
+                  </label>
+                  <input className="settings-input" aria-label={openai ? 'OpenAI 模型列表地址' : 'Claude Code 模型列表地址'}
+                    value={f[field]} onChange={(e) => { setCatalogAddressExpanded(current => ({ ...current, [key]: true })); setFormField(p.id, field, e.target.value) }}
+                    onBlur={() => { void loadModels(p.id, false, target) }} placeholder={f[mode] ? 'https://example.com/v1/models' : 'https://example.com/v1'} />
+                </Field>
+                {!openai && <Field label="列表认证方式" hint="使用本接口 API Key">
+                  <AppDropdownSelect value={f.models_auth_type} ariaLabel="模型列表认证方式"
+                    options={[{ value: 'inherit', label: '跟随对话接口' }, { value: 'auth_token', label: 'Bearer Token' }, { value: 'api_key', label: 'API Key（x-api-key）' }]}
+                    onChange={(value) => setFormField(p.id, 'models_auth_type', value)} matchAnchorWidth />
+                </Field>}
+              </details>
+            )
+          }
 
           if (isBuiltinProvider(p.id)) {
             const builtinActive = activeProvider === p.id
@@ -1563,20 +1887,21 @@ function ModelTab() {
             <div key={p.id} className={`settings-card settings-card-builtin model-settings-detail-card${builtinActive ? ' is-active' : ''}`}>
                 <div className="settings-card-header">
                   <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id] || LOGOS.builtin}</span>
-                  <div style={{ flex: 1 }}>
+                  <div className="model-settings-header-info">
                     <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
-                      {p.name}{builtinActive && <span className="settings-badge-active">使用中</span>}
+                      <span className="model-settings-detail-name" title={p.name}>{p.name}</span>{builtinActive && <span className="settings-badge-active">使用中</span>}
                       <span className="settings-card-inline-subtitle"> · {p.defaultModel} · {stored.has_key
                         ? (builtinActive ? '当前使用' : '服务已配置，可直接使用')
                         : '服务尚未配置，请联系应用提供方或使用其他模型'}</span>
                     </div>
                   </div>
-                  <div className="settings-btn-group">
-                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating || !stored.has_key} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
-                    <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing || !stored.has_key} className="settings-btn settings-btn-secondary">{testing === p.id ? '检测中…' : '测试连通性'}</button>
-                  </div>
+                  {detailActions}
                 </div>
-                {probeResults[p.id] && <div className="settings-builtin-probe">{probeResults[p.id].map((result) => <div key={`${result.target}-${result.protocol}`} className={result.ok ? 'is-success' : 'is-error'}>{result.ok ? '✓' : '✗'} {result.label}：{result.message}</div>)}</div>}
+                <div className="settings-card-body">
+                  {actionFeedback}
+                  {identityFields}
+                  {renderProbeChecklist(p.id)}
+                </div>
               </div>
             )
           }
@@ -1585,18 +1910,22 @@ function ModelTab() {
             <div key={p.id} data-model-configuration={p.id} className={`settings-card model-settings-detail-card${isActive ? ' is-active' : ''}`}>
               <div className="settings-card-header">
                 <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[templateId]}</span>
-                <div style={{ flex: 1 }}>
+                <div className="model-settings-header-info">
                   <div className="settings-card-title" style={{ color: isActive ? p.color : 'var(--text-primary)' }}>
-                    {p.name}
+                    <span className="model-settings-detail-name" title={p.name}>{p.name}</span>
                     {isActive && !singleProvider && <span className="settings-badge-active">使用中</span>}
                     {stored.has_key
                       ? <span className="settings-card-inline-status is-configured"> · 已配置 {stored.model || p.subtitle}</span>
                       : <span className="settings-card-inline-status"> · 未配置</span>}
                   </div>
                 </div>
+                {detailActions}
               </div>
 
               <div className="settings-card-body">
+                  {actionFeedback}
+                  {identityFields}
+                  {templateId !== 'custom' && <div className="model-settings-grid" role="group" aria-label="接口配置">
                   <Field label="API Key" hint={stored.has_key ? '已设置（留空保持不变）' : '未设置'}>
                     <input
                       type="password"
@@ -1608,37 +1937,29 @@ function ModelTab() {
                     />
                   </Field>
 
-                  <Field label="模型" hint={catalogHint} hintError={catalogRefreshFailed || Boolean(catalogErrorDetail)}>
+                  <Field label="模型" hint={catalogHint} hintError={catalogRefreshFailed || Boolean(catalogErrorDetail)} errorDetail={catalogErrorDetail}>
                     <div style={{ width: '100%' }}>
                       <div className="settings-model-input-row">
-                        {templateId === 'custom' ? (
-                          <>
-                            <input className="settings-input" list={`provider-models-${p.id}`} value={f.model} onChange={(e) => setFormField(p.id, 'model', e.target.value)} placeholder="输入或选择模型名称" />
-                            <datalist id={`provider-models-${p.id}`}>
-                              {modelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                            </datalist>
-                          </>
-                        ) : (
-                          <select className="settings-select" value={f.model} onChange={(e) => setFormField(p.id, 'model', e.target.value)}>
-                            {modelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                          </select>
-                        )}
-                        <button type="button" onClick={() => loadModels(p.id, true)} disabled={catalogLoading === p.id} className="settings-btn settings-btn-secondary">
-                          {catalogLoading === p.id ? '获取中…' : '刷新模型'}
+                        <AppDropdownSelect
+                          value={f.model}
+                          options={modelOptions}
+                          onChange={(value) => setFormField(p.id, 'model', value)}
+                          ariaLabel="模型"
+                          minMenuWidth={280}
+                          matchAnchorWidth
+                          className="settings-model-dropdown"
+                        />
+                        <button type="button" onClick={() => loadModels(p.id, true)} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
+                          {loadingModels ? '获取中…' : '刷新模型'}
                         </button>
                       </div>
-                      {catalogErrorDetail && (
-                        <div className="settings-remote-detail is-error">
-                          {catalogRefreshFailed ? catalogErrorDetail : `部分接口刷新失败：\n${catalogErrorDetail}`}
-                        </div>
-                      )}
                     </div>
                   </Field>
 
                   <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
-                    <input
+                    <AppDropdownInput
                       className="settings-input"
-                      list={`provider-context-limits-${p.id}`}
+                      ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))}
                       value={f.context_limit}
                       onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)}
                       onBlur={() => {
@@ -1648,13 +1969,21 @@ function ModelTab() {
                       placeholder="例如 200K、1M 或 1000000"
                       inputMode="text"
                     />
-                    <datalist id={`provider-context-limits-${p.id}`}>
-                      {CONTEXT_LIMIT_PRESETS.map((preset) => <option key={preset} value={preset} />)}
-                    </datalist>
+
                   </Field>
+                  </div>}
 
                   {templateId === 'custom' && (
-                    <>
+                    <section className="settings-interface-section" aria-label="Claude Code 接口（WeWorker 对话）">
+                      <div className="settings-interface-section__title">Claude Code 接口（WeWorker 对话）</div>
+                      <div className="model-settings-grid">
+                      <Field label="接口地址" hint={getAnthropicUrlHint(f.base_url_is_full)}>
+                        <label className="settings-url-mode">
+                          <AppSwitch checked={f.base_url_is_full} onChange={(e) => setFormField(p.id, 'base_url_is_full', e.target.checked)} />
+                          使用完整 URL
+                        </label>
+                        <input aria-label="Claude Code 接口地址" className="settings-input" value={f.base_url} onChange={(e) => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id, false, 'weworker') }} placeholder={f.base_url_is_full ? 'https://gateway.example/custom/messages' : 'https://gateway.example/anthropic'} />
+                      </Field>
                       <Field label="API Key 类型">
                         <AppDropdownSelect
                           value={f.auth_type}
@@ -1669,15 +1998,38 @@ function ModelTab() {
                           className="settings-provider-auth-select"
                         />
                       </Field>
-                      <Field label="Claude Code 模型协议" hint={getAnthropicUrlHint(f.base_url_is_full)}>
-                        <label className="settings-url-mode">
-                          <input type="checkbox" checked={f.base_url_is_full} onChange={(e) => setFormField(p.id, 'base_url_is_full', e.target.checked)} />
-                          使用完整 URL
-                        </label>
-                        <input aria-label="Claude Code 接口地址" className="settings-input" value={f.base_url} onChange={(e) => setFormField(p.id, 'base_url', e.target.value)} onBlur={() => { if (f.base_url) void loadModels(p.id) }} placeholder={f.base_url_is_full ? 'https://gateway.example/custom/messages' : 'https://gateway.example/anthropic'} />
+                      <Field label="API Key" hint={stored.has_key ? '已设置（留空保持不变）' : '未设置'}>
+                        <input type="password" className="settings-input" value={f.api_key} onChange={(e) => setFormField(p.id, 'api_key', e.target.value)} onBlur={() => { if (f.api_key) void loadModels(p.id, false, 'weworker') }} placeholder={stored.has_key ? '••••••••••••' : 'sk-...'} />
                       </Field>
+                      <Field label="模型" hint={catalogHint} hintError={catalogRefreshFailed || Boolean(catalogErrorDetail)} errorDetail={catalogErrorDetail}>
+                        <div className="settings-model-input-row">
+                          <AppDropdownSelect
+                            value={f.model}
+                            options={modelOptions}
+                            onChange={(value) => setFormField(p.id, 'model', value)}
+                            ariaLabel="Claude Code 模型"
+                            minMenuWidth={280}
+                            matchAnchorWidth
+                            className="settings-model-dropdown"
+                          />
+                          <button type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
+                            {loadingModels ? '获取中…' : '刷新模型'}
+                          </button>
+                        </div>
+                      </Field>
+                      {catalogAddressFields()}
+                      <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
+                        <AppDropdownInput className="settings-input" ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))} value={f.context_limit} onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)} onBlur={() => { const parsed = parseContextLimitInput(f.context_limit); if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed)) }} placeholder="例如 200K、1M 或 1000000" inputMode="text" />
+
+                      </Field>
+                      </div>
+                    </section>
+                  )}
+
+                  {templateId === 'custom' && (
+                    <>
                       {(() => {
-                        const advancedExpanded = advancedProviders[p.id] ?? Boolean(stored.openai_base_url)
+                        const advancedExpanded = advancedProviders[p.id] ?? false
                         return (
                           <div className="settings-field">
                             <button
@@ -1686,18 +2038,44 @@ function ModelTab() {
                               onClick={() => setAdvancedProviders((current) => ({ ...current, [p.id]: !advancedExpanded }))}
                               aria-expanded={advancedExpanded}
                             >
-                              {advancedExpanded ? '收起高级配置' : '高级配置'}
+                              <span>{advancedExpanded ? '收起高级配置' : '高级配置'}</span>
+                              <span className="settings-advanced-toggle__icon" aria-hidden="true">
+                                {advancedExpanded ? <UpOutlined /> : <DownOutlined />}
+                              </span>
                             </button>
                             {advancedExpanded && (
-                              <div style={{ marginTop: 10 }}>
-                                <Field label="OpenAI 模型协议" hint={getOpenAiUrlHint(f.openai_base_url_is_full)}>
+                              <section className="settings-interface-section settings-interface-section--advanced" aria-label="OpenAI 接口（网站探索agent）">
+                                <div className="settings-interface-section__title">OpenAI 接口（网站探索agent）</div>
+                                <div className="model-settings-grid">
+                                <Field label="接口地址" hint={getOpenAiUrlHint(f.openai_base_url_is_full)}>
                                   <label className="settings-url-mode">
-                                    <input type="checkbox" checked={f.openai_base_url_is_full} onChange={(e) => setFormField(p.id, 'openai_base_url_is_full', e.target.checked)} />
+                                    <AppSwitch checked={f.openai_base_url_is_full} onChange={(e) => setFormField(p.id, 'openai_base_url_is_full', e.target.checked)} />
                                     使用完整 URL
                                   </label>
-                                  <input aria-label="OpenAI 接口地址" className="settings-input" value={f.openai_base_url} onChange={(e) => setFormField(p.id, 'openai_base_url', e.target.value)} onBlur={() => { if (f.openai_base_url) void loadModels(p.id) }} placeholder={f.openai_base_url_is_full ? 'https://gateway.example/custom/completions' : 'https://gateway.example/openai/v1'} />
+                                  <input aria-label="OpenAI 接口地址" className="settings-input" value={f.openai_base_url} onChange={(e) => setFormField(p.id, 'openai_base_url', e.target.value)} onBlur={() => { if (f.openai_base_url) void loadModels(p.id, false, 'webwright') }} placeholder={f.openai_base_url_is_full ? 'https://gateway.example/custom/completions' : 'https://gateway.example/openai/v1'} />
                                 </Field>
-                              </div>
+                                <Field label="API Key" hint={(stored.has_openai_key || stored.openai_has_key) ? '已设置（留空保持不变）' : '未设置'}>
+                                  <input type="password" className="settings-input" value={f.openai_api_key} onChange={(e) => setFormField(p.id, 'openai_api_key', e.target.value)} onBlur={() => { if (f.openai_api_key) void loadModels(p.id, false, 'webwright') }} placeholder={(stored.has_openai_key || stored.openai_has_key) ? '••••••••••••' : 'sk-...'} />
+                                </Field>
+                                <Field label="模型" hint={openAiCatalogStatus.hint} hintError={openAiCatalogStatus.failed || Boolean(openAiCatalogStatus.detail)} errorDetail={openAiCatalogStatus.detail}>
+                                  <div className="settings-model-input-row">
+                                    <AppDropdownSelect
+                                      value={f.openai_model}
+                                      options={openAiModelOptions}
+                                      onChange={(value) => setFormField(p.id, 'openai_model', value)}
+                                      ariaLabel="网站探索agent模型"
+                                      minMenuWidth={280}
+                                      matchAnchorWidth
+                                      className="settings-model-dropdown"
+                                    />
+                                    <button type="button" onClick={() => loadModels(p.id, true, 'webwright')} disabled={loadingOpenAiModels || Boolean(openAiCatalogIssue)} className="settings-btn settings-btn-secondary">
+                                      {loadingOpenAiModels ? '获取中…' : '刷新模型'}
+                                    </button>
+                                  </div>
+                                </Field>
+                                {catalogAddressFields(true)}
+                                </div>
+                              </section>
                             )}
                           </div>
                         )
@@ -1705,41 +2083,7 @@ function ModelTab() {
                     </>
                   )}
 
-                  <div className="settings-btn-group model-settings-actions">
-                    {testResult && (
-                      <span className={`settings-action-hint${testResult.ok ? ' is-success' : ' is-error'}`} role="status">
-                        {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
-                      </span>
-                    )}
-                    <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">
-                      {testing === p.id ? '检测中…' : '测试模型可用性'}
-                    </button>
-                    {!singleProvider && !isActive && (
-                      <button
-                        type="button"
-                        onClick={() => handleActivate(p.id)}
-                        disabled={!!activating || !stored.has_key}
-                        title={!stored.has_key ? '请先保存 API Key' : ''}
-                        className="settings-btn settings-btn-provider"
-                        style={{ '--provider-color': providerColor }}
-                      >
-                        {activating === p.id ? '切换中...' : '切换使用'}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleSave(p.id)}
-                      disabled={saving === p.id}
-                      className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}
-                    >
-                      {saving === p.id ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
-                    </button>
-                  </div>
-                  {(probeResults[p.id] || []).map((result) => (
-                    <div key={result.label} className={`settings-action-hint settings-remote-detail${result.ok === true ? ' is-success' : result.ok === false ? ' is-error' : ''}`} style={{ textAlign: 'right' }}>
-                      {result.label}：{result.ok === true ? '✓ ' : result.ok === false ? '✗ ' : ''}{result.message}
-                    </div>
-                  ))}
+                  {renderProbeChecklist(p.id)}
               </div>
             </div>
           )
@@ -1799,14 +2143,18 @@ function SettingRow({
   )
 }
 
-function Field({ label, hint, hintError = false, children }) {
+function Field({ label, hint, hintError = false, errorDetail, children }) {
   return (
-    <div className="settings-field">
-      <label className="settings-field-label">
+    <div className="settings-field settings-field--row">
+      <div className="settings-field-label">
         {label}
         {hint && <span className={`settings-field-hint${hintError ? ' is-error' : ''}`}>{hint}</span>}
-      </label>
-      {children}
+        {errorDetail && <details className="settings-catalog-error" key={errorDetail}>
+          <summary>查看错误详情</summary>
+          <div className="settings-remote-detail is-error" tabIndex={0} role="region" aria-label={`${label}错误详情`}>{errorDetail}</div>
+        </details>}
+      </div>
+      <div className="settings-field-control">{children}</div>
     </div>
   )
 }

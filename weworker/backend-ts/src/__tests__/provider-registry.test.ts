@@ -9,6 +9,49 @@ function provider(id: string) {
 }
 
 describe('provider model catalog', () => {
+  it('requires the targeted interface key and address before making a request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    for (const input of [
+      { target: 'webwright' as const, apiKey: 'fixture-main-key', openaiBaseUrl: 'https://example.org/v1' },
+      { target: 'weworker' as const, apiKey: '', openaiApiKey: 'fixture-openai-key', anthropicBaseUrl: 'https://example.com' },
+      { target: 'weworker' as const, apiKey: 'fixture-main-key' },
+    ]) {
+      const result = await listProviderModels({ provider: provider('custom'), ...input }, fetchImpl)
+      expect(result).toMatchObject({ source: 'fallback', models: [] })
+      expect(result.warning).toContain('地址和 API Key')
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each(['weworker', 'webwright'] as const)('fetches only the requested %s catalog using its own key', async target => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ data: [{ id: 'fixture-remote' }] }))
+    const result = await listProviderModels({
+      provider: provider('custom'), target, apiKey: 'fixture-main-key', openaiApiKey: 'fixture-openai-key',
+      anthropicBaseUrl: 'https://example.com/anthropic', openaiBaseUrl: 'https://example.org/v1',
+    }, fetchMock)
+    expect(result).toEqual({ source: 'remote', models: ['fixture-remote'] })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe(target === 'weworker' ? 'https://example.com/anthropic/v1/models?limit=1000' : 'https://example.org/v1/models')
+    expect(new Headers(options?.headers).get('authorization')).toBe(target === 'weworker' ? 'Bearer fixture-main-key' : 'Bearer fixture-openai-key')
+  })
+
+  it.each([401, 403, 404, 503])('does not expose fallback choices as a fetched custom catalog on HTTP %s', async status => {
+    const result = await listProviderModels({ provider: provider('custom'), target: 'weworker',
+      apiKey: 'fixture-invalid-key', anthropicBaseUrl: 'https://example.com' }, vi.fn(async () => new Response('fixture failure', { status })))
+    expect(result).toMatchObject({ source: 'fallback', models: [] })
+    expect(result.warning).toContain(`HTTP ${status}`)
+  })
+
+  it('does not infer a model catalog address from a complete endpoint', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    const result = await listProviderModels({ provider: provider('custom'), target: 'weworker', apiKey: 'fixture-key',
+      anthropicBaseUrl: 'https://example.com/inference', anthropicFullUrl: true }, fetchMock)
+    expect(result).toMatchObject({ source: 'fallback', models: [] })
+    expect(result.warning).toContain('完整 URL')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('uses only the official response when the remote catalog succeeds', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
       data: [{ id: 'deepseek-remote-a' }, { id: 'deepseek-remote-b' }],
@@ -45,7 +88,7 @@ describe('provider model catalog', () => {
     expect(result).toEqual({
       models: ['openai-model'],
       source: 'remote',
-      warning: `Anthropic 接口：HTTP 502 Bad Gateway\n${remoteBody}`,
+      warning: `Claude Code 接口：HTTP 502 Bad Gateway\n${remoteBody}`,
     })
   })
 
