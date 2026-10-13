@@ -8,6 +8,7 @@ import {
 import { normalizeSiteScenarios } from '../../utils/site-scenarios.js'
 import RenderErrorBoundary from '../common/RenderErrorBoundary.jsx'
 import ToolPackageEditor from './ToolPackageEditor.jsx'
+import { showConfirm } from '../../store/dialog.js'
 
 const UNSAVED_SCENARIO_MESSAGE = '当前场景有未保存修改，切换后将丢失，是否继续？'
 
@@ -87,22 +88,22 @@ export default function ToolPackagePage({ onClose }) {
     [scenarioSites, editableSites],
   )
 
-  const confirmDiscardChanges = () => !editorDirty || window.confirm(UNSAVED_SCENARIO_MESSAGE)
+  const confirmDiscardChanges = async () => !editorDirty || await showConfirm(UNSAVED_SCENARIO_MESSAGE, '未保存的修改')
 
   const handleToggleSkillSite = (siteId) => {
     toggleSelectedSiteId(siteId)
   }
 
-  const handleToggleScenarioSite = (siteId) => {
-    if (!confirmDiscardChanges()) return
+  const handleToggleScenarioSite = async (siteId) => {
+    if (!await confirmDiscardChanges()) return
     setEditorDirty(false)
     setScenarioSiteIds(siteId ? [siteId] : [])
   }
 
-  const handleSkillScopeChange = (nextScope) => {
+  const handleSkillScopeChange = async (nextScope) => {
     const scope = nextScope === SKILL_SCOPE_PUBLIC ? SKILL_SCOPE_PUBLIC : SKILL_SCOPE_SITE
     if (scope === skillScope) return
-    if (!confirmDiscardChanges()) return
+    if (!await confirmDiscardChanges()) return
     setEditorDirty(false)
     setSkillScope(scope)
   }

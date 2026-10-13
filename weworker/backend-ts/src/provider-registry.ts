@@ -1,8 +1,10 @@
 import { buildAllowedLlmBaseUrls, normalizeLlmBaseUrl, type ProviderEntry } from './llm-egress.js'
+import { BUILTIN_PROVIDERS } from './builtin-provider.js'
 
 declare const __BUILD_PROVIDERS__: ProviderEntry[]
 
 const DEV_PROVIDERS: ProviderEntry[] = [
+  ...BUILTIN_PROVIDERS,
   { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], defaultModel: 'claude-sonnet-4-6', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' }, webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: 'https://api.anthropic.com', structuredOutput: 'anthropic_json_schema' } },
   { id: 'glm', name: '智谱 coding plan', models: ['glm-5.2', 'glm-4.7'], defaultModel: 'glm-5.2', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://open.bigmodel.cn/api/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', structuredOutput: 'openai_json_object' } },
   { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], defaultModel: 'deepseek-v4-flash', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.deepseek.com/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: 'https://api.deepseek.com', structuredOutput: 'openai_json_object' } },
@@ -27,7 +29,14 @@ export function findProviderByWeWorkerBaseUrl(baseUrl: string | undefined): Prov
   } catch {
     return undefined
   }
-  return PROVIDERS.find(provider => provider.id !== 'custom' && normalizeLlmBaseUrl(provider.weworker.baseUrl) === normalized)
+  return PROVIDERS.find(provider => {
+    if (provider.id === 'custom' || !provider.weworker.baseUrl?.trim()) return false
+    try {
+      return normalizeLlmBaseUrl(provider.weworker.baseUrl) === normalized
+    } catch {
+      return false
+    }
+  })
 }
 
 export const ALLOWED_PROVIDER_IDS = new Set(PROVIDERS.map(p => p.id))

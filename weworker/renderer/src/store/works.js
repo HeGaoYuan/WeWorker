@@ -4,6 +4,7 @@ import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
 import { calibrateCompactedContextSnapshot, calibrateContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
 import { leaveWebsiteExploration } from './website-exploration.js'
+import { showAlert } from './dialog.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -18,6 +19,7 @@ function getScheduledTasksStore() {
 
 export const useWorksStore = create((set, get) => ({
   works: [],
+  projects: [],
   activeWorkId: null,
   messages: {}, // workId -> Message[]
   contextSnapshots: {}, // workId -> latest local context composition
@@ -27,18 +29,21 @@ export const useWorksStore = create((set, get) => ({
   healthCheckMeta: null, // { siteId, siteName, toolNames } | null
   streamingWorkIds: new Set(), // workIds currently streaming — don't overwrite their messages
   abortControllers: {}, // workId -> AbortController — for stopping streaming from any view
+  pendingThinkingEffort: 'medium',
   labelFilter: null, // null = show all, string = filter by label color
   labelNames: {}, // color -> custom name, e.g. { red: '紧急', blue: '参考' }
 
   loadWorks: async () => {
-    const [worksRes, namesRes] = await Promise.all([
+    const [worksRes, namesRes, projectsRes] = await Promise.all([
       backendFetch(`${API}/works`),
       backendFetch(`${API}/settings/label-names`).catch(() => null),
+      backendFetch(`${API}/projects`).catch(() => null),
     ])
     if (!worksRes.ok) return
     const works = await worksRes.json()
     const labelNames = namesRes?.ok ? await namesRes.json() : {}
-    set({ works: Array.isArray(works) ? works : [], labelNames })
+    const projects = projectsRes?.ok ? await projectsRes.json() : []
+    set({ works: Array.isArray(works) ? works : [], projects: Array.isArray(projects) ? projects : [], labelNames })
   },
 
   createWork: async (opts = {}) => {
@@ -83,6 +88,7 @@ export const useWorksStore = create((set, get) => ({
         }
       }
       const body = {}
+      if (opts.projectId !== undefined) body.project_id = opts.projectId
       if (opts.zcf_role !== undefined) body.zcf_role = opts.zcf_role
       if (opts.zcf_mode !== undefined) body.zcf_mode = opts.zcf_mode
       const res = await backendFetch(`${API}/works`, {
@@ -97,9 +103,48 @@ export const useWorksStore = create((set, get) => ({
       return work
     } catch (e) {
       console.error('[works] createWork failed:', e)
-      window.alert('创建任务失败，请确认后端服务已启动')
+      showAlert('创建任务失败，请确认后端服务已启动')
       throw e
     }
+  },
+
+  createProject: async (name) => {
+    const res = await backendFetch(`${API}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || 'Failed to create project')
+    }
+    const project = await res.json()
+    set((s) => ({ projects: [project, ...s.projects] }))
+    return project
+  },
+
+  renameProject: async (id, name) => {
+    const res = await backendFetch(`${API}/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || 'Failed to rename project')
+    }
+    const project = await res.json()
+    set((s) => ({ projects: s.projects.map((item) => (item.id === id ? { ...item, ...project } : item)) }))
+    return project
+  },
+
+  deleteProject: async (id) => {
+    const res = await backendFetch(`${API}/projects/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || 'Failed to delete project')
+    }
+    set((s) => ({ projects: s.projects.filter((project) => project.id !== id) }))
   },
 
   selectWork: async (id) => {
@@ -144,7 +189,7 @@ export const useWorksStore = create((set, get) => ({
       })
     } catch (e) {
       console.error('[works] deleteWork failed:', e)
-      window.alert('删除任务失败，请稍后重试')
+      showAlert('删除任务失败，请稍后重试')
       throw e
     }
   },

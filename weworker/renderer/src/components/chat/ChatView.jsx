@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useWorksStore } from '../../store/works.js'
 import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useSitesStore } from '../../store/sites.js'
@@ -38,6 +39,7 @@ export default function ChatView({ workId }) {
   const fillText = useChatInputFillStore((s) => s.text)
   const handledFillSeqRef = useRef(fillSeq)
   const [messageSelectMode, setMessageSelectMode] = useState(false)
+  const [toolbarContextTarget, setToolbarContextTarget] = useState(null)
   const maxChatAttachments = useSettingsStore((s) => s.maxChatAttachments)
   const zcfDefaultRole = useSettingsStore((s) => s.zcfDefaultRole)
   const zcfDefaultMode = useSettingsStore((s) => s.zcfDefaultMode)
@@ -58,6 +60,10 @@ export default function ChatView({ workId }) {
   const slowTimerRef = useRef(null)
   const gotFirstEventRef = useRef(false)
   const compactionNoticeTimerRef = useRef(null)
+
+  useEffect(() => {
+    setToolbarContextTarget(document.getElementById('workspace-toolbar-context'))
+  }, [])
 
   useEffect(() => {
     setContextCompactionLifecycleHandler((targetWorkId, status) => {
@@ -125,7 +131,7 @@ export default function ChatView({ workId }) {
     }
   }
 
-  const handleSend = async (text, files = []) => {
+  const handleSend = async (text, files = [], thinkingEffort = 'medium') => {
     if ((!text.trim() && !files.length) || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
     if (files.length > maxChatAttachments) {
       setError(`已选 ${files.length}/${maxChatAttachments} 个文件，请删减后再发送`)
@@ -352,7 +358,7 @@ export default function ChatView({ workId }) {
 
           return msg
         })
-      }, controller.signal, files, maxChatAttachments, modelText)
+      }, controller.signal, files, maxChatAttachments, modelText, false, thinkingEffort)
     } catch (e) {
       if (e.name === 'AbortError') {
         const store = useWorksStore.getState()
@@ -496,10 +502,11 @@ export default function ChatView({ workId }) {
       await selectWork(workId)
       const pending = useWorksStore.getState().pendingMessage
       const pendingAttachments = useWorksStore.getState().pendingAttachments || []
+      const pendingThinkingEffort = useWorksStore.getState().pendingThinkingEffort || 'medium'
       const pendingShellCommand = useWorksStore.getState().pendingShellCommand
       if (pending || pendingAttachments.length) {
-        useWorksStore.setState({ pendingMessage: null, pendingAttachments: [] })
-        handleSendRef.current(pending || '', pendingAttachments)
+        useWorksStore.setState({ pendingMessage: null, pendingAttachments: [], pendingThinkingEffort: 'medium' })
+        handleSendRef.current(pending || '', pendingAttachments, pendingThinkingEffort)
         return
       }
       if (pendingShellCommand?.command) {
@@ -547,8 +554,23 @@ export default function ChatView({ workId }) {
   }
   // Only show streaming UI (cursor, disabled input) if THIS workId is the one streaming
   const isStreamingHere = streaming
+  const toolbarContext = !isHealthCheck && messages.length > 0 && toolbarContextTarget
+    ? createPortal(
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, height: '100%', padding: '0 10px', boxSizing: 'border-box', fontSize: 11, color: 'var(--text-muted)' }}>
+          <span style={{ flexShrink: 0, opacity: 0.7 }}>ID: {shortId}</span>
+          {work?.title && <span style={{ opacity: 0.6, flexShrink: 0 }}>·</span>}
+          {work?.title && <span title={work.title} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{work.title}</span>}
+          {taskTotalMs > 0 && <span style={{ opacity: 0.6, flexShrink: 0 }}>·</span>}
+          {taskTotalMs > 0 && <span style={{ flexShrink: 0 }}>累计 {formatDuration(taskTotalMs)}</span>}
+          <LabelDot workId={workId} label={work?.label} />
+        </div>,
+        toolbarContextTarget,
+      )
+    : null
 
   return (
+    <>
+    {toolbarContext}
     <div className="chat-view motion-view-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative', minWidth: 0 }}>
       {/* Health check banner OR normal info bar */}
       {isHealthCheck ? (
@@ -563,19 +585,10 @@ export default function ChatView({ workId }) {
           <span>{isStreamingHere ? `正在检测 ${hcSiteName} 的工具可用性...` : `${hcSiteName} 检测完成`}</span>
         </div>
       ) : messages.length > 0 ? (
-        <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <div style={{ width: '100%', maxWidth: 1184, margin: '0 auto', padding: '4px 20px', boxSizing: 'border-box', fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ opacity: 0.6 }}>ID: {shortId}</span>
-          {work?.title && <span style={{ opacity: 0.6 }}>·</span>}
-          {work?.title && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{work.title}</span>}
-          {taskTotalMs > 0 && <span style={{ opacity: 0.6 }}>·</span>}
-          {taskTotalMs > 0 && <span style={{ flexShrink: 0 }}>累计 {formatDuration(taskTotalMs)}</span>}
-          <LabelDot workId={workId} label={work?.label} />
-          </div>
-        </div>
+        null
       ) : null}
 
-      {messages.length === 0 ? <WelcomeScreen onFillInput={handleFillInput} /> : <MessageList messages={messages} streaming={isStreamingHere} workId={workId} onChoice={handleChoice} onSelectModeChange={setMessageSelectMode} onShellCommand={handleShellCommand} />}
+      {messages.length === 0 && !contextCompactionStatus ? <WelcomeScreen onFillInput={handleFillInput} /> : <MessageList messages={messages} streaming={isStreamingHere} compactionStatus={contextCompactionStatus} workId={workId} onChoice={handleChoice} onSelectModeChange={setMessageSelectMode} onShellCommand={handleShellCommand} />}
 
       {/* Health check panel — between messages and input */}
       {isHealthCheck && messages.length > 0 && (
@@ -603,23 +616,6 @@ export default function ChatView({ workId }) {
           {zcfNotice}
         </div>
       )}
-      {contextCompactionStatus && (
-        <div
-          data-conversation-compaction-status={contextCompactionStatus}
-          style={{
-            padding: '8px 20px',
-            color: contextCompactionStatus === 'failed' ? 'var(--error)' : contextCompactionStatus === 'completed' ? '#22c55e' : contextCompactionStatus === 'skipped' ? 'var(--text-secondary)' : 'var(--accent)',
-            fontSize: 12,
-            background: contextCompactionStatus === 'failed' ? 'rgba(248,113,113,0.1)' : contextCompactionStatus === 'completed' ? 'rgba(34,197,94,0.1)' : contextCompactionStatus === 'skipped' ? 'rgba(148,163,184,0.12)' : 'rgba(99,102,241,0.1)',
-            borderTop: '1px solid var(--border)',
-          }}
-        >
-          {contextCompactionStatus === 'compacting' && '⏳ 正在压缩对话上下文…'}
-          {contextCompactionStatus === 'completed' && '✅ 对话上下文压缩完成'}
-          {contextCompactionStatus === 'skipped' && 'ℹ️ 当前没有足够的历史对话可压缩，继续使用原对话'}
-          {contextCompactionStatus === 'failed' && '⚠️ 对话上下文压缩失败，已继续使用原对话'}
-        </div>
-      )}
       {memoryStatus && memoryStatus.status !== 'not_applicable' && (
         <div style={{ padding: '6px 20px', color: memoryStatus.status === 'failed' ? 'var(--error)' : 'var(--text-secondary)', fontSize: 12, background: 'var(--bg-secondary)' }}>
           {memoryStatus.status === 'processing' && '正在整理长期记忆'}
@@ -638,6 +634,7 @@ export default function ChatView({ workId }) {
           disabled={isStreamingHere || contextCompactionStatus === 'compacting' || messageSelectMode}
           streaming={isStreamingHere}
           text={inputText}
+          historyMessages={messages}
           onTextChange={setInputText}
           attachments={attachments}
           onAttachmentsChange={setAttachments}
@@ -653,6 +650,7 @@ export default function ChatView({ workId }) {
         />
       )}
     </div>
+    </>
   )
 }
 
@@ -707,7 +705,7 @@ function LabelDot({ workId, label }) {
           position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 100,
           background: 'var(--bg-primary, #fff)', border: '1px solid var(--border, #e5e7eb)',
           borderRadius: 8, padding: '8px', display: 'flex', gap: 6,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+          boxShadow: 'none',
         }}>
           {LABEL_OPTIONS.map((opt) => (
             <button

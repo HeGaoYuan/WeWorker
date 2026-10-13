@@ -193,8 +193,9 @@ async function createWindow() {
     minHeight: 400,
     title: isDev ? 'WeWorker (开发版)' : 'WeWorker',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    titleBarStyle: 'hiddenInset',
-    ...(process.platform !== 'darwin' ? { titleBarOverlay: { color: '#00000000', symbolColor: '#666666', height: 38 } } : {}),
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' }
+      : { frame: false }),
     backgroundColor: '#f5f5f7',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -202,6 +203,12 @@ async function createWindow() {
       nodeIntegration: false,
     },
   })
+
+  if (process.platform !== 'darwin') {
+    const syncMaximizedState = () => mainWindow?.webContents.send('window:maximized-state', mainWindow.isMaximized())
+    mainWindow.on('maximize', syncMaximizedState)
+    mainWindow.on('unmaximize', syncMaximizedState)
+  }
 
   if (isDev) {
     mainWindow.loadURL(devRendererUrl)

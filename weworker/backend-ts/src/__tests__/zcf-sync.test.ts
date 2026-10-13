@@ -245,6 +245,7 @@ describe('zcf-sync', () => {
     const appendix = buildZcfPromptAppendix('weworker-clear', AUTO_PLAN_MODE_ID)
     expect(appendix).toContain('当前 AI 风格')
     expect(appendix).toContain('专业严谨简单明确')
+    expect(appendix).not.toContain('已完成 → 当前状态 → 下一步')
     expect(appendix).toContain('自动规划')
     expect(appendix).toContain('直接执行')
     expect(appendix).toContain('六步法')

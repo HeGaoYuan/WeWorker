@@ -1,8 +1,8 @@
+import AppSwitch from '../common/AppSwitch.jsx'
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Button,
-  Checkbox,
   Input,
   InputNumber,
   Popconfirm,
@@ -835,13 +835,14 @@ export default function ExplorationPage({ onClose }) {
                     {!run.siteMemory && <Button loading={busyAction === 'saveMemory'} disabled={anyBusy || actionCaptureRunning} onClick={handleSaveMemory}>保存探索结果</Button>}
                     <Button loading={busyAction === 'quickGenerate'} disabled={generationRunning || anyBusy || actionCaptureRunning} onClick={handleQuickGenerate}>{actionCapture ? '快速生成' : '跳过录制，快速生成'}</Button>
                     <Button type="primary" loading={busyAction === 'smartGenerate'} disabled={generationRunning || anyBusy || actionCaptureRunning} onClick={handleSmartGenerate}>智能生成</Button>
-                    <Checkbox
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <AppSwitch
                       checked={agentMode}
                       onChange={(event) => setAgentMode(event.target.checked)}
                       disabled={generationRunning || anyBusy || actionCaptureRunning}
-                    >
+                    />
                       智能编排（实验，遇到问题自主处置并可中途提问）
-                    </Checkbox>
+                    </label>
                   </div>
                 </div>
               </>

@@ -50,11 +50,11 @@ export default function MainArea({ onOpenSettings }) {
     }
   }, [activeTaskId, activeWorkId, fillSeq, fillText])
 
-  const handleSendFromWelcome = async (text, files = []) => {
+  const handleSendFromWelcome = async (text, files = [], thinkingEffort = 'medium') => {
     setInputText('')
     setAttachments([])
     closeToolPackagePage()
-    useWorksStore.setState({ pendingMessage: text, pendingAttachments: files })
+    useWorksStore.setState({ pendingMessage: text, pendingAttachments: files, pendingThinkingEffort: thinkingEffort })
     await createWork({ zcf_role: zcfDefaultRole, zcf_mode: zcfDefaultMode })
   }
 

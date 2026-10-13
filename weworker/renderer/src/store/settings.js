@@ -1,9 +1,11 @@
 import { create } from 'zustand'
+import { appBotQrState } from '../utils/app-bot-qr-save.js'
 import {
   DEFAULT_RESOURCE_PREVIEW_EXTENSIONS,
   getEffectivePreviewExtensions,
 } from '../utils/resource-preview-extensions.js'
 import { backendFetch } from '../api/http.js'
+import { isFixedProvider } from '../utils/model-selection.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -63,19 +65,44 @@ function settingsPatch(data, fallback = {}) {
   }
 }
 
-// Build PROVIDERS from injected constants (dev mode fallback when not defined)
-const BUILD_PROVIDERS = typeof __BUILD_PROVIDERS__ !== 'undefined'
+const DEVELOPMENT_BUILTIN_PROVIDERS = [
+  { id: 'builtin', name: '内置模型', models: ['ark-code-latest'], defaultModel: 'ark-code-latest' },
+  { id: 'builtin_dev', name: '内置模型（开发）', models: ['deepseek-v4-flash'], defaultModel: 'deepseek-v4-flash' },
+]
+
+export function mergeDevelopmentBuiltinProviders(providers, isDevelopment) {
+  const configuredProviders = Array.isArray(providers) ? providers : []
+  if (!isDevelopment) return configuredProviders
+  const configuredIds = new Set(configuredProviders.map((provider) => provider?.id))
+  return [
+    ...DEVELOPMENT_BUILTIN_PROVIDERS.filter((provider) => !configuredIds.has(provider.id)),
+    ...configuredProviders,
+  ]
+}
+
+// Production strictly follows its build profile. In development, preserve the
+// built-in choices when a stale ignored build definition is present.
+const INJECTED_BUILD_PROVIDERS = typeof __BUILD_PROVIDERS__ !== 'undefined'
   ? __BUILD_PROVIDERS__
   : [
+      ...DEVELOPMENT_BUILTIN_PROVIDERS,
       { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], defaultModel: 'claude-sonnet-4-6' },
       { id: 'glm', name: '智谱 coding plan', models: ['glm-5.2', 'glm-4.7'], defaultModel: 'glm-5.2' },
       { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], defaultModel: 'deepseek-v4-flash' },
       { id: 'custom', name: '自定义', models: [], defaultModel: '' },
     ]
 
+const BUILD_PROVIDERS = mergeDevelopmentBuiltinProviders(
+  INJECTED_BUILD_PROVIDERS,
+  import.meta.env?.DEV === true,
+)
+
 const BUILD_DEFAULT_PROVIDER = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
   ? __BUILD_DEFAULT_PROVIDER__
   : 'anthropic'
+
+export const BUILTIN_PROVIDER_IDS = BUILD_PROVIDERS.filter(p => p.id === 'builtin' || p.id === 'builtin_dev').map(p => p.id)
+export const isBuiltinProvider = (id) => BUILTIN_PROVIDER_IDS.includes(id)
 
 export const PROVIDERS = BUILD_PROVIDERS.map(p => ({
   ...p,
@@ -108,14 +135,16 @@ export const useSettingsStore = create((set, get) => ({
   zcfPackageVersion: '',
   zcfSync: null,
   providers: {
-    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000 },
-    glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000 },
-    deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000 },
-    custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token' },
+    builtin:   { has_key: false, model: 'ark-code-latest', context_limit: 1000000, readonly: true, added: true, visible: true },
+    builtin_dev: { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, readonly: true, added: true, visible: true },
+    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000, added: false, visible: false },
+    glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000, added: false, visible: false },
+    deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, added: false, visible: false },
+    custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token', added: false, visible: false },
   },
   loaded: false,
   explorationModelRevision: 0,
-  channels: { qq: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' }, weixin: { enabled: false, has_token: false, base_url: '', owner_user_id: '' }, wecom: { enabled: false, bot_id: '', has_secret: false, owner_user_id: '' } },
+  channels: { qq: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' }, weixin: { enabled: false, has_token: false, base_url: '', owner_user_id: '' }, wecom: { enabled: false, bot_id: '', has_secret: false, owner_user_id: '' }, feishu: { enabled: false, app_id: '', has_app_secret: false, owner_user_id: '' } },
 
   load: async () => {
     try {
@@ -130,6 +159,29 @@ export const useSettingsStore = create((set, get) => ({
   },
 
   // Save config for one provider (does not switch active)
+  addProvider: async (provider) => {
+    const res = await backendFetch(`${API}/settings/provider/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '添加模型失败')
+    set(settingsPatch(data, get()))
+    return data.created_provider
+  },
+
+  deleteProvider: async (provider) => {
+    const res = await backendFetch(`${API}/settings/provider/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '删除模型失败')
+    set(settingsPatch(data, get()))
+  },
+
   saveProvider: async (provider, updates) => {
     const res = await backendFetch(`${API}/settings/provider`, {
       method: 'POST',
@@ -139,6 +191,16 @@ export const useSettingsStore = create((set, get) => ({
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '保存失败')
     set(settingsPatch(data, get()))
+  },
+
+  configurePresetProvider: async (provider, apiKey) => {
+    if (!isFixedProvider(provider) || !PROVIDERS.some(item => item.id === provider)) {
+      throw new Error('请选择预定义供应商')
+    }
+    const key = String(apiKey || '').trim()
+    if (!key) throw new Error('请填写 API Key')
+    await get().saveProvider(provider, { api_key: key })
+    await get().activateProvider(provider)
   },
 
   // Switch which provider is active
@@ -265,6 +327,26 @@ export const useSettingsStore = create((set, get) => ({
     return data.open_browser_allowed_origins || []
   },
 
+  // Keep unsuccessful imports across page unmounts, in memory only.
+  ...appBotQrState(set, get),
+  wecomQrPending: null,
+  wecomQrSaving: false,
+  saveWecomQr: async (credentials = get().wecomQrPending) => {
+    if (get().wecomQrSaving) throw new Error('机器人配置正在保存，请稍候')
+    if (!credentials?.bot_id || !credentials?.secret) throw new Error('未获取完整机器人配置')
+    const pending = { bot_id: credentials.bot_id, secret: credentials.secret }
+    set({ wecomQrPending: pending, wecomQrSaving: true })
+    try {
+      // Omitted fields retain saved owner/permissions and other channels.
+      await get().saveChannels({ wecom: { ...pending, enabled: true } })
+      set({ wecomQrPending: null })
+    } catch {
+      throw new Error('机器人已创建，但配置保存失败。请点击“重试保存”，无需重新扫码。')
+    } finally {
+      set({ wecomQrSaving: false })
+    }
+  },
+
   saveChannels: async (updates) => {
     const res = await backendFetch(`${API}/settings/channels`, {
       method: 'POST',
@@ -273,7 +355,8 @@ export const useSettingsStore = create((set, get) => ({
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '保存失败')
-    set({ channels: data })
+    // Concurrent QR imports must not replace another channel with an older snapshot.
+    set(state => ({ channels: { ...state.channels, ...Object.fromEntries(Object.keys(updates).filter(key => data[key]).map(key => [key, data[key]])) } }))
   },
 
   saveZcfDefaults: async ({ zcfDefaultRole, zcfDefaultMode, zcfLang }) => {

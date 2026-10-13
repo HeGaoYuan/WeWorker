@@ -13,12 +13,13 @@
  */
 
 import WebSocket from 'ws'
+import { ProbeError, probeExistingWecomSocket } from './channel-probe.js'
 import { randomUUID } from 'node:crypto'
 import crypto from 'node:crypto'
 
 import type { Channel, ChannelStatus } from './channel-manager.js'
 import { runChannelChat } from './channel-manager.js'
-import { generateAssistantStatusLine, streamChat } from '../agent.js'
+import { streamChat } from '../agent.js'
 import { resolveZcfPrefs } from '../zcf-sync.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
 import { resolveToolDisplayName } from '../tools.js'
@@ -26,7 +27,6 @@ import { getSettings } from '../config.js'
 import { generateTitle, generateTitleWithLLM } from '../title-utils.js'
 import * as store from '../works-store.js'
 import { createLogger } from '../logger.js'
-import { ensureAssistantStatusLine } from '../assistant-status.js'
 
 const log = createLogger('wecom')
 
@@ -78,6 +78,16 @@ export class WecomChannel implements Channel {
 
   getStatus(): ChannelStatus {
     return this._status
+  }
+
+  async probeConnection(config: { bot_id: string; secret: string }): Promise<void> {
+    if (config.bot_id !== this._config.bot_id || config.secret !== this._config.secret) {
+      throw new ProbeError('企业微信凭证已修改，请先保存再检测，避免中断正在使用的连接')
+    }
+    if (!this._ws || this._status.status !== 'connected') {
+      throw new ProbeError('企业微信尚未连接，请检查凭证和网络后重试')
+    }
+    await probeExistingWecomSocket(this._ws)
   }
 
   async start(): Promise<void> {
@@ -799,14 +809,6 @@ export class WecomChannel implements Channel {
 
     // Account for trailing LLM text generation after the last tool
     llmMsTotal += Date.now() - lastStepEndTime
-
-    fullText = fullText
-      ? await ensureAssistantStatusLine({
-          text: fullText,
-          generateStatusLine: () => generateAssistantStatusLine(fullText, settings),
-          fallbackStatusLine: '当前状态：已完成当前回复，等待下一步指令',
-        })
-      : fullText
 
     // Save any remaining text chunk
     if (currentTextChunk.trim()) {

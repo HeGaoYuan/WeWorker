@@ -592,36 +592,46 @@ const CAPABILITY_CSS = `
 }
 
 .cap-site-list {
-  display: grid; gap: 6px;
+  display: grid;
+  gap: 0;
+  background: var(--bg-primary);
 }
 .cap-site-row-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  border-radius: 0;
+  background: transparent;
   overflow: visible;
   transform-origin: top left;
   will-change: transform;
 }
-.cap-site-row-card:hover { border-color: var(--border); }
-.cap-site-row-card--open { border-color: var(--border); background: var(--bg-hover); }
+.cap-site-row-card:last-child { border-bottom-color: transparent; }
+.cap-site-row-card:hover { border-bottom-color: color-mix(in srgb, var(--border) 58%, transparent); }
+.cap-site-row-card--open {
+  border-bottom-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
 .cap-site-row-card--off { opacity: 0.55; }
 .cap-site-grid-expanded { grid-column: 1 / -1; }
 .cap-site-row {
   position: relative;
   display: flex; align-items: center; gap: 9px;
-  min-width: 0; padding: 8px 9px;
+  min-width: 0; padding: 9px 8px;
   border: none; border-radius: 0;
   background: transparent;
   cursor: default;
 }
 .cap-site-row:active { cursor: default; }
-.cap-site-row:hover { background: var(--bg-hover); }
+.cap-site-row:hover {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-tertiary) 48%, transparent);
+}
 .cap-floating-tooltip {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  box-shadow: 0 8px 18px rgba(0,0,0,0.12);
+  box-shadow: none;
   padding: 5px 8px;
   font-size: 12px;
   font-weight: 560;
@@ -631,7 +641,8 @@ const CAPABILITY_CSS = `
 .cap-site-row-icon {
   width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--bg-primary); border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-tertiary) 56%, var(--bg-primary));
+  border: 0;
 }
 .cap-site-row-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .cap-site-row-copy h3 {

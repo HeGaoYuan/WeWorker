@@ -1,3 +1,5 @@
+import { resolveBuiltinSettings } from './builtin-provider.js'
+import { PROVIDERS } from './provider-registry.js'
 import fs from 'node:fs'
 
 import path from 'node:path'
@@ -63,6 +65,7 @@ import {
   type ZcfCustomRole,
 } from './zcf-role-settings.js'
 import { DEFAULT_CONTEXT_LIMIT, normalizeContextLimit } from './context-window.js'
+import { normalizeAddedProviders } from './provider-visibility.js'
 
 
 
@@ -140,6 +143,20 @@ export interface WecomChannelConfig {
 
 }
 
+export interface FeishuChannelConfig {
+
+  enabled: boolean
+
+  app_id: string
+
+  app_secret: string
+
+  owner_user_id: string
+
+  owner_permission_level: OwnerPermissionLevel
+
+}
+
 
 
 export interface ChannelsConfig {
@@ -149,6 +166,8 @@ export interface ChannelsConfig {
   weixin: WeixinChannelConfig
 
   wecom: WecomChannelConfig
+
+  feishu: FeishuChannelConfig
 
 }
 
@@ -165,6 +184,7 @@ export interface Settings {
   api_key: string
 
   base_url: string
+  base_url_is_full?: boolean
 
   model: string
 
@@ -191,21 +211,40 @@ export interface Settings {
   context_limit_deepseek: number
 
   api_key_custom: string
+  openai_api_key_custom: string
 
   model_custom: string
+  openai_model_custom: string
 
   context_limit_custom: number
 
   base_url_custom: string
+  models_url_custom?: string
+  models_url_is_full_custom?: boolean
+  models_auth_type_custom?: import('./model-catalog-config.js').ModelCatalogAuthType
+  openai_models_url_custom?: string
+  openai_models_url_is_full_custom?: boolean
+  base_url_is_full_custom?: boolean
 
   openai_base_url_custom: string
+  openai_base_url_is_full_custom?: boolean
 
   exploration_base_url: string
+  exploration_base_url_is_full?: boolean
   exploration_api_key: string
   exploration_model: string
   exploration_use_main_key: boolean
 
   custom_auth_type: import('./anthropic-auth.js').AnthropicAuthType
+
+  // Provider ids (non-builtin) explicitly added by the user through settings.
+  // Providers absent from this list stay hidden unless legacy config exists.
+  added_providers: string[]
+
+  model_configurations?: Record<string, import('./model-configurations.js').ModelConfiguration>
+  model_configuration_names?: Record<string, string>
+  active_model_configuration?: string
+  active_auth_type?: import('./anthropic-auth.js').AnthropicAuthType
 
   channels: ChannelsConfig
 
@@ -313,31 +352,43 @@ const DEFAULTS: Settings = {
   context_limit_deepseek: DEFAULT_CONTEXT_LIMIT,
 
   api_key_custom: '',
+  openai_api_key_custom: '',
 
   model_custom: '',
+  openai_model_custom: '',
 
   context_limit_custom: DEFAULT_CONTEXT_LIMIT,
 
   base_url_custom: '',
+  models_url_custom: '',
+  models_auth_type_custom: 'inherit',
+  openai_models_url_custom: '',
+  base_url_is_full_custom: false,
 
   api_query_llm_route: true,
 
   openai_base_url_custom: '',
+  openai_base_url_is_full_custom: false,
 
   exploration_base_url: '',
+  exploration_base_url_is_full: false,
   exploration_api_key: '',
   exploration_model: '',
   exploration_use_main_key: true,
 
   custom_auth_type: 'auth_token',
 
+  added_providers: [] as string[],
+
   channels: {
 
-    qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
+    weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
+
+    feishu: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
   },
 
@@ -391,6 +442,8 @@ function cloneDefaults(): Settings {
 
       wecom: { ...DEFAULTS.channels.wecom },
 
+      feishu: { ...DEFAULTS.channels.feishu },
+
     },
 
     site_toggles: { ...DEFAULTS.site_toggles },
@@ -399,6 +452,7 @@ function cloneDefaults(): Settings {
 
     label_names: { ...DEFAULTS.label_names },
     open_browser_allowed_origins: [...DEFAULTS.open_browser_allowed_origins],
+    added_providers: [...DEFAULTS.added_providers],
 
   }
 
@@ -430,25 +484,30 @@ function readRawSettingsFile(): Record<string, unknown> | null {
 
 
 
-function normalizeOwnerPermissionLevel(value: unknown): OwnerPermissionLevel {
+function normalizeOwnerPermissionLevel(value: unknown, ownerId: string): OwnerPermissionLevel {
+  if (!ownerId?.trim()) return 'qa_only'
   const next = String(value ?? '').trim()
   if (next === 'qa_only' || next === 'no_bash' || next === 'full') return next
-  return 'full'
+  return 'qa_only'
 }
 
 function normalizeChannelsConfig(channels: ChannelsConfig): ChannelsConfig {
   return {
     qq: {
       ...channels.qq,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.qq.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.qq.owner_permission_level, channels.qq.owner_user_id),
     },
     weixin: {
       ...channels.weixin,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.weixin.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.weixin.owner_permission_level, channels.weixin.owner_user_id),
     },
     wecom: {
       ...channels.wecom,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level, channels.wecom.owner_user_id),
+    },
+    feishu: {
+      ...channels.feishu,
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.feishu.owner_permission_level, channels.feishu.owner_user_id),
     },
   }
 }
@@ -474,6 +533,8 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   merged.custom_auth_type = raw?.custom_auth_type === 'api_key' ? 'api_key' : 'auth_token'
 
+  merged.added_providers = normalizeAddedProviders(raw?.added_providers)
+
   merged.context_limit_anthropic = normalizeContextLimit(raw?.context_limit_anthropic)
   merged.context_limit_glm = normalizeContextLimit(raw?.context_limit_glm)
   merged.context_limit_deepseek = normalizeContextLimit(raw?.context_limit_deepseek)
@@ -485,6 +546,11 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
       : merged.active_provider === 'custom'
         ? merged.context_limit_custom
         : merged.context_limit_anthropic
+
+  const activeConfiguration = merged.model_configurations?.[merged.active_model_configuration || '']
+  if (activeConfiguration) {
+    merged.context_limit = normalizeContextLimit(activeConfiguration.context_limit)
+  }
 
   merged.max_chat_attachments = normalizeMaxChatAttachments(merged.max_chat_attachments)
   merged.paste_text_attachment_threshold = normalizePasteTextAttachmentThreshold(merged.paste_text_attachment_threshold)
@@ -621,22 +687,22 @@ export function resetSettingsStateForTests(): void {
 
 
 export function getSettings(): Settings {
-
-  if (_settings) return _settings
-
-  _settings = loadSettingsFromRaw(readRawSettingsFile())
-
-  return _settings
-
+  if (!_settings) _settings = loadSettingsFromRaw(readRawSettingsFile())
+  return resolveBuiltinSettings(_settings, PROVIDERS)
 }
 
 
 
 export function updateSettings(updates: Partial<Settings>): Settings {
 
-  const current = getSettings()
-
-  _settings = deepMerge(current, updates) as Settings
+  getSettings() // Ensure the persisted settings have been loaded.
+  // Merge the stored state, not the runtime projection containing deployment credentials.
+  _settings = deepMerge(_settings!, updates) as Settings
+  // Model configuration operations supply the complete collection. Deep merging
+  // it would resurrect removed IDs, including when the last entry is deleted.
+  if (updates.model_configurations !== undefined) {
+    _settings.model_configurations = structuredClone(updates.model_configurations)
+  }
 
   _settings.max_chat_attachments = normalizeMaxChatAttachments(_settings.max_chat_attachments)
   _settings.context_limit = normalizeContextLimit(_settings.context_limit)
@@ -661,11 +727,13 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || CORE_STYLE_ID
   _settings.zcf_default_mode = normalizeZcfMode(_settings.zcf_default_mode)
 
+  _settings.added_providers = normalizeAddedProviders(_settings.added_providers)
+
   persistSettingsToDisk(_settings)
 
   _settingsInitialized = true
 
-  return _settings
+  return getSettings()
 
 }
 
