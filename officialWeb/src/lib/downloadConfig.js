@@ -3,7 +3,7 @@
  * 发版时：1) 更新 APP_VERSION  2) 将产物放入 public/downloads 且文件名与下方 filename 一致
  * 命名约定见 public/downloads/README.md
  */
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = '1.1.0'
 
 /** 下载统计上报（POST JSON：{ version, platform }） */
 export const DOWNLOAD_REPORT_URL = '/api/downloads'

@@ -2,6 +2,10 @@
 
 本文件记录 WeWorker 自首次开源发布起的用户可见变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。内部开发历史不纳入公开版本记录。
 
+## [1.1.0] - 2026-10-13
+
+<!-- TODO: 待填写 1.1.0 用户可见变更条目，分类参考「新增 / 修复 / 改进 / 安全与隐私」；同步更新 weworker/changelog.json 的 items -->
+
 ## [1.0.0] - 2026-09-14
 
 ### 新增
@@ -24,4 +28,5 @@
 - 这是 WeWorker 重新初始化开源仓库后的首个公开版本。
 - 开源仓库不继承内部仓库的 Git 历史和内部版本记录。
 
+[1.1.0]: https://github.com/WeWorker/WeWorker/releases/tag/v1.1.0
 [1.0.0]: https://github.com/WeWorker/WeWorker/releases/tag/v1.0.0

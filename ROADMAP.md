@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-13：客户端版本号从 `1.0.0` 提升到 `1.1.0`，为 `v1.1.0` 发版做准备。同步 `weworker`、`renderer`、`backend-ts`、`webcli`、`officialWeb`、`metrics-server` 六个 `package.json`、`extension/manifest.json` 与官网 `officialWeb/src/lib/downloadConfig.js` 的 `APP_VERSION`，以及五个 lockfile 的自身版本字段；`weworker/changelog.json` 与根 `CHANGELOG.md` 新增 1.1.0 条目，`items` 暂留空，用户可见条目待补写。已通过 `node scripts/check-public-config.mjs` 一致性校验、`scripts/__tests__/check-public-config.test.mjs`（1 项）与 `weworker/scripts/__tests__/build-profile-overlay.test.cjs`（5 项），并另行校验改动 JSON 全部可解析、`weworker` 与 `renderer` 版本一致（`prepare-build.cjs` 前置条件）。未执行 Renderer 构建、安装包构建，也未创建或推送 `v1.1.0` Tag。
+
 - 2026-10-12：发布流程改为正式版本 Tag `v<major>.<minor>.<patch>` 推送后自动构建 Windows x64、macOS arm64 与 macOS x64 安装包，并创建 Draft Release；普通代码 push 不再触发 CI，代码检查保留在 PR 与手动触发。新增 `docs/RELEASE.md` 固化发布步骤。桌面端、安装包、浏览器扩展与官网图标统一替换为项目 logo。已完成配置静态检查、Release workflow YAML 解析、图标资源尺寸校验；完整 GitHub Actions 构建需推送 PR/Tag 后在远端验证。
 
 - 2026-10-08（wave4提交）：整理头条0.1.1、什么值得买/arXiv 0.1.0及协作交接文档提交至codex/opencli-wave4，目标develop。8项真实数据/身份样例及头条文章空态通过；专项130项、相关回归148项、构建与包校验通过。无关文章未纳入，未合并或发版。
