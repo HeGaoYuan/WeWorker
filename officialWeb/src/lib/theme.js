@@ -1,12 +1,12 @@
-export const THEME_STORAGE_KEY = 'weworker-theme'
+export const THEME_STORAGE_KEY = 'weworker-open-theme'
 
 export function getSystemTheme() {
-  if (typeof window === 'undefined') return 'dark'
+  if (typeof window === 'undefined') return 'light'
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
 
 export function getInitialTheme() {
-  if (typeof window === 'undefined') return 'dark'
+  if (typeof window === 'undefined') return 'light'
   const saved = window.localStorage.getItem(THEME_STORAGE_KEY)
   if (saved === 'light' || saved === 'dark') return saved
   return getSystemTheme()

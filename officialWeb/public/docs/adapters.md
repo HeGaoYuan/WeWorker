@@ -187,7 +187,7 @@ Chrome 扩展的后台脚本（service-worker）是扩展的核心逻辑，负�
 ### 第三步：重新加载扩展
 
 1. 打开 Chrome，进入 `chrome://extensions/`
-2. 找到 WeWorker Browser Adapter，点击刷新图标
+2. 找到 WebMCP Adapter，点击刷新图标
 3. 打开目标网站，扩展图标变绿说明 Adapter 已加载成功
 
 > 注意：如果你为了临时调试修改安装目录下的扩展文件，应用更新后这些文件可能被覆盖。长期自定义 Adapter 应放在用户级目录。

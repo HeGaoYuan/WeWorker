@@ -1,18 +1,12 @@
-import { APP_VERSION, DOWNLOAD_REPORT_URL } from './downloadConfig.js'
+/** 对外站：不做内网下载统计上报 */
 
-export async function reportDownload(platform) {
-  try {
-    await fetch(DOWNLOAD_REPORT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: APP_VERSION, platform }),
-    })
-  } catch {
-    // 上报失败不阻断下载
-  }
-}
+export async function reportDownload() {}
 
 export function triggerFileDownload(href) {
+  if (href.startsWith('http')) {
+    window.open(href, '_blank', 'noopener,noreferrer')
+    return
+  }
   const a = document.createElement('a')
   a.href = href
   a.download = ''
@@ -22,7 +16,6 @@ export function triggerFileDownload(href) {
   a.remove()
 }
 
-export async function reportDownloadThenGo(href, platform) {
-  await reportDownload(platform)
-  window.location.href = href
+export async function reportDownloadThenGo(href, _platform) {
+  triggerFileDownload(href)
 }
