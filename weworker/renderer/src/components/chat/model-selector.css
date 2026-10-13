@@ -145,6 +145,33 @@
   min-width: 190px;
 }
 
+.provider-key-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.provider-key-status.is-configured { color: var(--success, #16a34a); }
+
+.preset-key-dialog label { display: block; margin-bottom: 8px; font-size: 12px; }
+.preset-key-dialog input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.preset-key-dialog input:focus { outline: 1px solid var(--accent); }
+.preset-key-dialog footer { margin-top: 18px; }
+.preset-key-dialog__error { margin-top: 8px; color: var(--error, #dc2626); font-size: 12px; overflow-wrap: anywhere; }
+.preset-key-dialog button:disabled { opacity: 0.5; cursor: default; }
+
 @media (max-width: 480px) {
   .chat-model-selector {
     gap: 4px;

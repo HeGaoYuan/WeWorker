@@ -12,7 +12,7 @@ import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import { DropdownMenuPortal, useDropdownDismiss } from '../common/DropdownMenuPortal.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
-import { buildModelOptions, buildModelCatalogAccess, getModelCatalogIssue, getModelCatalogStatus, buildProbeResultRows, buildProviderProbeTargets, buildSettingsProviderLists } from '../../utils/model-selection.js'
+import { buildModelOptions, buildModelCatalogAccess, getModelCatalogIssue, getModelCatalogStatus, buildProbeResultRows, buildProviderProbeTargets, buildSettingsProviderLists, isFixedProvider } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
@@ -1446,7 +1446,7 @@ function ModelTab() {
     setSaving(pid)
     setTestResult(null)
     const f = getForm(pid)
-    const name = f.name.trim()
+    const name = isFixedProvider(pid) ? providerDefinition(pid).name : f.name.trim()
     if (!name || name.length > 80) {
       setTestResult({ ok: false, message: '配置名称请输入 1 到 80 个字符' })
       setSaving(null)
@@ -1503,7 +1503,7 @@ function ModelTab() {
 
   const handleDelete = async (pid) => {
     const provider = visibleProviders.find(item => item.id === pid)
-    if (!provider || isBuiltinProvider(pid) || activeProvider === pid) return
+    if (!provider || isBuiltinProvider(pid) || isFixedProvider(pid) || activeProvider === pid) return
     if (!await showConfirm(`确定删除“${provider.name}”吗？此配置中的设置将被移除。`, '删除模型配置')) return
     setDeletingProvider(pid)
     setTestResult(null)
@@ -1764,8 +1764,8 @@ function ModelTab() {
                       type="button"
                       className="model-settings-provider__action is-danger"
                       aria-label="删除配置"
-                      title={isBuiltinProvider(provider.id) ? '内置模型不能删除' : isActive ? '当前使用中的配置不能删除' : '删除配置'}
-                      disabled={isBuiltinProvider(provider.id) || isActive || deletingProvider === provider.id}
+                      title={isBuiltinProvider(provider.id) ? '内置模型不能删除' : isFixedProvider(provider.id) ? '固定供应商不能删除' : isActive ? '当前使用中的配置不能删除' : '删除配置'}
+                      disabled={isBuiltinProvider(provider.id) || isFixedProvider(provider.id) || isActive || deletingProvider === provider.id}
                       onClick={(event) => { event.stopPropagation(); void handleDelete(provider.id) }}
                     >
                       {deletingProvider === provider.id ? <LoadingOutlined spin /> : <DeleteOutlined />}
@@ -1845,7 +1845,7 @@ function ModelTab() {
           const identityFields = (
             <div className="model-settings-grid" role="group" aria-label="基本信息">
               <Field label="配置名称">
-                <input aria-label="配置名称" className="settings-input" value={f.name} maxLength={80} onChange={(e) => setFormField(p.id, 'name', e.target.value)} />
+                <input aria-label="配置名称" className="settings-input" value={isFixedProvider(p.id) ? p.supplierName : f.name} readOnly={isFixedProvider(p.id)} maxLength={80} onChange={(e) => setFormField(p.id, 'name', e.target.value)} />
               </Field>
               <Field label="供应商">
                 <input aria-label="供应商" className="settings-input" value={p.supplierName} readOnly />

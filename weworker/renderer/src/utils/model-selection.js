@@ -109,7 +109,31 @@ export function buildProviderProbeTargets(providerId, openAiBaseUrl) {
   return ['weworker', 'webwright']
 }
 
+export function isFixedProvider(id) {
+  return ['anthropic', 'glm', 'deepseek'].includes(id)
+}
+
+export function buildChatProviderOptions(providerList, providers, activeProvider) {
+  const configured = buildSettingsProviderLists(providerList, providers).visible
+  const builtin = item => item.builtin || item.id === 'builtin' || item.id === 'builtin_dev'
+  const custom = id => (providers[id]?.provider_id || id) === 'custom'
+  const customReady = id => Boolean(providers[id]?.has_key && String(providers[id]?.base_url || '').trim())
+  const visible = configured.filter(item => builtin(item) || (custom(item.id)
+    ? customReady(item.id)
+    : isFixedProvider(item.id) || providers[item.id]?.has_key))
+  if (activeProvider && !visible.some(item => item.id === activeProvider) && !custom(activeProvider)) {
+    const fallback = configured.find(item => item.id === activeProvider)
+    visible.unshift({ id: activeProvider, name: fallback?.name || activeProvider })
+  }
+  return visible.map(item => ({
+    value: item.id,
+    label: item.providerId ? `${item.name} · ${providers[item.id]?.model || '未配置'}` : item.name,
+    keyConfigured: Boolean(builtin(item) || providers[item.id]?.has_key),
+  }))
+}
+
 export function isProviderVisibleInSettings(provider, stored) {
+  if (isFixedProvider(provider?.id)) return true
   if (provider?.builtin) return true
   if (provider?.id === 'builtin' || provider?.id === 'builtin_dev') return true
   if (!stored) return false
@@ -133,10 +157,10 @@ export function buildSettingsProviderLists(providerList, providers) {
     if (!template || allProviders.some(provider => provider.id === id)) continue
     visible.push({ ...template, id, providerId: template.id })
   }
-  const usedNames = new Set(visible.map(provider => storedProviders[provider.id]?.name?.trim()).filter(Boolean))
+  const usedNames = new Set(visible.map(provider => isFixedProvider(provider.id) ? provider.name : storedProviders[provider.id]?.name?.trim()).filter(Boolean))
   const namedVisible = visible.map(provider => {
     const supplierName = provider.name || provider.id
-    let name = storedProviders[provider.id]?.name?.trim()
+    let name = isFixedProvider(provider.id) ? supplierName : storedProviders[provider.id]?.name?.trim()
     if (!name) {
       if (provider.builtin || provider.id === 'builtin' || provider.id === 'builtin_dev') {
         name = supplierName

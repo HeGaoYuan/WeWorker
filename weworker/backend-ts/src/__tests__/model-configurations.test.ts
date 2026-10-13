@@ -16,6 +16,23 @@ function legacySettings(): Settings {
 }
 
 describe('multiple model configurations', () => {
+  it('fixes preset names and protects only fixed entries from rename and deletion', () => {
+    const state = { ...legacySettings(), model_configuration_names: { anthropic: 'old name', glm: 'old name', deepseek: 'old name' } }
+    const original = structuredClone(state)
+    const names = { anthropic: 'Anthropic', glm: '智谱 coding plan', deepseek: 'DeepSeek' }
+    expect(buildModelConfigurationNames(state)).toMatchObject(names)
+    for (const [id, name] of Object.entries(names)) {
+      expect(() => renameModelConfiguration(state, id, 'changed name')).toThrow('固定供应商名称不能修改')
+      expect(renameModelConfiguration(state, id, name)).toEqual({})
+      expect(() => deleteModelConfiguration(state, id)).toThrow('固定供应商不能删除')
+      const created = createModelConfiguration(state, id)
+      const next = { ...state, ...created.updates }
+      expect(renameModelConfiguration(next, created.id, 'extra configuration').model_configurations?.[created.id].name).toBe('extra configuration')
+      expect(deleteModelConfiguration(next, created.id).model_configurations?.[created.id]).toBeUndefined()
+    }
+    expect(state).toEqual(original)
+  })
+
   it('creates blank custom drafts without inheriting legacy or existing configuration data', () => {
     const legacy = { ...legacySettings(), api_key_custom: 'fixture-legacy-key',
       openai_api_key_custom: 'fixture-legacy-openai-key', model_custom: 'fixture-legacy-model',
@@ -58,11 +75,11 @@ describe('multiple model configurations', () => {
     const legacy = legacySettings()
     const original = structuredClone(legacy)
     const first = createModelConfiguration(legacy, 'deepseek')
-    expect(first.updates.model_configuration_names?.deepseek).toBe('DeepSeek(1)')
-    expect(first.updates.model_configurations[first.id].name).toBe('DeepSeek(2)')
+    expect(first.updates.model_configuration_names?.deepseek).toBe('DeepSeek')
+    expect(first.updates.model_configurations[first.id].name).toBe('DeepSeek(1)')
     const state = { ...legacy, ...first.updates }
     const second = createModelConfiguration(state, 'deepseek')
-    expect(second.updates.model_configurations[second.id].name).toBe('DeepSeek(3)')
+    expect(second.updates.model_configurations[second.id].name).toBe('DeepSeek(2)')
     expect(legacy).toEqual(original)
     const fresh = { added_providers: [] } as unknown as Settings
     const newFirst = createModelConfiguration(fresh, 'deepseek')
@@ -73,8 +90,8 @@ describe('multiple model configurations', () => {
     const first = createModelConfiguration(legacySettings(), 'deepseek')
     const state = { ...legacySettings(), ...first.updates, model_configuration_names: {} }
     state.model_configurations[first.id].name = 'DeepSeek(1)'
-    expect(buildModelConfigurationNames(state)).toMatchObject({ deepseek: 'DeepSeek(2)', [first.id]: 'DeepSeek(1)' })
-    expect(createModelConfiguration(state, 'deepseek').updates.model_configuration_names?.deepseek).toBe('DeepSeek(2)')
+    expect(buildModelConfigurationNames(state)).toMatchObject({ deepseek: 'DeepSeek', [first.id]: 'DeepSeek(1)' })
+    expect(createModelConfiguration(state, 'deepseek').updates.model_configuration_names?.deepseek).toBe('DeepSeek')
   })
 
   it('renames legacy, built-in and incomplete active configurations without changing service settings', () => {
@@ -83,10 +100,10 @@ describe('multiple model configurations', () => {
     state.model_configurations[created.id].api_key = ''
     const original = structuredClone(state)
     state = { ...state, ...renameModelConfiguration(state, created.id, '  工作模型  ') }
-    state = { ...state, ...renameModelConfiguration(state, 'deepseek', '历史模型') }
+    state = { ...state, ...renameModelConfiguration(state, 'custom', '历史模型') }
     state = { ...state, ...renameModelConfiguration(state, 'builtin', '内置助手') }
     expect(state.model_configurations[created.id]).toEqual({ ...original.model_configurations[created.id], name: '工作模型' })
-    expect(state.model_configuration_names).toMatchObject({ deepseek: '历史模型', builtin: '内置助手' })
+    expect(state.model_configuration_names).toMatchObject({ custom: '历史模型', builtin: '内置助手' })
     for (const field of ['api_key', 'model', 'api_key_deepseek', 'model_deepseek', 'base_url_custom', 'openai_base_url_custom', 'active_model_configuration'] as const) {
       expect(state[field]).toEqual(original[field])
     }
@@ -228,7 +245,7 @@ describe('multiple model configurations', () => {
     expect(() => createModelConfiguration(state, 'unregistered')).toThrow()
   })
 
-  it('persists and reloads multiple models, credentials and the active context limit in an isolated settings directory', async () => {
+  it('persists and reloads model edits and deletions without restoring removed configurations', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-model-config-test-'))
     const homedir = vi.spyOn(os, 'homedir').mockReturnValue(directory)
     const { setMasterKeyForTests } = await import('../secret-store.js')
@@ -252,7 +269,7 @@ describe('multiple model configurations', () => {
         models_url: 'https://example.org/models?version=1', models_url_is_full: true, models_auth_type: 'auth_token', openai_models_url: 'https://example.org/v1', openai_models_url_is_full: false,
       }))
       state = config.updateSettings(renameModelConfiguration(config.getSettings(), 'builtin', 'built-in assistant'))
-      config.updateSettings(renameModelConfiguration(state, 'deepseek', 'legacy assistant'))
+      config.updateSettings(renameModelConfiguration(state, 'custom', 'legacy assistant'))
       const raw = fs.readFileSync(path.join(directory, '.weworker', 'settings.json'), 'utf8')
       expect(raw).not.toContain('persisted-one')
       expect(raw).not.toContain('persisted-two')
@@ -261,7 +278,7 @@ describe('multiple model configurations', () => {
       expect(restored.active_model_configuration).toBe(first.id)
       expect(restored.context_limit).toBe(250000)
       expect(restored.model_configurations?.[first.id]).toMatchObject({ name: 'saved configuration', model: 'saved-one', api_key: 'persisted-one' })
-      expect(restored.model_configuration_names).toMatchObject({ builtin: 'built-in assistant', deepseek: 'legacy assistant' })
+      expect(restored.model_configuration_names).toMatchObject({ builtin: 'built-in assistant', custom: 'legacy assistant', deepseek: 'DeepSeek' })
       expect(restored.model_configurations?.[second.id]).toMatchObject({ model: 'saved-two', api_key: 'persisted-two' })
       expect(restored.model_deepseek).toBe(initial.model_deepseek)
       expect(restored.model_configurations?.[custom.id]).toMatchObject({
@@ -269,6 +286,29 @@ describe('multiple model configurations', () => {
         base_url: 'https://example.com/arbitrary/endpoint?version=1', base_url_is_full: true,
         openai_base_url: 'https://example.com/openai/custom?version=2', openai_base_url_is_full: true,
       })
+
+      const remaining = structuredClone(restored.model_configurations!)
+      delete remaining[second.id]
+      const deleted = config.updateSettings(deleteModelConfiguration(restored, second.id))
+      expect(deleted.model_configurations).toEqual(remaining)
+      expect(publicModelConfigurations(deleted)[second.id]).toBeUndefined()
+      expect(extractSecrets(deleted)[`model_configurations.${second.id}.api_key`]).toBeUndefined()
+      expect(deleted.active_model_configuration).toBe(first.id)
+      const disk = JSON.parse(fs.readFileSync(path.join(directory, '.weworker', 'settings.json'), 'utf8'))
+      expect(disk.model_configurations[second.id]).toBeUndefined()
+      config.resetSettingsStateForTests()
+      expect(config.getSettings().model_configurations).toEqual(remaining)
+
+      // Unrelated partial updates must retain the complete model collection.
+      state = config.updateSettings({ welcome_featured_site_limit: 12 })
+      expect(state.model_configurations).toEqual(remaining)
+      expect(() => deleteModelConfiguration(state, first.id)).toThrow('当前使用中')
+      state = config.updateSettings({ active_model_configuration: '' })
+      state = config.updateSettings(deleteModelConfiguration(state, first.id))
+      state = config.updateSettings(deleteModelConfiguration(state, custom.id))
+      expect(state.model_configurations).toEqual({})
+      config.resetSettingsStateForTests()
+      expect(config.getSettings().model_configurations).toEqual({})
     } finally {
       homedir.mockRestore()
       setMasterKeyForTests(null)

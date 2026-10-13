@@ -14,6 +14,51 @@ afterEach(() => {
 })
 
 describe('chat model settings integration', () => {
+  it('saves a preset key before activating it and synchronizes model settings', async () => {
+    globalThis.window = {}
+    const calls = []
+    globalThis.fetch = async (url, options) => {
+      calls.push({ path: new URL(url).pathname, body: JSON.parse(options.body) })
+      return Response.json({ active_provider: calls.length === 1 ? 'builtin' : 'anthropic', model: 'fixture-model', providers: { anthropic: { has_key: true, model: 'fixture-model' } } })
+    }
+    await useSettingsStore.getState().configurePresetProvider('anthropic', '  fixture-key  ')
+    assert.deepEqual(calls, [
+      { path: '/settings/provider', body: { provider: 'anthropic', api_key: 'fixture-key' } },
+      { path: '/settings/provider/activate', body: { provider: 'anthropic' } },
+    ])
+    assert.equal(useSettingsStore.getState().providers.anthropic.has_key, true)
+    assert.equal(useSettingsStore.getState().activeProvider, 'anthropic')
+    assert.equal(JSON.stringify(useSettingsStore.getState()).includes('fixture-key'), false)
+  })
+
+  it('rejects blank keys and non-preset IDs without saving or switching', async () => {
+    globalThis.window = {}
+    globalThis.fetch = async () => { throw new Error('unexpected request') }
+    await assert.rejects(useSettingsStore.getState().configurePresetProvider('deepseek', '  '), /API Key/)
+    await assert.rejects(useSettingsStore.getState().configurePresetProvider('custom', 'fixture-key'), /预定义供应商/)
+    assert.equal(useSettingsStore.getState().activeProvider, initialState.activeProvider)
+  })
+
+  it('does not activate when saving the preset key fails', async () => {
+    globalThis.window = {}
+    globalThis.fetch = async (url) => {
+      assert.ok(url.endsWith('/settings/provider'))
+      return Response.json({ detail: '模拟保存失败' }, { status: 500 })
+    }
+    await assert.rejects(useSettingsStore.getState().configurePresetProvider('glm', 'fixture-key'), /模拟保存失败/)
+    assert.equal(useSettingsStore.getState().activeProvider, initialState.activeProvider)
+  })
+
+  it('retains saved key metadata and the old active provider when activation fails', async () => {
+    globalThis.window = {}
+    globalThis.fetch = async url => url.endsWith('/activate')
+      ? Response.json({ detail: '模拟切换失败' }, { status: 500 })
+      : Response.json({ active_provider: initialState.activeProvider, providers: { deepseek: { has_key: true } } })
+    await assert.rejects(useSettingsStore.getState().configurePresetProvider('deepseek', 'fixture-key'), /模拟切换失败/)
+    assert.equal(useSettingsStore.getState().providers.deepseek.has_key, true)
+    assert.equal(useSettingsStore.getState().activeProvider, initialState.activeProvider)
+  })
+
   it('deletes an independent model configuration and refreshes the provider list', async () => {
     globalThis.window = {}
     globalThis.fetch = async (url, options) => {

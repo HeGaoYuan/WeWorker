@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Settings } from './config.js'
 import { getProvider, PROVIDERS } from './provider-registry.js'
-import { buildProviderVisibility } from './provider-visibility.js'
+import { buildProviderVisibility, isFixedProvider } from './provider-visibility.js'
 import { isBuiltinProvider } from './builtin-provider.js'
 import { DEFAULT_CONTEXT_LIMIT, parseContextLimit } from './context-window.js'
 import { isAnthropicAuthType, type AnthropicAuthType } from './anthropic-auth.js'
@@ -34,7 +34,7 @@ export function buildModelConfigurationNames(settings: Settings): Record<string,
   const visible = buildProviderVisibility(settings)
   const entries = [
     ...PROVIDERS.filter(provider => isBuiltinProvider(provider.id) || visible(provider.id))
-      .map(provider => ({ id: provider.id, provider, name: settings.model_configuration_names?.[provider.id] })),
+      .map(provider => ({ id: provider.id, provider, name: isFixedProvider(provider.id) ? provider.name : settings.model_configuration_names?.[provider.id] })),
     ...Object.entries(settings.model_configurations || {}).flatMap(([id, configuration]) => {
       const provider = configuration && getProvider(configuration.provider_id)
       return provider ? [{ id, provider, name: configuration.name }] : []
@@ -73,6 +73,10 @@ export function modelConfigurationNameUpdates(settings: Settings): Partial<Setti
 
 export function renameModelConfiguration(settings: Settings, id: string, value: unknown): Partial<Settings> {
   const name = validateModelConfigurationName(value)
+  if (isFixedProvider(id)) {
+    if (name !== getProvider(id)!.name) throw new Error('固定供应商名称不能修改')
+    return {}
+  }
   if (!getProvider(id) && !getModelConfiguration(settings, id)) throw new Error('模型配置不存在')
   const updates = modelConfigurationNameUpdates(settings)
   if (getModelConfiguration(settings, id)) {
@@ -129,6 +133,7 @@ export function getModelConfiguration(settings: Settings, id: string | undefined
 }
 
 export function deleteModelConfiguration(settings: Settings, id: string): Partial<Settings> {
+  if (isFixedProvider(id)) throw new Error('固定供应商不能删除')
   if (!getModelConfiguration(settings, id)) throw new Error('模型配置不存在')
   if (settings.active_model_configuration === id) throw new Error('当前使用中的模型配置不能删除，请先切换其他模型')
   const model_configurations = { ...(settings.model_configurations || {}) }

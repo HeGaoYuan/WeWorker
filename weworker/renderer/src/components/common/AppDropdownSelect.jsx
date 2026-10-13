@@ -18,6 +18,7 @@ export default function AppDropdownSelect({
   menuClassName,
   showOptionIcons = false,
   renderOptionSuffix,
+  fallbackOption,
   menuHeader,
   required = false,
 }) {
@@ -26,7 +27,7 @@ export default function AppDropdownSelect({
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
 
-  const selected = options.find((item) => item.value === value) || options[0]
+  const selected = options.find((item) => item.value === value) || fallbackOption || options[0]
   const closeMenu = () => setOpen(false)
 
   useDropdownDismiss(open, closeMenu, triggerRef, menuRef)

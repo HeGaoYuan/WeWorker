@@ -698,6 +698,11 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   getSettings() // Ensure the persisted settings have been loaded.
   // Merge the stored state, not the runtime projection containing deployment credentials.
   _settings = deepMerge(_settings!, updates) as Settings
+  // Model configuration operations supply the complete collection. Deep merging
+  // it would resurrect removed IDs, including when the last entry is deleted.
+  if (updates.model_configurations !== undefined) {
+    _settings.model_configurations = structuredClone(updates.model_configurations)
+  }
 
   _settings.max_chat_attachments = normalizeMaxChatAttachments(_settings.max_chat_attachments)
   _settings.context_limit = normalizeContextLimit(_settings.context_limit)

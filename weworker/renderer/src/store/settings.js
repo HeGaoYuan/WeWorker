@@ -5,6 +5,7 @@ import {
   getEffectivePreviewExtensions,
 } from '../utils/resource-preview-extensions.js'
 import { backendFetch } from '../api/http.js'
+import { isFixedProvider } from '../utils/model-selection.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -190,6 +191,16 @@ export const useSettingsStore = create((set, get) => ({
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '保存失败')
     set(settingsPatch(data, get()))
+  },
+
+  configurePresetProvider: async (provider, apiKey) => {
+    if (!isFixedProvider(provider) || !PROVIDERS.some(item => item.id === provider)) {
+      throw new Error('请选择预定义供应商')
+    }
+    const key = String(apiKey || '').trim()
+    if (!key) throw new Error('请填写 API Key')
+    await get().saveProvider(provider, { api_key: key })
+    await get().activateProvider(provider)
   },
 
   // Switch which provider is active

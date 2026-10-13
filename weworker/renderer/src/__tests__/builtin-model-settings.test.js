@@ -19,9 +19,9 @@ test('built-in metadata is visible before configuration without claiming a key e
   assert.equal(initialState.providers.builtin.readonly, true)
 })
 
-test('renderer initial state lists only built-in models before settings load', () => {
+test('renderer initial state lists built-ins and the three fixed presets before settings load', () => {
   const { visible } = buildSettingsProviderLists(PROVIDERS, initialState.providers)
-  assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev'])
+  assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev', 'anthropic', 'glm', 'deepseek'])
 })
 
 test('development restores built-ins missing from a stale injected provider list', () => {

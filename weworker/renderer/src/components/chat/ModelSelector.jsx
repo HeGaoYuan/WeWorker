@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { DisconnectOutlined, LinkOutlined, LoadingOutlined, QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CheckCircleFilled, KeyOutlined, DisconnectOutlined, LinkOutlined, LoadingOutlined, QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { PROVIDERS, useSettingsStore } from '../../store/settings.js'
 import { isBuiltinProvider } from '../../store/settings.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
-import { buildModelOptions, buildSettingsProviderLists } from '../../utils/model-selection.js'
+import { buildModelOptions, buildSettingsProviderLists, buildChatProviderOptions, isFixedProvider } from '../../utils/model-selection.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
+import PresetKeyDialog from './PresetKeyDialog.jsx'
 import { getThinkingEffortOptions, normalizeThinkingEffort } from '../../utils/thinking-effort.js'
 import { modelHealthKey, useModelHealthStore } from '../../store/model-health.js'
 import './model-selector.css'
@@ -16,6 +17,8 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
   const loaded = useSettingsStore(state => state.loaded)
   const activateProvider = useSettingsStore(state => state.activateProvider)
   const saveProvider = useSettingsStore(state => state.saveProvider)
+  const configurePresetProvider = useSettingsStore(state => state.configurePresetProvider)
+  const [keyProvider, setKeyProvider] = useState(null)
   const [catalog, setCatalog] = useState(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
@@ -53,7 +56,10 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
 
   const changeSelection = async (value, kind) => {
     if (disabled || !loaded || pendingRef.current) return
-    if (kind === 'provider' && !isBuiltinProvider(value) && !providers[value]?.has_key) return
+    if (kind === 'provider' && !isBuiltinProvider(value) && !providers[value]?.has_key) {
+      if (isFixedProvider(value)) { setError(''); setKeyProvider(value) }
+      return
+    }
     if (kind === 'model' && isBuiltinProvider(activeProvider)) return
     if (value === (kind === 'provider' ? activeProvider : model)) return
     pendingRef.current = true
@@ -77,27 +83,31 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
   }
 
   const configuredProviders = buildSettingsProviderLists(PROVIDERS, providers).visible
-  const visibleProviders = configuredProviders.filter(
-    item => isBuiltinProvider(item.id) || providers[item.id]?.has_key,
-  )
-  if (
-    activeProvider
-    && !visibleProviders.some(item => item.id === activeProvider)
-  ) {
-    const fallback = configuredProviders.find(item => item.id === activeProvider)
-    visibleProviders.unshift({ id: activeProvider, name: fallback?.name || activeProvider })
+  const providerOptions = buildChatProviderOptions(PROVIDERS, providers, activeProvider)
+
+  const savePresetKey = async apiKey => {
+    pendingRef.current = true
+    setPending(true)
+    onPendingChange?.(true)
+    try {
+      autoCheckProvider.current = keyProvider
+      await configurePresetProvider(keyProvider, apiKey)
+    } catch (failure) {
+      autoCheckProvider.current = null
+      throw failure
+    } finally {
+      pendingRef.current = false
+      setPending(false)
+      onPendingChange?.(false)
+    }
   }
-  const providerOptions = visibleProviders.map(item => ({
-    value: item.id,
-    label: item.providerId ? `${item.name} · ${providers[item.id]?.model || '未配置'}` : item.name,
-  }))
 
   const provider = configuredProviders.find(item => item.id === activeProvider)
   const modelSource = catalog?.provider === activeProvider
     ? catalog?.models
     : provider?.models
   const modelOptions = buildModelOptions(modelSource, model, { annotateCurrent: false })
-  const unavailable = disabled || pending || !loaded
+  const unavailable = disabled || pending || !loaded || Boolean(keyProvider)
   const errorTitle = error ? `模型切换失败：${error}` : undefined
   const thinkingOptions = getThinkingEffortOptions(activeProvider, model)
   const normalizedThinkingEffort = normalizeThinkingEffort(thinkingEffort, thinkingOptions)
@@ -131,11 +141,19 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         menuClassName="app-dropdown-menu chat-model-selector-menu"
         value={activeProvider}
         options={providerOptions}
+        fallbackOption={{ value: activeProvider, label: provider?.name || activeProvider || '请选择', keyConfigured: Boolean(providers[activeProvider]?.has_key) }}
         onChange={value => changeSelection(value, 'provider')}
         disabled={unavailable}
         ariaLabel="模型供应商选择"
         placement="top"
         minMenuWidth={150}
+        renderOptionSuffix={option => option?.keyConfigured === undefined ? null : (
+          <span className={`provider-key-status${option.keyConfigured ? ' is-configured' : ''}`}
+            title={option.keyConfigured ? '已填写 API Key' : '未填写 API Key，点击配置'}
+            aria-label={option.keyConfigured ? '已填写 API Key' : '未填写 API Key'}>
+            {option.keyConfigured ? <CheckCircleFilled /> : <KeyOutlined />}
+          </span>
+        )}
       />
       <AppDropdownSelect
         className="chat-model-selector__model"
@@ -171,6 +189,11 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         placement="top"
         minMenuWidth={88}
       />
+      {keyProvider && <PresetKeyDialog
+        providerName={PROVIDERS.find(item => item.id === keyProvider)?.name || keyProvider}
+        onSave={savePresetKey}
+        onClose={() => setKeyProvider(null)}
+      />}
     </div>
   )
 }

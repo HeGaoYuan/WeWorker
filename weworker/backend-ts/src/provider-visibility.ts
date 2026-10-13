@@ -2,10 +2,12 @@ import { PROVIDERS, getProvider } from './provider-registry.js'
 import type { Settings } from './config.js'
 
 // Provider visibility / "added" state for the model picker.
-// Registered providers stay hidden until the
-// user explicitly adds them through settings. Existing installs that already
-// carry credentials/config stay visible (backward compatibility). An untouched
-// default provider is not considered added just because it is active.
+// The three fixed presets are always visible. Custom legacy configurations stay
+// visible when explicitly added or previously configured.
+
+export function isFixedProvider(id: string): boolean {
+  return ['anthropic', 'glm', 'deepseek'].includes(id) && !!getProvider(id)
+}
 
 // Preset provider ids offered in the "add provider" dialog.
 export const PRESET_PROVIDER_IDS = PROVIDERS.filter(provider => provider.id !== 'custom').map(provider => provider.id)
@@ -55,6 +57,7 @@ export interface ProviderVisibilityInput {
 
 export function isProviderVisible(id: string, input: ProviderVisibilityInput): boolean {
   if (!getProvider(id)) return false
+  if (isFixedProvider(id)) return true
   for (const added of input.addedProviders) {
     if (added === id) return true
   }
