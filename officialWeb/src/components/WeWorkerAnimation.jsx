@@ -88,7 +88,7 @@ function useTypewriter(text, active, speed = 55) {
   return { displayed, done }
 }
 
-export default function WeWorkerAnimation() {
+export default function WeWorkerAnimation({ paused = false }) {
   const [stepIdx, setStepIdx] = useState(0)
   const [running, setRunning] = useState(true)
   const [aiThoughts, setAiThoughts] = useState([])
@@ -108,7 +108,9 @@ export default function WeWorkerAnimation() {
   const typingActive = running && step?.phase === 'wecom-input'
   const { displayed: typedText, done: typingDone } = useTypewriter(MSG_TEXT, typingActive, 22)
 
-  useEffect(() => { setRunning(true) }, [])
+  useEffect(() => {
+    setRunning(!paused)
+  }, [paused])
 
   useEffect(() => {
     if (stepIdx === 0) wecomHandoffRef.current = false
@@ -690,7 +692,7 @@ export default function WeWorkerAnimation() {
           {[
             { label: '企业微信', sub: '消息通道', color: '[#1989FA]' },
             { label: 'WeWorker', sub: 'AI 助理', color: 'accent' },
-            { label: 'Chrome 扩展', sub: 'WeWorker Browser Adapter', color: 'emerald' },
+            { label: 'Chrome 扩展', sub: 'WebMCP Adapter', color: 'emerald' },
           ].map((node, i, arr) => (
             <div key={i} className="flex items-center gap-2">
               <div className={`bg-surface/90 backdrop-blur border rounded-xl px-3.5 py-2.5 shadow-lg transition-all duration-500 ${dataFlowActive ? 'border-accent/45 scale-105' : 'border-border'}`}>

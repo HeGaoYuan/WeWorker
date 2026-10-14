@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import SiteBackground from './components/SiteBackground.jsx'
+import CursorGlow from './components/CursorGlow.jsx'
+import CommandPalette from './components/CommandPalette.jsx'
 import Navbar from './components/Navbar.jsx'
 import Footer from './components/Footer.jsx'
-import Home from './pages/Home.jsx'
+import Landing from './pages/Landing.jsx'
 import Docs from './pages/Docs.jsx'
 import Download from './pages/Download.jsx'
 import Stats from './pages/Stats.jsx'
+import { CommandPaletteProvider } from './lib/CommandPaletteContext.jsx'
 import { THEME_STORAGE_KEY, applyTheme, getInitialTheme } from './lib/theme.js'
 import { reportVisit } from './lib/visits.js'
 
@@ -17,13 +21,36 @@ function ScrollToTop() {
   return null
 }
 
-// 页面访问上报：每次路由切换（含首次加载）记一次 PV。
 function VisitReporter() {
   const { pathname } = useLocation()
   useEffect(() => {
     reportVisit(pathname)
   }, [pathname])
   return null
+}
+
+function AppShell({ theme, onToggleTheme }) {
+  const { pathname } = useLocation()
+  const isHome = pathname === '/'
+
+  return (
+    <div className="page-shell min-h-screen flex flex-col bg-bg text-[rgb(var(--color-text))]">
+      <SiteBackground variant={isHome ? 'home' : 'plain'} />
+      <CursorGlow />
+      <Navbar theme={theme} onToggleTheme={onToggleTheme} />
+      <main className="flex-1 pt-14">
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/download" element={<Download />} />
+          <Route path="/docs" element={<Docs />} />
+          <Route path="/docs/:slug" element={<Docs />} />
+          <Route path="/stats" element={<Stats />} />
+        </Routes>
+      </main>
+      <Footer />
+      <CommandPalette />
+    </div>
+  )
 }
 
 export default function App() {
@@ -34,27 +61,16 @@ export default function App() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme)
   }, [theme])
 
-  const toggleTheme = () => {
-    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
-  }
-
   return (
     <BrowserRouter>
-      <ScrollToTop />
-      <VisitReporter />
-      <div className="min-h-screen flex flex-col bg-bg text-[rgb(var(--color-text))] transition-colors">
-        <Navbar theme={theme} onToggleTheme={toggleTheme} />
-        <main className="flex-1">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/download" element={<Download />} />
-            <Route path="/docs" element={<Docs />} />
-            <Route path="/docs/:slug" element={<Docs />} />
-            <Route path="/stats" element={<Stats />} />
-          </Routes>
-        </main>
-        <Footer />
-      </div>
+      <CommandPaletteProvider>
+        <ScrollToTop />
+        <VisitReporter />
+        <AppShell
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        />
+      </CommandPaletteProvider>
     </BrowserRouter>
   )
 }

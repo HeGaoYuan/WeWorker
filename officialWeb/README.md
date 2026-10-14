@@ -1,8 +1,8 @@
 # WeWorker 官网
 
-WeWorker 产品介绍、下载页与使用文档，基于 React + Vite 构建。
+开源产品官网与文档站（Vite + React）。下载页默认跳转 [GitHub Releases](https://github.com/WeWorker/WeWorker/releases)；也可选择将安装包放入 `public/downloads/` 做静态托管（见该目录 README）。
 
-## 开发
+## 本地预览
 
 ```bash
 cd officialWeb
@@ -10,18 +10,22 @@ npm install
 npm run dev
 ```
 
-## 构建
+生产构建：`npm run build`，产物在 `dist/`。
 
-```bash
-npm run build
-```
+## 发版同步
 
-产物输出到 `dist/`，可部署到静态站点。
+与桌面端版本保持一致：
 
-## 数据依赖
+- `package.json` 的 `version`
+- `src/lib/downloadConfig.js` 的 `APP_VERSION` 与 `DOWNLOADS[].filename`
 
-- 更新日志：`weworker/changelog.json`（与桌面端共用）
-- 免责声明：`weworker/disclaimer.json`
-- 安装包：放入 `public/downloads/`，命名约定见 `public/downloads/README.md`
+公开仓库 CI 会通过 `scripts/check-public-config.mjs` 校验上述版本与 `weworker/package.json` 一致。
 
-发版时需同步更新 `src/lib/downloadConfig.js` 中的 `APP_VERSION` 与安装包文件名。
+## 结构
+
+- 落地页：`src/pages/Landing.jsx`
+- Adapter 调用统计：`/stats`（`src/pages/Stats.jsx`；本地 dev 需配置 `METRICS_TARGET` / `METRICS_TOKEN`，由 Vite 代理 `/api/stats`）
+- 文档：`public/docs/` + `src/pages/Docs.jsx`
+- 站点清单：`src/lib/sites.json`（与 `extension/adapters` 对齐）
+- 外链与仓库地址：`src/lib/siteConfig.js`
+- 设计系统备忘：`design-system/weworker-open/`

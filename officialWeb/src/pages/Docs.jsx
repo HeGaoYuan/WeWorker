@@ -387,8 +387,8 @@ export default function Docs() {
     return () => { clearTimeout(timer); observer.disconnect() }
   }, [content, loading, error])
 
-  // Find prev/next
-  const allItems = DOCS_SIDEBAR.flatMap(g => g.items)
+  // Find prev/next（跳过外链菜单项）
+  const allItems = DOCS_SIDEBAR.flatMap(g => g.items).filter(i => i.slug && !i.href)
   const idx = allItems.findIndex(i => i.slug === activeSlug)
   const prev = idx > 0 ? allItems[idx - 1] : null
   const next = idx < allItems.length - 1 ? allItems[idx + 1] : null
