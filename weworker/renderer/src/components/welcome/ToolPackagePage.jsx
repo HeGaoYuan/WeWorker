@@ -82,7 +82,7 @@ export default function ToolPackagePage({ onClose }) {
     return editableSites.filter((site) => idSet.has(site.id))
   }, [editableSites, scenarioSiteIds])
 
-  const primarySite = skillSites[0] || editableSites[0] || (skillScope === SKILL_SCOPE_PUBLIC ? { id: '', name: '公共 Skills', tools: [], scenarios: [] } : null)
+  const primarySite = skillSites[0] || editableSites[0] || { id: '', name: '公共 Skills', tools: [], scenarios: [] }
   const scenarios = useMemo(
     () => mergeScenariosForSites(scenarioSites.length > 0 ? scenarioSites : (editableSites[0] ? [editableSites[0]] : [])),
     [scenarioSites, editableSites],

@@ -97,6 +97,7 @@ import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, streamChat } from './agent.js'
 import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
+import { importSkillZip, importSkillZipFile } from './skill-zip-import.js'
 import { renderPrompt } from './prompt-loader.js'
 import {
   configureAdapterRuntimeReload,
@@ -1171,6 +1172,36 @@ app.get('/skills', (_req, res) => {
     res.json(skills)
   } catch {
     res.json([])
+  }
+})
+
+app.post('/skills/import-zip', express.raw({ type: ['application/zip', 'application/x-zip-compressed'], limit: '50mb' }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ detail: '请选择 ZIP 文件' })
+    return
+  }
+  try {
+    const archiveName = typeof req.query.name === 'string' && req.query.name
+      ? req.query.name
+      : 'imported-skill.zip'
+    const skills = await importSkillZip(req.body, SKILLS_DIR, archiveName)
+    res.json({ ok: true, skills })
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : '导入 Skill ZIP 失败' })
+  }
+})
+
+app.post('/skills/import-zip-path', async (req, res) => {
+  const archivePath = typeof req.body?.path === 'string' ? req.body.path : ''
+  if (!archivePath) {
+    res.status(400).json({ detail: '请选择 ZIP 文件' })
+    return
+  }
+  try {
+    const skills = await importSkillZipFile(archivePath, SKILLS_DIR)
+    res.json({ ok: true, skills })
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : '导入 Skill ZIP 失败' })
   }
 })
 
