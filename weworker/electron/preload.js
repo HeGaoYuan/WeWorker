@@ -39,6 +39,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('updates:state', handler)
   },
   getHttpAuthToken: () => ipcRenderer.invoke('get-http-auth-token'),
+  getAppSettings: () => ipcRenderer.invoke('app-settings:get'),
+  setAppSettings: (patch) => ipcRenderer.invoke('app-settings:set', patch),
+  onOpenDedicatedAgents: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const handler = () => callback()
+    ipcRenderer.on('app:open-dedicated-agents', handler)
+    return () => ipcRenderer.removeListener('app:open-dedicated-agents', handler)
+  },
   focusWindow: () => ipcRenderer.invoke('focus-main-window'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openWebwright: () => ipcRenderer.invoke('open-webwright'),

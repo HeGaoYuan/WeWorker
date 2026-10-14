@@ -134,6 +134,9 @@ import { WecomChannel } from './channels/wecom-channel.js'
 import { WecomQrService } from './channels/wecom-qr.js'
 import { syncWecomChannel } from './channels/sync-wecom-channel.js'
 import { FeishuChannel } from './channels/feishu-channel.js'
+import { registerDedicatedAgentRoutes } from './dedicated-agents/routes.js'
+import { buildDesktopAgentTurnOptions, startAllDedicatedAgents } from './dedicated-agents/agent-channel.js'
+import { findAgentByBotId, findAgentByWorkId, listAgentWorkIds } from './dedicated-agents/agent-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -294,6 +297,7 @@ app.get('/internal/webwright/model-config', (req, res) => {
 app.use(requireHttpAuth)
 app.use(express.json({ limit: '50mb' }))
 app.use('/api/website-exploration', createWebsiteExplorationRouter())
+registerDedicatedAgentRoutes(app)
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   const detail = err instanceof Error ? err.message : String(err || '')
   const status = typeof (err as { status?: unknown })?.status === 'number'
@@ -872,6 +876,13 @@ app.get('/settings/channels', (_req, res) => {
 })
 
 const queueChannelMutation = createChannelMutationQueue()
+
+// A WeCom bot serves either the main channel or exactly one dedicated agent.
+function assertWecomBotNotUsedByAgent(botId: string | undefined): void {
+  const agent = botId ? findAgentByBotId(botId) : null
+  if (agent) throw new Error(`该企业微信机器人已被专属 Agent「${agent.name}」使用，一个机器人只能连接一个 Agent`)
+}
+
 async function syncChannelSettings(previous: Settings, updated: Settings) {
   await syncAppBotChannel('qq', channelManager, previous.channels.qq, updated.channels.qq,
     config => new QQChannel(config), () => channelLog.error('QQ channel start failed'))
@@ -891,6 +902,10 @@ async function mutateChannelProfile(type: ChannelType, action: string, id: unkno
       input = { ...input, base_url: assertAllowedWeixinBaseUrl(input.base_url, ALLOWED_WEIXIN_BASE_URLS) }
     }
     const change = changeChannelConfiguration(previous, type, action, id, input)
+    if (type === 'wecom' && (action === 'save' || action === 'activate')) {
+      const entry = change.updates.channel_configurations[change.id]
+      assertWecomBotNotUsedByAgent(entry ? (entry.config as { bot_id?: string }).bot_id : '')
+    }
     const updated = updateSettings(change.updates)
     await syncChannelSettings(previous, updated)
     return { ...publicChannelSettings(getSettings()), selected_id: change.id }
@@ -949,6 +964,11 @@ app.post('/settings/channels', async (req, res) => {
   for (const channel of ['qq', 'weixin', 'wecom', 'feishu'] as const) {
     const error = validateOwnerUserId(channel, nextOwnerIds[channel])
     if (error) return res.status(400).json({ detail: error })
+  }
+  try {
+    assertWecomBotNotUsedByAgent(String(wecom?.bot_id ?? s.channels.wecom.bot_id ?? '').trim())
+  } catch (e) {
+    return res.status(409).json({ detail: e instanceof Error ? e.message : String(e) })
   }
   let nextWeixinBaseUrl: string
   let nextWeixinToken: string
@@ -2042,7 +2062,9 @@ app.post('/explore/scaffold', async (req, res) => {
 // 鈹€鈹€ Works 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 app.get('/works', (_req, res) => {
-  res.json(store.listWorks())
+  // Dedicated agent conversations live on the agent page, not in the main task list.
+  const agentWorkIds = listAgentWorkIds()
+  res.json(agentWorkIds.size ? store.listWorks().filter((work) => !agentWorkIds.has(work.id)) : store.listWorks())
 })
 
 app.get('/projects', (_req, res) => {
@@ -2719,6 +2741,17 @@ app.post('/works/:id/chat', async (req, res) => {
     res.status(404).json({ detail: 'Work not found' })
     return
   }
+  // Conversations owned by a dedicated agent run as that agent (its skills and tool limits).
+  const dedicatedAgent = findAgentByWorkId(workId)
+  let dedicatedAgentOptions: ReturnType<typeof buildDesktopAgentTurnOptions> | undefined
+  if (dedicatedAgent) {
+    try {
+      dedicatedAgentOptions = buildDesktopAgentTurnOptions(dedicatedAgent)
+    } catch (e) {
+      res.status(500).json({ detail: `专属 Agent 运行环境准备失败：${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+  }
 
   let userContent: store.ContentBlock[] = []
   let importedAttachments: store.ContentBlock[] = []
@@ -2849,7 +2882,8 @@ app.post('/works/:id/chat', async (req, res) => {
 
   // Optional product profiles may answer a query before the normal LLM route.
   // The public profile has no registered route and always falls through.
-  if (await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
+  // Dedicated agents skip profile routes: those may answer with other websites.
+  if (!dedicatedAgent && await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
     finished = true
     res.off('close', onClose)
     broadcastSSE({ type: 'works_changed', workId })
@@ -2898,6 +2932,7 @@ app.post('/works/:id/chat', async (req, res) => {
       thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, thinkingEffort),
       memoryScope: initialMemoryScope,
       onAskUser: (event) => send(event),
+      ...(dedicatedAgentOptions ?? {}),
     })) {
       if (ev.type === 'skill_context' && ev.skillContext) {
         assistantContent.push(ev.skillContext)
@@ -3005,6 +3040,14 @@ app.post('/works/:id/chat', async (req, res) => {
   if (assistantContent.length > 0) {
     assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
     store.appendMessage(workId, 'assistant', assistantContent)
+  }
+
+  // Dedicated agent turns run with long-term memory off: nothing to plan or report.
+  if (dedicatedAgent) {
+    store.markExternalWrite()
+    broadcastSSE({ type: 'works_changed', workId })
+    res.end()
+    return
   }
 
   const toolCallsForMemory = assistantContent
@@ -3197,6 +3240,8 @@ async function startConfiguredChannels(): Promise<void> {
     channelManager.register('feishu', feishuChannel)
     feishuChannel.start().catch(e => channelLog.error('start error:', e))
   }
+
+  await startAllDedicatedAgents()
 }
 
 async function bootstrap(): Promise<void> {

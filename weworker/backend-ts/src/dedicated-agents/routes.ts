@@ -1,0 +1,388 @@
+/**
+ * HTTP API for dedicated agents (专属 Agent).
+ * All routes sit behind the backend's existing local auth middleware.
+ */
+import type express from 'express'
+import { getSettings } from '../config.js'
+import { parseAllAdapters, type ParsedAdapter } from '../adapter-parser.js'
+import * as works from '../works-store.js'
+import { createLogger } from '../logger.js'
+import {
+  addAgentWork,
+  createAgent,
+  deleteAgent,
+  DedicatedAgentError,
+  getAgent,
+  listAgents,
+  normalizeSkillName,
+  removeAgentWork,
+  resetPairing,
+  toAgentView,
+  updateAgent,
+  type DedicatedAgentRecord,
+} from './agent-store.js'
+import { getAgentChannelStatus, restartAgentChannel, startAgentChannel, stopAgentChannel } from './agent-channel.js'
+import { removeAgentRuntime } from './agent-runtime.js'
+import { createWecomQrSessions } from './wecom-qr.js'
+import {
+  generateAgentSkill,
+  reviseAgentSkill,
+  suggestSkillName,
+  normalizeSkillMarkdown,
+  type SkillAuthorAdapter,
+} from './skill-author.js'
+import { importSkillFromPath } from './skill-import.js'
+import {
+  createAgentSkill,
+  createAgentSkillPackage,
+  listAgentSkills,
+  listTakenSkillNames,
+  locateSkill,
+  moveAgentSkill,
+  readAgentSkill,
+  updateAgentSkill,
+  type SkillLocations,
+  type SkillScope,
+} from './skill-library.js'
+
+const log = createLogger('dedicated-agent-api')
+
+export interface DedicatedAgentRouteDeps {
+  qrSessions?: ReturnType<typeof createWecomQrSessions>
+  skillLocations?: () => SkillLocations
+}
+
+function sendError(res: express.Response, error: unknown): void {
+  if (error instanceof DedicatedAgentError) {
+    res.status(error.statusCode).json({ detail: error.message })
+    return
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  log.error('request failed:', message)
+  res.status(500).json({ detail: message })
+}
+
+/** WeCom bots saved for the main channel (active or not) cannot also serve an agent. */
+function reservedBotIds(): string[] {
+  const settings = getSettings()
+  const ids = new Set<string>()
+  const active = settings.channels.wecom.bot_id?.trim()
+  if (active) ids.add(active)
+  for (const entry of Object.values(settings.channel_configurations ?? {})) {
+    if (entry.type !== 'wecom') continue
+    const botId = String((entry.config as { bot_id?: string }).bot_id ?? '').trim()
+    if (botId) ids.add(botId)
+  }
+  return [...ids]
+}
+
+function viewWithStatus(agent: DedicatedAgentRecord) {
+  return { ...toAgentView(agent), connection: getAgentChannelStatus(agent.id) }
+}
+
+function toAuthorAdapter(adapter: ParsedAdapter): SkillAuthorAdapter {
+  return {
+    id: adapter.id,
+    name: adapter.name,
+    description: adapter.description,
+    requiresAuth: adapter.requiresAuth,
+    authCheckTool: adapter.authCheckTool,
+    tools: adapter.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      safety: tool.safety,
+    })),
+  }
+}
+
+function requireAdapter(siteId: unknown): ParsedAdapter {
+  const adapter = parseAllAdapters().get(String(siteId ?? ''))
+  if (!adapter) throw new DedicatedAgentError('所选网站不存在或尚未安装')
+  return adapter
+}
+
+function parseScope(value: unknown, fallback: SkillScope): SkillScope {
+  if (value === undefined || value === null || value === '') return fallback
+  if (value === 'private' || value === 'public') return value
+  throw new DedicatedAgentError('scope 只能是 private 或 public')
+}
+
+function conversationView(work: works.Work) {
+  return { id: work.id, title: work.title, updated_at: work.updated_at, created_at: work.created_at }
+}
+
+export function registerDedicatedAgentRoutes(app: express.Express, deps: DedicatedAgentRouteDeps = {}): void {
+  const qrSessions = deps.qrSessions ?? createWecomQrSessions()
+  const locations = deps.skillLocations ?? (() => ({}))
+
+  const assertSkillExists = (name: string) => {
+    if (name && !locateSkill(name, locations())) throw new DedicatedAgentError(`Skill「${name}」不存在或已停用`)
+  }
+  const resolveBot = (body: Record<string, unknown>) => {
+    const sessionId = typeof body.qr_session_id === 'string' ? body.qr_session_id : ''
+    if (sessionId) {
+      const creds = qrSessions.peek(sessionId)
+      if (!creds) throw new DedicatedAgentError('扫码结果已失效，请重新扫码', 410)
+      return { bot_id: creds.botId, secret: creds.secret, sessionId }
+    }
+    if (body.bot_id !== undefined || body.secret !== undefined) {
+      return { bot_id: String(body.bot_id ?? ''), secret: String(body.secret ?? ''), sessionId: '' }
+    }
+    return null
+  }
+  const requireAgent = (id: string) => {
+    const agent = getAgent(id)
+    if (!agent) throw new DedicatedAgentError('专属 Agent 不存在', 404)
+    return agent
+  }
+
+  // ── WeCom QR: create or authorize a bot by scanning ──
+  app.post('/dedicated-agents/wecom-qr/start', async (_req, res) => {
+    try {
+      res.json(await qrSessions.start())
+    } catch (error) {
+      res.status(502).json({ detail: error instanceof Error ? error.message : '获取企业微信二维码失败' })
+    }
+  })
+
+  app.post('/dedicated-agents/wecom-qr/poll', async (req, res) => {
+    const sessionId = typeof req.body?.session_id === 'string' ? req.body.session_id : ''
+    if (!sessionId) {
+      res.status(400).json({ detail: 'session_id required' })
+      return
+    }
+    try {
+      res.json(await qrSessions.poll(sessionId))
+    } catch (error) {
+      // Transient network errors: let the client keep polling.
+      res.json({ status: 'waiting', warning: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  // ── Skills: private (agents only) by default; public = also used by the main chat ──
+  app.get('/dedicated-agents/skills', (_req, res) => {
+    const agents = listAgents()
+    const skills = listAgentSkills(locations()).map((skill) => ({
+      ...skill,
+      used_by: agents.filter((agent) => agent.skill_name === skill.name).map((agent) => ({ id: agent.id, name: agent.name })),
+    }))
+    res.json({ skills })
+  })
+
+  app.get('/dedicated-agents/skills/:name', (req, res) => {
+    try {
+      res.json(readAgentSkill(req.params.name, locations()))
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.post('/dedicated-agents/skills/suggest-name', (req, res) => {
+    try {
+      const adapter = requireAdapter(req.body?.site_id)
+      res.json({ skill_name: suggestSkillName(adapter.id, listTakenSkillNames(locations())) })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.post('/dedicated-agents/skills/generate', async (req, res) => {
+    try {
+      const adapter = requireAdapter(req.body?.site_id)
+      const skillName = normalizeSkillName(req.body?.skill_name) || suggestSkillName(adapter.id, listTakenSkillNames(locations()))
+      const result = await generateAgentSkill({
+        adapter: toAuthorAdapter(adapter),
+        agentName: String(req.body?.agent_name ?? ''),
+        goal: String(req.body?.goal ?? ''),
+        knowledge: String(req.body?.knowledge ?? ''),
+        skillName,
+      }, getSettings())
+      res.json(result)
+    } catch (error) {
+      sendError(res, error instanceof DedicatedAgentError ? error : new DedicatedAgentError(error instanceof Error ? error.message : String(error), 502))
+    }
+  })
+
+  app.post('/dedicated-agents/skills/revise', async (req, res) => {
+    try {
+      const adapter = requireAdapter(req.body?.site_id)
+      const skillName = normalizeSkillName(req.body?.skill_name)
+      if (!skillName) throw new DedicatedAgentError('请填写 Skill 名称')
+      const result = await reviseAgentSkill({
+        adapter: toAuthorAdapter(adapter),
+        markdown: String(req.body?.markdown ?? ''),
+        instruction: String(req.body?.instruction ?? ''),
+        skillName,
+      }, getSettings())
+      res.json(result)
+    } catch (error) {
+      sendError(res, error instanceof DedicatedAgentError ? error : new DedicatedAgentError(error instanceof Error ? error.message : String(error), 502))
+    }
+  })
+
+  app.post('/dedicated-agents/skills/import', async (req, res) => {
+    try {
+      const imported = await importSkillFromPath(req.body?.source_path, String(req.body?.skill_name ?? ''))
+      const created = createAgentSkillPackage(
+        imported.skillName,
+        imported.markdown,
+        imported.files,
+        parseScope(req.body?.scope, 'private'),
+        locations(),
+      )
+      res.json({ ...created, markdown: imported.markdown, source: imported.source, resource_count: imported.files.size })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.post('/dedicated-agents/skills', (req, res) => {
+    try {
+      const name = normalizeSkillName(req.body?.skill_name)
+      if (!name) throw new DedicatedAgentError('请填写 Skill 名称')
+      const markdown = normalizeSkillMarkdown(String(req.body?.markdown ?? ''), name)
+      const created = createAgentSkill(name, markdown, parseScope(req.body?.scope, 'private'), locations())
+      res.json({ ...created, markdown })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.put('/dedicated-agents/skills/:name', (req, res) => {
+    try {
+      const name = normalizeSkillName(req.params.name)
+      const markdown = normalizeSkillMarkdown(String(req.body?.markdown ?? ''), name)
+      const updated = updateAgentSkill(name, markdown, locations())
+      res.json({ ...updated, markdown })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.post('/dedicated-agents/skills/:name/scope', (req, res) => {
+    try {
+      res.json(moveAgentSkill(req.params.name, parseScope(req.body?.scope, 'private'), locations()))
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  // ── Agents ──
+  app.get('/dedicated-agents', (_req, res) => {
+    res.json({ agents: listAgents().map(viewWithStatus) })
+  })
+
+  app.get('/dedicated-agents/:id', (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      const conversations = agent.work_ids
+        .map((id) => works.getWork(id))
+        .filter((work): work is works.Work => !!work)
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+        .map(conversationView)
+      const skill = agent.skill_name ? locateSkill(agent.skill_name, locations()) : null
+      res.json({ agent: { ...viewWithStatus(agent), skill_scope: skill?.scope ?? null }, conversations })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  /** Start a conversation from the desktop; replies stay in the desktop. */
+  app.post('/dedicated-agents/:id/conversations', (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      const work = works.createWork('')
+      addAgentWork(agent.id, work.id)
+      res.json({ conversation: conversationView(work) })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.delete('/dedicated-agents/:id/conversations/:workId', (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      if (!agent.work_ids.includes(req.params.workId)) throw new DedicatedAgentError('对话不存在', 404)
+      removeAgentWork(agent.id, req.params.workId)
+      works.deleteWork(req.params.workId)
+      works.markExternalWrite()
+      res.json({ ok: true })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.post('/dedicated-agents', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>
+      const adapter = requireAdapter(body.site_id)
+      const skillName = normalizeSkillName(body.skill_name)
+      assertSkillExists(skillName)
+      const bot = resolveBot(body)
+      if (!bot) throw new DedicatedAgentError('请先扫码绑定企业微信机器人')
+      const agent = createAgent({
+        name: String(body.name ?? ''),
+        description: String(body.description ?? ''),
+        site_id: adapter.id,
+        skill_name: skillName,
+        examples: Array.isArray(body.examples) ? body.examples as string[] : [],
+        bot_id: bot.bot_id,
+        secret: bot.secret,
+      }, { reservedBotIds: reservedBotIds() })
+      if (bot.sessionId) qrSessions.consume(bot.sessionId)
+      await startAgentChannel(agent)
+      res.json({ agent: viewWithStatus(agent) })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.patch('/dedicated-agents/:id', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>
+      if (body.site_id !== undefined) requireAdapter(body.site_id)
+      if (body.skill_name !== undefined) assertSkillExists(normalizeSkillName(body.skill_name))
+      const bot = resolveBot(body)
+      const agent = updateAgent(req.params.id, {
+        name: body.name as string | undefined,
+        description: body.description as string | undefined,
+        site_id: body.site_id as string | undefined,
+        skill_name: body.skill_name as string | undefined,
+        examples: Array.isArray(body.examples) ? body.examples as string[] : undefined,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+        bot: bot ? { bot_id: bot.bot_id, secret: bot.secret } : undefined,
+      }, { reservedBotIds: reservedBotIds() })
+      if (bot?.sessionId) qrSessions.consume(bot.sessionId)
+      if (bot || typeof body.enabled === 'boolean') await restartAgentChannel(agent.id)
+      res.json({ agent: viewWithStatus(agent) })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.post('/dedicated-agents/:id/pairing/reset', (req, res) => {
+    try {
+      res.json({ agent: viewWithStatus(resetPairing(req.params.id)) })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+
+  app.delete('/dedicated-agents/:id', async (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      await stopAgentChannel(agent.id)
+      deleteAgent(agent.id)
+      const deleteConversations = req.query.keep_conversations !== '1'
+      if (deleteConversations) {
+        for (const workId of agent.work_ids) works.deleteWork(workId)
+        works.markExternalWrite()
+      }
+      removeAgentRuntime(agent.id)
+      res.json({ ok: true })
+    } catch (error) {
+      sendError(res, error)
+    }
+  })
+}

@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-14：按参考补丁移植「专属 Agent」：每个 Agent 绑定一个网站 Adapter、可选私有/共享 Skill 与独立企业微信智能机器人，6 位绑定码确认主人，非主人不可操作；支持 `/new`、`/stop`（兼容全角斜杠、零宽字符和「新对话」）。Bot Secret 以 SM4 加密存 Backend，不返回 Renderer；一个机器人只能连接主通道或一个 Agent，已适配多机器人配置（任一已保存的企微配置均视为占用，主通道保存/启用也会拒绝被 Agent 占用的机器人）。Agent 使用独立 `CLAUDE_CONFIG_DIR`，只复制 webcli、本站 Adapter Skill、本站自定义 Skill 与所选 Skill；工具限制为本站单条 `webcli call`，并防止同前缀更长 Adapter ID 被误判为本站。Skill 支持 AI 生成/修改、导入 `.md` 或含 `SKILL.md` 的 ZIP；ZIP 改用已有 `yauzl` 依赖（未新增 fflate），先校验中央目录与本地文件头一致、路径穿越、绝对路径、加密/ZIP64/分卷、符号链接/特殊文件、条目数与解压大小。桌面端在主导航新增「专属 Agent」入口，页面打开时隐藏主侧栏；创建向导、对话/设置页签、开关与下拉统一复用 AppSwitch/AppDropdownSelect，确认提示改用全局弹窗。Electron 新增后台常驻：关闭窗口隐藏（Windows 可关闭此行为）、真正退出时提醒、托盘/菜单栏、打包版默认开机自启；托盘图标由现有品牌图标生成到 `electron/assets/`。验证：Backend 类型检查、全量 102 个测试文件 823 项通过（含新增 6 文件 73 项中性 fixture 测试），Backend public bundle 通过；Renderer 全量 259 项（新增 7 项）与生产构建通过；Electron 全部 48 项（新增 12 项）、webwright 集成 23 项与语法检查通过。未验证：真实企业微信扫码/绑定/`/new`/`/stop`/续聊、真实模型生成 Skill、内置浏览器界面交互、Windows 托盘与退出确认、打包版开机自启、macOS 关闭窗口/Dock 唤回/⌘Q 提醒及应用退出清理；新增 Electron 测试尚未接入 CI 脚本。未提交或推送。
+
 - 2026-10-14：仅优化场景工作区排版：左侧新增场景入口、站点选择、搜索、列表标题与场景行改为紧凑层级和整行选中态；右侧场景标题区与折叠编辑区收紧间距并保持清晰边界；未修改场景创建、选择、搜索、编辑或保存逻辑。Renderer 生产构建与 `git diff --check` 通过。
 
 - 2026-10-14：Skill 工作区新增 ZIP 导入入口。桌面端只通过文件选择器传递本地 ZIP 路径，由 Backend 直接读取并安全解压到运行时 `~/.weworker/claude-config/skills`，校验路径穿越、符号链接、条目数量、解压大小、`SKILL.md` 结构与同名冲突，成功后刷新公共 Skill 列表；失败会清理临时目录且不覆盖已有 Skill。Backend ZIP 导入 4 项聚焦测试、类型检查、构建与 Renderer 生产构建通过；未使用真实安装包或真实用户 ZIP 验证。
