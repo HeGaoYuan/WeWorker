@@ -2,15 +2,17 @@ import React, { useCallback, useState } from 'react'
 import { useSettingsStore } from '../../store/settings.js'
 import WecomQrConnect from './WecomQrConnect.jsx'
 
-export default function AppBotQrSetup({ channel, disabled, onBusyChange, onSaved }) {
+export default function AppBotQrSetup({ channel, profileId, disabled, onBusyChange, onSaved }) {
   const { appBotQrPending, appBotQrSaving, saveAppBotQr } = useSettingsStore()
   const [error, setError] = useState('')
-  const pending = appBotQrPending[channel]
-  const saving = appBotQrSaving[channel]
+  const profilePending = useSettingsStore(state => state.channelProfileQrPending[profileId])
+  const profileSaving = useSettingsStore(state => state.channelProfileQrSaving[profileId])
+  const pending = profileId ? profilePending : appBotQrPending[channel]
+  const saving = profileId ? profileSaving : appBotQrSaving[channel]
   const changeBusy = useCallback(busy => onBusyChange(channel, busy), [channel, onBusyChange])
   const save = async credentials => {
     setError('')
-    try { await saveAppBotQr(channel, credentials); onSaved() }
+    try { await (profileId ? useSettingsStore.getState().saveChannelProfileQr(profileId, credentials) : saveAppBotQr(channel, credentials)); onSaved() }
     catch (error) { setError(error.message); throw error }
   }
   return <>

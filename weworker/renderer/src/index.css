@@ -2283,6 +2283,54 @@ html.dark .workspace-tab-indicator {
   overflow: hidden;
 }
 
+.tool-package-workspace { position: relative; }
+
+.skill-detail-drawer {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  transform: translateX(16px);
+  opacity: 0;
+  pointer-events: none;
+  transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1), flex-basis 220ms cubic-bezier(0.4, 0, 0.2, 1), transform 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease;
+}
+
+.skill-detail-drawer.is-open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.skill-catalog-workspace { border-right: 0 !important; }
+
+.skill-detail-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.skill-detail-drawer-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.skill-detail-drawer-tabs button { border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); padding: 6px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+.skill-detail-drawer-tabs button[aria-selected='true'] { background: var(--bg-primary); color: var(--text-primary); font-weight: 650; }
+.skill-detail-drawer-tabs button:hover { color: var(--text-primary); }
+.skill-detail-drawer-content { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; }
+.skill-detail-drawer-content > .tool-package-editor-shell { height: 100%; }
+
+@media (max-width: 760px) {
+  .skill-detail-drawer.is-open { max-width: 70vw; }
+}
+
 .tool-package-list-item {
   min-width: 0;
   width: 100%;
@@ -2335,6 +2383,100 @@ html.dark .workspace-tab-indicator {
   max-width: none;
   flex-shrink: 0;
   box-sizing: border-box;
+}
+
+/* 场景工作区保持独立的紧凑排版，避免影响 Skill 列表。 */
+.scenario-workspace-sidebar {
+  gap: 8px !important;
+  padding: 10px 10px 12px !important;
+}
+
+.scenario-workspace-sidebar .tool-package-primary-btn {
+  height: 32px !important;
+  min-height: 32px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border)) !important;
+  border-radius: 7px !important;
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-primary)) !important;
+  color: var(--accent) !important;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scenario-workspace-sidebar .tool-package-primary-btn:hover,
+.scenario-workspace-sidebar .tool-package-primary-btn:focus-visible {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-primary)) !important;
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+
+.scenario-workspace-sidebar .tool-package-primary-btn:active {
+  background: color-mix(in srgb, var(--accent) 19%, var(--bg-primary)) !important;
+}
+
+.scenario-workspace-sidebar .scenario-site-select,
+.scenario-workspace-sidebar .scenario-search-field {
+  flex: 0 0 auto;
+}
+
+.scenario-workspace-sidebar .scenario-list-heading {
+  margin-top: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.scenario-workspace-sidebar .scenario-list {
+  gap: 2px !important;
+  padding-right: 1px;
+}
+
+.scenario-workspace-sidebar .scenario-list .tool-package-list-item {
+  height: 58px;
+  min-height: 58px;
+  max-height: 58px;
+  border-radius: 6px;
+  padding: 8px 9px;
+  gap: 3px;
+}
+
+.scenario-workspace-sidebar .scenario-list .tool-package-list-item.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-primary));
+  border-left: 2px solid var(--accent);
+  padding-left: 7px;
+}
+
+.scenario-workspace-editor .scenario-editor-shell {
+  background: var(--bg-primary);
+}
+
+.scenario-workspace-editor .scenario-editor-shell > .tool-package-editor-scroll {
+  padding: 0 24px 20px !important;
+}
+
+.scenario-editor-shell .scenario-editor-form {
+  gap: 9px !important;
+}
+
+.scenario-editor-shell .scenario-editor-form > section {
+  border-radius: 6px !important;
+}
+
+.scenario-editor-shell .scenario-editor-form > section > div[role='button'] {
+  min-height: 38px !important;
+  padding: 0 11px !important;
+}
+
+.scenario-editor-shell .scenario-editor-form > section > div[role='button'] + div {
+  padding: 8px 10px 10px !important;
+}
+
+.scenario-editor-shell .scenario-editor-form textarea,
+.scenario-editor-shell .scenario-editor-form input {
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .scenario-workspace-editor .scenario-editor-shell > .tool-package-editor-scroll {
+    padding: 0 12px 16px;
+  }
 }
 
 html.dark .tool-package-frame,

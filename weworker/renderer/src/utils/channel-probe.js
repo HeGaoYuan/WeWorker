@@ -8,7 +8,7 @@ export function channelProbeConfig(channel, form = {}) {
 export async function requestChannelProbe(channel, config, signal) {
   const response = await backendFetch('http://127.0.0.1:8765/settings/channels/probe', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel, config: channelProbeConfig(channel, config) }), signal,
+    body: JSON.stringify({ channel, profile_id: config.profile_id, config: channelProbeConfig(channel, config) }), signal,
   })
   if (response.status === 404) throw new Error('当前后端尚未支持通道检测，请重启 WeWorker')
   if (response.status === 409) throw new Error('该通道正在检测，请稍后重试')
