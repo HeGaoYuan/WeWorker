@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -301,6 +302,78 @@ def test_task_watchdog_marks_expired_step_failed_and_terminates_worker(
         (output_dir / "debug" / "steps" / "step_0001.json").read_text(encoding="utf-8")
     )
     assert debug["outputs"][0]["returncode"] == 1
+
+
+def test_task_watchdog_marks_startup_timeout_without_checkpoint(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manager, store, _commands = _manager(tmp_path, monkeypatch)
+    task_id = store.new_task_id("startup-timeout")
+    store.create_task_record(
+        task_id=task_id,
+        title="Startup",
+        instruction="Task",
+        start_url="https://example.com",
+        output_dir=store.task_dir(task_id),
+        run_id="run-startup",
+    )
+    # No checkpoint for the active run: the worker is hung before its first write.
+    process = BlockingProcess()
+    manager.active_process = process
+    manager.active_kind = "task"
+    manager.active_id = task_id
+    manager.active_task_id = task_id
+    manager.active_run_id = "run-startup"
+    terminated = []
+    monkeypatch.setattr(
+        manager,
+        "_terminate_process_tree",
+        lambda active, force=False: terminated.append(active) or active.terminate(),
+    )
+    monkeypatch.setattr(
+        "webwright.server.process_manager.WORKER_STARTUP_TIMEOUT_S", 0
+    )
+
+    returncode = manager._wait_for_task_process(task_id, process)
+
+    failed = store.read_task(task_id)
+    assert returncode == -15
+    assert terminated == [process]
+    assert failed["status"] == TaskStatus.FAILED.value
+    assert failed["error_code"] == "worker_init_timeout"
+    assert failed["error_stage"] == "worker_startup"
+
+
+def test_cooperative_cancel_escalates_to_terminate_unresponsive_worker(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manager, store, _commands = _manager(tmp_path, monkeypatch)
+    task = manager.start_task(
+        instruction="Open example.com",
+        start_url="https://example.com",
+        requested_task_id="stuck",
+    )
+    # Replace the spawned process with one that never exits on its own.
+    process = BlockingProcess()
+    manager.active_process = process
+    monkeypatch.setattr(
+        "webwright.server.process_manager.CANCEL_ESCALATION_GRACE_S", 0.05
+    )
+    terminated = []
+    monkeypatch.setattr(
+        manager,
+        "_terminate_process_tree",
+        lambda active, force=False: terminated.append(active) or active.terminate(),
+    )
+
+    cancelled = manager.cancel_task(task["task_id"], reason="stuck")
+
+    assert cancelled["status"] == TaskStatus.CANCEL_REQUESTED.value
+    deadline = time.monotonic() + 5
+    while not terminated and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert terminated == [process]
+    assert process.returncode == -15
 
 
 def test_shutdown_cancels_active_task_and_terminates_its_process_group(
