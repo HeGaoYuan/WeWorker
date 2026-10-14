@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { useStatusStore } from '../../store/status.js'
 import { useSettingsStore } from '../../store/settings.js'
 import ExtensionGuide from '../ExtensionGuide.jsx'
+import StatusAlerts from './StatusAlerts.jsx'
+import { buildStatusAlerts } from '../../utils/status-alerts.js'
 import { getWebwrightPresentation } from '../../utils/webwright-status.js'
 import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 
@@ -15,7 +17,6 @@ export default function StatusBar() {
   React.useEffect(() => {
     window.electronAPI?.getVersion?.().then(v => setAppVersion(v || ''))
   }, [])
-  const versionMismatch = appVersion && extensionVersion && appVersion !== extensionVersion
 
   // Detect bridge port conflict (port 3711 held by another process at startup).
   // Polled from the Electron main process — backend does not know about this.
@@ -38,10 +39,9 @@ export default function StatusBar() {
     const id = setInterval(poll, 3000)
     return () => { cancelled = true; clearInterval(id) }
   }, [])
-  const bridgePortInUse = bridgeStatus === 'port_in_use'
-  const backendPortInUse = backendStatus === 'port_in_use'
   const externalBackendRunning = backendStatus === 'external_running'
   const isWindows = navigator.userAgent.includes('Windows')
+  const alerts = buildStatusAlerts({ extension, appVersion, extensionVersion, bridgeStatus, backendStatus, channels, isWindows })
   const webwright = getWebwrightPresentation(webwrightStatus)
   const webwrightColor = webwright.tone === 'success' ? 'var(--success)'
     : webwright.tone === 'warning' ? 'var(--warning)'
@@ -105,51 +105,9 @@ export default function StatusBar() {
       {/* Extension status */}
       <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 2 }}>
         {dot(extension)}扩展{extension === 'connected' ? '已连接' : '未连接'}
-        {extension !== 'connected' && (
-          <button
-            onClick={() => setShowGuide(true)}
-            title="如何连接扩展？"
-            style={{
-              background: 'none', border: '1px solid var(--border)',
-              borderRadius: '50%', width: 14, height: 14,
-              cursor: 'pointer', color: 'var(--text-muted)',
-              fontSize: 9, fontWeight: 700, lineHeight: 1,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: 0, marginLeft: 2, flexShrink: 0,
-            }}
-          >?</button>
-        )}
+        <StatusAlerts alerts={alerts} onOpenGuide={() => setShowGuide(true)} />
       </span>
       {showGuide && <ExtensionGuide onClose={() => setShowGuide(false)} />}
-      {/* Extension version mismatch warning */}
-      {versionMismatch && (
-        <span style={{ fontSize: 10, color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1.3 }}>
-          ⚠ 扩展版本不一致（v{extensionVersion}），请在 chrome://extensions 刷新扩展
-        </span>
-      )}
-      {/* Bridge port 3711 occupied by external process — workflows won't work reliably */}
-      {bridgePortInUse && (
-        <span
-          title="终端执行：kill $(lsof -ti tcp:3711) 后重启 WeWorker"
-          style={{ fontSize: 10, color: 'var(--warning)', display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.3 }}
-        >
-          <span>⚠ 端口 3711 被其他进程占用</span>
-          <code style={{ fontSize: 10, background: 'var(--bg-secondary, #f0f0f0)', padding: '1px 4px', borderRadius: 3, color: 'var(--text-secondary)', userSelect: 'all' }}>
-            kill $(lsof -ti tcp:3711)
-          </code>
-        </span>
-      )}
-      {backendPortInUse && (
-        <span
-          title="关闭其他 WeWorker 实例或结束占用 8765 的进程后重启"
-          style={{ fontSize: 10, color: 'var(--warning)', display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.3 }}
-        >
-          <span>⚠ 后端端口 8765 被其他进程占用</span>
-          <code style={{ fontSize: 10, background: 'var(--bg-secondary, #f0f0f0)', padding: '1px 4px', borderRadius: 3, color: 'var(--text-secondary)', userSelect: 'all' }}>
-            {isWindows ? 'netstat -ano | findstr :8765' : 'lsof -nP -iTCP:8765 -sTCP:LISTEN'}
-          </code>
-        </span>
-      )}
       {externalBackendRunning && (
         <span
           title="当前使用单独启动的 backend-ts 开发服务"

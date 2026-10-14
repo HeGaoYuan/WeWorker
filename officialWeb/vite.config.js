@@ -16,17 +16,13 @@ if (process.env.RELEASE_BUILD) {
 export default defineConfig({
   plugins: [react()],
   define: {
-    '__RELEASE_COMMIT__': JSON.stringify(commitHash),
+    __RELEASE_COMMIT__: JSON.stringify(commitHash),
   },
   server: {
     fs: {
       allow: [repoRoot],
     },
     proxy: {
-      // 本地开发：/api/stats 反代到 metrics-server，注入 Bearer token。
-      // 浏览器同域请求 localhost:xxxx/api/stats（无 CORS），Vite 转发并加 token。
-      // 生产环境走 Nginx 反代，不经过此处。
-      // endpoint 和 token 只从本地环境变量读取，不进入源码或前端 bundle。
       '/api/stats': {
         target: process.env.METRICS_TARGET || 'http://127.0.0.1:8787',
         changeOrigin: true,

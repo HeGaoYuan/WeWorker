@@ -1,0 +1,17 @@
+.status-alert-slot { display: inline-flex; width: 20px; height: 20px; flex: 0 0 20px; margin-left: 4px; }
+.status-alert-trigger { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--warning); font-size: 14px; cursor: pointer; }
+.status-alert-trigger:hover { background: var(--bg-hover); }
+.status-alert-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status-alert-popover .ant-popover-inner { padding: 6px; border: 1px solid var(--border); background: var(--bg-primary); box-shadow: none; }
+.status-alert-list { width: 260px; max-width: calc(100vw - 40px); max-height: min(320px, 60vh); overflow-y: auto; }
+.status-alert-list-title { padding: 6px 8px; font-size: 12px; color: var(--text-muted); }
+.status-alert-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.status-alert-list button:hover, .status-alert-list button:focus-visible { background: var(--bg-hover); }
+.status-alert-list button > .anticon { color: var(--warning); flex-shrink: 0; }
+.status-alert-details .ant-modal-content { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); box-shadow: none; }
+.status-alert-details .ant-modal-header { background: transparent; }
+.status-alert-details .ant-modal-title { color: var(--text-primary); }
+.status-alert-description { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 45vh; overflow-y: auto; line-height: 1.7; }
+.status-alert-command { overflow-x: auto; padding: 10px; background: var(--bg-secondary); border-radius: 6px; user-select: all; }
+.status-alert-detail-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.status-alert-detail-actions button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }

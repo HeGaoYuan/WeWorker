@@ -1,4 +1,4 @@
-import sitesData from '../lib/sites.generated.json'
+import sitesData from '../lib/sites.json'
 import { slugify } from '../lib/sitesHeadings.js'
 
 function renderInlineCode(text) {
