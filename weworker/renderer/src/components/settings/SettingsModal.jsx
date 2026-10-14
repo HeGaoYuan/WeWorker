@@ -1,3 +1,4 @@
+import ModelConfigurationName from './ModelConfigurationName.jsx'
 import AppSwitch from '../common/AppSwitch.jsx'
 import AppDropdownInput from '../common/AppDropdownInput.jsx'
 import React, { useState, useEffect, useMemo, useRef } from 'react'
@@ -1848,11 +1849,15 @@ function ModelTab() {
               {testResult.message}
             </div>
           )
+          const configurationName = <ModelConfigurationName key={p.id} name={p.name} readOnly={isFixedProvider(p.id)}
+            disabled={saving === p.id || activating === p.id || deletingProvider === p.id}
+            onSave={async name => {
+              await saveProvider(p.id, { name })
+              formNameTouched.current[p.id] = false
+              setForms(current => current[p.id] ? { ...current, [p.id]: { ...current[p.id], name } } : current)
+            }} />
           const identityFields = (
             <div className="model-settings-grid" role="group" aria-label="基本信息">
-              <Field label="配置名称">
-                <input aria-label="配置名称" className="settings-input" value={isFixedProvider(p.id) ? p.supplierName : f.name} readOnly={isFixedProvider(p.id)} maxLength={80} onChange={(e) => setFormField(p.id, 'name', e.target.value)} />
-              </Field>
               <Field label="供应商">
                 <input aria-label="供应商" className="settings-input" value={p.supplierName} readOnly />
               </Field>
@@ -1895,7 +1900,7 @@ function ModelTab() {
                   <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id] || LOGOS.builtin}</span>
                   <div className="model-settings-header-info">
                     <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
-                      <span className="model-settings-detail-name" title={p.name}>{p.name}</span>{builtinActive && <span className="settings-badge-active">使用中</span>}
+                      {configurationName}{builtinActive && <span className="settings-badge-active">使用中</span>}
                       <span className="settings-card-inline-subtitle"> · {p.defaultModel} · {stored.has_key
                         ? (builtinActive ? '当前使用' : '服务已配置，可直接使用')
                         : '服务尚未配置，请联系应用提供方或使用其他模型'}</span>
@@ -1918,7 +1923,7 @@ function ModelTab() {
                 <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[templateId]}</span>
                 <div className="model-settings-header-info">
                   <div className="settings-card-title" style={{ color: isActive ? p.color : 'var(--text-primary)' }}>
-                    <span className="model-settings-detail-name" title={p.name}>{p.name}</span>
+                    {configurationName}
                     {isActive && !singleProvider && <span className="settings-badge-active">使用中</span>}
                     {stored.has_key
                       ? <span className="settings-card-inline-status is-configured"> · 已配置 {stored.model || p.subtitle}</span>

@@ -2159,7 +2159,8 @@
 .settings-catalog-address[open] > summary { margin-bottom: 8px; }
 
 /* Model configuration groups: quiet row dividers and aligned label/control columns. */
-.model-settings-grid {
+.model-settings-grid,
+.channel-settings-group {
   min-width: 0;
   margin-bottom: 16px;
   padding: 0 16px;
@@ -2272,3 +2273,13 @@
     padding: 12px 0;
   }
 }
+
+/* Compact inline model configuration naming, matching the robot title editor. */
+.model-config-name { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
+.model-config-name__edit { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; padding: 4px 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.model-config-name__edit > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-config-name__edit .anticon { flex-shrink: 0; color: var(--text-muted); font-size: 12px; }
+.model-config-name__edit:hover .anticon { color: var(--accent); }
+.model-config-name__edit:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.model-config-name__input { width: 180px; max-width: 100%; min-width: 0; height: 28px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font: inherit; outline: none; }
+.model-config-name__error { position: absolute; top: 100%; left: 0; z-index: 2; min-width: 190px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--error); font-size: 11px; font-weight: 400; }

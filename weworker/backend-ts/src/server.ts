@@ -1,3 +1,5 @@
+import { randomUUID as channelQrId } from 'node:crypto'
+import { changeChannelConfiguration, createChannelMutationQueue, getChannelConfiguration, isChannelType, publicChannelSettings, type ChannelType } from './channels/channel-configurations.js'
 import express from 'express'
 import cors from 'cors'
 import { createWebsiteExplorationRouter } from './website-exploration.js'
@@ -865,51 +867,56 @@ app.post('/settings/provider/probe', async (req, res) => {
 registerExplorationModelRoutes(app, { getSettings, updateSettings })
 
 app.get('/settings/channels', (_req, res) => {
-  const s = getSettings()
-  res.json({
-    qq: {
-      enabled: s.channels.qq.enabled,
-      app_id: s.channels.qq.app_id,
-      has_app_secret: !!s.channels.qq.app_secret,
-      owner_user_id: s.channels.qq.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.qq.owner_permission_level),
-    },
-    weixin: {
-      enabled: s.channels.weixin.enabled,
-      has_token: !!s.channels.weixin.token,
-      base_url: s.channels.weixin.base_url || '',
-      owner_user_id: s.channels.weixin.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.weixin.owner_permission_level),
-    },
-    wecom: {
-      enabled: s.channels.wecom.enabled,
-      bot_id: s.channels.wecom.bot_id,
-      has_secret: !!s.channels.wecom.secret,
-      owner_user_id: s.channels.wecom.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.wecom.owner_permission_level),
-    },
-    feishu: {
-      enabled: s.channels.feishu.enabled,
-      app_id: s.channels.feishu.app_id,
-      has_app_secret: !!s.channels.feishu.app_secret,
-      owner_user_id: s.channels.feishu.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.feishu.owner_permission_level),
-    },
+  res.json(publicChannelSettings(getSettings()))
+})
+
+const queueChannelMutation = createChannelMutationQueue()
+async function syncChannelSettings(previous: Settings, updated: Settings) {
+  await syncAppBotChannel('qq', channelManager, previous.channels.qq, updated.channels.qq,
+    config => new QQChannel(config), () => channelLog.error('QQ channel start failed'))
+  await syncAppBotChannel('feishu', channelManager, previous.channels.feishu, updated.channels.feishu,
+    config => new FeishuChannel(config), () => channelLog.error('Feishu channel start failed'))
+  await syncWecomChannel(channelManager, previous.channels.wecom, updated.channels.wecom,
+    config => new WecomChannel(config), () => channelLog.error('WeCom channel start failed'))
+  await syncWeixinChannel(channelManager, previous.channels.weixin, updated.channels.weixin,
+    config => new WeixinChannel(config), () => channelLog.error('Weixin channel start failed'))
+}
+
+async function mutateChannelProfile(type: ChannelType, action: string, id: unknown, input: Record<string, unknown> = {}) {
+  return queueChannelMutation('settings', async () => {
+    const previous = getSettings()
+    if (type === 'weixin' && action === 'save' && input.base_url !== undefined) {
+      if (typeof input.base_url !== 'string') throw new Error('微信服务地址格式无效')
+      input = { ...input, base_url: assertAllowedWeixinBaseUrl(input.base_url, ALLOWED_WEIXIN_BASE_URLS) }
+    }
+    const change = changeChannelConfiguration(previous, type, action, id, input)
+    const updated = updateSettings(change.updates)
+    await syncChannelSettings(previous, updated)
+    return { ...publicChannelSettings(getSettings()), selected_id: change.id }
   })
+}
+
+app.post('/settings/channels/configuration', async (req, res) => {
+  const { channel, action, id, config = {}, name } = req.body || {}
+  if (!isChannelType(channel) || !config || typeof config !== 'object' || Array.isArray(config)) return res.status(400).json({ detail: '机器人配置格式无效' })
+  try { res.json(await mutateChannelProfile(channel, action, id, action === 'rename' ? { name } : config)) }
+  catch (error) { res.status(400).json({ detail: error instanceof Error ? error.message : '机器人操作失败' }) }
 })
 
 const channelProbesInFlight = new Set<string>()
 app.post('/settings/channels/probe', async (req, res) => {
-  const { channel, config = {} } = req.body || {}
+  const { channel, config = {}, profile_id } = req.body || {}
   if (!isProbeChannel(channel) || !config || typeof config !== 'object' || Array.isArray(config)) {
     return res.status(400).json({ detail: '通道或配置格式无效' })
   }
   if (channelProbesInFlight.has(channel)) return res.status(409).json({ detail: '该通道正在检测，请稍后重试' })
   channelProbesInFlight.add(channel)
   try {
-    const saved = getSettings().channels[channel]
-    const active = channel === 'wecom' ? channelManager.getChannel('wecom') : undefined
-    const wxUser = channel === 'weixin' ? store.getLatestChannelNotifyTarget('weixin') : null
+    const settings = getSettings()
+    const saved = profile_id === undefined ? settings.channels[channel] : getChannelConfiguration(settings, channel, profile_id).config
+    const isActive = profile_id === undefined || settings.active_channel_configurations?.[channel] === profile_id
+    const active = channel === 'wecom' && isActive ? channelManager.getChannel('wecom') : undefined
+    const wxUser = channel === 'weixin' && isActive ? store.getLatestChannelNotifyTarget('weixin') : null
     const result = await probeChannel(channel, config, { ...saved }, {
       allowedWeixinUrls: ALLOWED_WEIXIN_BASE_URLS,
       activeWecom: active instanceof WecomChannel ? active : undefined,
@@ -924,6 +931,7 @@ app.post('/settings/channels/probe', async (req, res) => {
 })
 
 app.post('/settings/channels', async (req, res) => {
+  try { await queueChannelMutation('settings', async () => {
   const { qq, weixin, wecom, feishu } = req.body as {
     qq?: { enabled?: boolean; app_id?: string; app_secret?: string; owner_user_id?: string; owner_permission_level?: string }
     weixin?: { enabled?: boolean; token?: string; base_url?: string; owner_user_id?: string; owner_permission_level?: string }
@@ -999,36 +1007,8 @@ app.post('/settings/channels', async (req, res) => {
   if (feishu) await syncAppBotChannel('feishu', channelManager, s.channels.feishu, updated.channels.feishu,
     config => new FeishuChannel(config), () => channelLog.error('Feishu channel start failed'))
 
-  res.json({
-    qq: {
-      enabled: updated.channels.qq.enabled,
-      app_id: updated.channels.qq.app_id,
-      has_app_secret: !!updated.channels.qq.app_secret,
-      owner_user_id: updated.channels.qq.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.qq.owner_permission_level),
-    },
-    weixin: {
-      enabled: updated.channels.weixin.enabled,
-      has_token: !!updated.channels.weixin.token,
-      base_url: updated.channels.weixin.base_url || '',
-      owner_user_id: updated.channels.weixin.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.weixin.owner_permission_level),
-    },
-    wecom: {
-      enabled: updated.channels.wecom.enabled,
-      bot_id: updated.channels.wecom.bot_id,
-      has_secret: !!updated.channels.wecom.secret,
-      owner_user_id: updated.channels.wecom.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.wecom.owner_permission_level),
-    },
-    feishu: {
-      enabled: updated.channels.feishu.enabled,
-      app_id: updated.channels.feishu.app_id,
-      has_app_secret: !!updated.channels.feishu.app_secret,
-      owner_user_id: updated.channels.feishu.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.feishu.owner_permission_level),
-    },
-  })
+  res.json(publicChannelSettings(updated))
+  }) } catch { res.status(500).json({ detail: '保存机器人配置失败，请重试' }) }
 })
 
 // 鈹€鈹€ WeChat QR Login 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -1071,25 +1051,30 @@ app.post('/settings/wecom/qr-cancel', (req, res) => {
   res.json({ ok: true })
 })
 
-let _weixinQrState: { qrcode: string; qrcodeUrl: string; startedAt: number } | null = null
+let _weixinQrState: { qrcode: string; qrcodeUrl: string; startedAt: number; profileId?: string; sessionId: string; completing?: boolean } | null = null
 
-app.post('/settings/weixin/qr-start', async (_req, res) => {
+app.post('/settings/weixin/qr-start', async (req, res) => {
   try {
     const s = getSettings()
-    const baseUrl = assertAllowedWeixinBaseUrl(s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS)
+    const profileId = req.body?.profile_id
+    const saved = profileId === undefined ? s.channels.weixin : getChannelConfiguration(s, 'weixin', profileId).config as typeof s.channels.weixin
+    const baseUrl = assertAllowedWeixinBaseUrl(saved.base_url, ALLOWED_WEIXIN_BASE_URLS)
     const qr = await fetchQRCode(baseUrl)
-    _weixinQrState = { qrcode: qr.qrcode, qrcodeUrl: qr.qrcode_img_content, startedAt: Date.now() }
-    res.json({ ok: true, qrcode_url: qr.qrcode_img_content })
+    _weixinQrState = { qrcode: qr.qrcode, qrcodeUrl: qr.qrcode_img_content, startedAt: Date.now(), profileId, sessionId: channelQrId() }
+    res.json({ ok: true, qrcode_url: qr.qrcode_img_content, session_id: _weixinQrState.sessionId })
   } catch (e) {
     res.status(500).json({ detail: e instanceof Error ? e.message : String(e) })
   }
 })
 
-app.post('/settings/weixin/qr-poll', async (_req, res) => {
+app.post('/settings/weixin/qr-poll', async (req, res) => {
   if (!_weixinQrState) {
     res.status(400).json({ detail: '请先发起扫码登录' })
     return
   }
+  const run = _weixinQrState
+  if (run.completing) return res.json({ status: 'waiting', message: '正在保存配置…' })
+  if ((run.profileId && req.body?.session_id !== run.sessionId) || (req.body?.session_id && req.body.session_id !== run.sessionId)) return res.status(409).json({ detail: '二维码已被替换，请重新扫码' })
   // Expire after 5 minutes
   if (Date.now() - _weixinQrState.startedAt > 5 * 60_000) {
     _weixinQrState = null
@@ -1098,28 +1083,27 @@ app.post('/settings/weixin/qr-poll', async (_req, res) => {
   }
   try {
     const s = getSettings()
-    const baseUrl = assertAllowedWeixinBaseUrl(s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS)
-    const status = await pollQRStatus(baseUrl, _weixinQrState.qrcode)
+    const saved = run.profileId ? getChannelConfiguration(s, 'weixin', run.profileId).config as typeof s.channels.weixin : s.channels.weixin
+    const baseUrl = assertAllowedWeixinBaseUrl(saved.base_url, ALLOWED_WEIXIN_BASE_URLS)
+    const status = await pollQRStatus(baseUrl, run.qrcode)
+    if (_weixinQrState !== run) return res.status(409).json({ detail: '二维码已更新，请重新扫码' })
 
     if (status.status === 'confirmed' && status.bot_token) {
-      // Save token and enable channel
-      const updated = updateSettings({
-        channels: {
-          ...s.channels,
-          weixin: {
-            enabled: true,
-            token: status.bot_token,
-            base_url: assertAllowedWeixinBaseUrl(status.baseurl || s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS),
-            owner_user_id: s.channels.weixin.owner_user_id || '',
-            owner_permission_level: normalizeOwnerPermissionLevel(s.channels.weixin.owner_permission_level),
-          },
-        },
+      if (run.completing) return res.json({ status: 'waiting', message: '正在保存配置…' })
+      run.completing = true
+      const config = {
+        enabled: true, token: status.bot_token,
+        base_url: assertAllowedWeixinBaseUrl(status.baseurl || saved.base_url, ALLOWED_WEIXIN_BASE_URLS),
+        owner_user_id: saved.token === status.bot_token ? saved.owner_user_id : '',
+        owner_permission_level: saved.token === status.bot_token ? normalizeOwnerPermissionLevel(saved.owner_permission_level) : 'qa_only',
+      }
+      if (run.profileId) await mutateChannelProfile('weixin', 'save', run.profileId, config)
+      else await queueChannelMutation('settings', async () => {
+        const previous = getSettings()
+        const updated = updateSettings({ channels: { ...previous.channels, weixin: { ...previous.channels.weixin, ...config, owner_permission_level: normalizeOwnerPermissionLevel(config.owner_permission_level) } } })
+        await syncChannelSettings(previous, updated)
       })
-      _weixinQrState = null
-
-      // Start the channel
-      await syncWeixinChannel(channelManager, s.channels.weixin, updated.channels.weixin,
-        config => new WeixinChannel(config), () => channelLog.error('Weixin channel start failed'))
+      if (_weixinQrState === run) _weixinQrState = null
 
       res.json({ status: 'confirmed', message: '微信连接成功' })
     } else if (status.status === 'expired') {
@@ -1129,6 +1113,7 @@ app.post('/settings/weixin/qr-poll', async (_req, res) => {
       res.json({ status: status.status, message: status.status === 'scaned' ? '已扫码，请在微信确认' : '等待扫码…' })
     }
   } catch (e) {
+    run.completing = false
     res.status(500).json({ detail: e instanceof Error ? e.message : String(e) })
   }
 })

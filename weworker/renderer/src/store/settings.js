@@ -347,6 +347,46 @@ export const useSettingsStore = create((set, get) => ({
     }
   },
 
+  channelProfileQrPending: {},
+  channelProfileQrSaving: {},
+  saveChannelProfileQr: async (id, credentials = get().channelProfileQrPending[id]) => {
+    const profile = get().channels.configurations?.[id]
+    if (!profile) throw new Error('机器人配置不存在，请重新选择')
+    if (get().channelProfileQrSaving[id]) throw new Error('机器人配置正在保存，请稍候')
+    if (!credentials) throw new Error('未获取完整机器人配置')
+    set(state => ({ channelProfileQrPending: { ...state.channelProfileQrPending, [id]: credentials }, channelProfileQrSaving: { ...state.channelProfileQrSaving, [id]: true } }))
+    try {
+      const identity = profile.type === 'wecom' ? 'bot_id' : 'app_id'
+      const changed = profile.config[identity] !== credentials[identity]
+      await get().channelProfileAction(profile.type, 'save', id, { config: { ...credentials, enabled: true,
+        ...(changed ? { owner_user_id: '', owner_permission_level: 'qa_only' } : {}) } })
+      set(state => ({ channelProfileQrPending: { ...state.channelProfileQrPending, [id]: null } }))
+    } catch {
+      throw new Error('扫码已完成，但配置保存失败。请点击“重试保存”，无需重新扫码。')
+    } finally {
+      set(state => ({ channelProfileQrSaving: { ...state.channelProfileQrSaving, [id]: false } }))
+    }
+  },
+
+  channelProfileAction: async (channel, action, id, input = {}) => {
+    const res = await backendFetch(`${API}/settings/channels/configuration`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel, action, id, ...input }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '机器人操作失败')
+    set(state => ({ channels: { ...state.channels, [channel]: data[channel],
+      configurations: { ...Object.fromEntries(Object.entries(state.channels.configurations || {}).filter(([, entry]) => entry.type !== channel)),
+        ...Object.fromEntries(Object.entries(data.configurations || {}).filter(([, entry]) => entry.type === channel)) },
+      active_ids: { ...state.channels.active_ids, [channel]: data.active_ids?.[channel] },
+    } }))
+    if (action === 'delete') set(state => ({
+      channelProfileQrPending: Object.fromEntries(Object.entries(state.channelProfileQrPending).filter(([key]) => key !== id)),
+      channelProfileQrSaving: Object.fromEntries(Object.entries(state.channelProfileQrSaving).filter(([key]) => key !== id)),
+    }))
+    return data.selected_id
+  },
+
   saveChannels: async (updates) => {
     const res = await backendFetch(`${API}/settings/channels`, {
       method: 'POST',

@@ -1,3 +1,4 @@
+import { migrateChannelConfigurations, type ChannelConfigurations, type ChannelType } from './channels/channel-configurations.js'
 import { resolveBuiltinSettings } from './builtin-provider.js'
 import { PROVIDERS } from './provider-registry.js'
 import fs from 'node:fs'
@@ -246,6 +247,8 @@ export interface Settings {
   active_model_configuration?: string
   active_auth_type?: import('./anthropic-auth.js').AnthropicAuthType
 
+  channel_configurations?: ChannelConfigurations
+  active_channel_configurations?: Partial<Record<ChannelType, string>>
   channels: ChannelsConfig
 
   // Per-site tool enable/disable toggles (adapter id → state)
@@ -589,7 +592,7 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   const secrets = { ...decryptedSecrets, ...plaintextSecrets }
 
-  return applySecrets(merged, secrets)
+  return migrateChannelConfigurations(applySecrets(merged, secrets))
 
 }
 
@@ -702,6 +705,26 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   // it would resurrect removed IDs, including when the last entry is deleted.
   if (updates.model_configurations !== undefined) {
     _settings.model_configurations = structuredClone(updates.model_configurations)
+  }
+
+  if (updates.channel_configurations !== undefined) {
+    _settings.channel_configurations = structuredClone(updates.channel_configurations)
+    _settings.active_channel_configurations = { ...updates.active_channel_configurations }
+  } else if (updates.channels) {
+    // Legacy API callers still update the selected instance, never other robots.
+    for (const type of Object.keys(updates.channels) as ChannelType[]) {
+      const id = _settings.active_channel_configurations?.[type]
+      const entry = id ? _settings.channel_configurations?.[id] : undefined
+      if (entry) entry.config = { ..._settings.channels[type] }
+      else {
+        const migrated = migrateChannelConfigurations({ ..._settings, channel_configurations: undefined })
+        const legacyId = migrated.active_channel_configurations?.[type]
+        if (legacyId) {
+          _settings.channel_configurations = { ..._settings.channel_configurations, [legacyId]: migrated.channel_configurations![legacyId] }
+          _settings.active_channel_configurations = { ..._settings.active_channel_configurations, [type]: legacyId }
+        }
+      }
+    }
   }
 
   _settings.max_chat_attachments = normalizeMaxChatAttachments(_settings.max_chat_attachments)

@@ -26,6 +26,8 @@ function secretFieldPaths(settings: unknown): readonly (readonly string[])[] {
   const configurations = (settings as Settings | null)?.model_configurations
   return [
     ...SECRET_FIELD_PATHS,
+    ...Object.entries((settings as Settings | null)?.channel_configurations || {}).map(([id, entry]) =>
+      ['channel_configurations', id, 'config', entry.type === 'weixin' ? 'token' : entry.type === 'wecom' ? 'secret' : 'app_secret']),
     ...Object.keys(configurations || {}).map(id => ['model_configurations', id, 'api_key']),
     ...Object.keys(configurations || {}).map(id => ['model_configurations', id, 'openai_api_key']),
   ]
