@@ -163,8 +163,7 @@ npx skills add https://unpkg.com/weworker-webcli/skills/webcli/SKILL.md
 第 2 种会把 `skills/webcli/SKILL.md` 装进你的 AI 客户端；之后直接用自然语言驱动即可（如「帮我搜下京东的手机」），
 助手会调用 `webcli`，缺命令时按 SKILL.md 里的说明从 npm 装上。
 
-两种方式都还需要一次性在 Chrome 加载扩展：`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序，
-目录用 `webcli extension-path` 查询。
+装完后对 AI 说一句 **「帮我完成 webcli 首次准备」**，它会把扩展目录和需要你手动做的步骤直接列出来。
 
 > 桌面端用户无需单独安装——WeWorker 已内置 WebCLI。
 

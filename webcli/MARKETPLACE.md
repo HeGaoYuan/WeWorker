@@ -20,7 +20,7 @@ npm install -g weworker-webcli
 npx skills add https://unpkg.com/weworker-webcli/skills/webcli/SKILL.md
 ```
 
-用户只需一次性在 Chrome 加载扩展（`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序）。之后用自然语言驱动即可，例如：
+装完后对 AI 说一句 **「帮我完成 webcli 首次准备」**，它会把扩展目录和需要你手动做的步骤直接列出来。（也可以自己在 Chrome 加载：`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序，目录用 `webcli extension-path` 查）。之后用自然语言驱动即可，例如：
 
 - 「搜下京东上的手机」→ 自动打开京东并搜索
 - 「看下我 163 邮箱的未读邮件」→ 读取邮件列表
