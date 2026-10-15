@@ -8,6 +8,7 @@ import { APP_VERSION, DOWNLOADS } from '../lib/downloadConfig.js'
 import { reportDownloadThenGo } from '../lib/downloadActions.js'
 import { slugify, getSupportedSitesHeadings } from '../lib/sitesHeadings.js'
 import { getWecliHeadings } from '../lib/wecliHeadings.js'
+import { copyToClipboard } from '../lib/copyToClipboard.js'
 
 // CRLF / lone CR breaks /^...$/ heading matches (`.+` cannot span `\r`). Normalize before parsing.
 function normalizeMarkdown(md) {
@@ -351,17 +352,17 @@ export default function Docs() {
       btn.className = 'copy-btn'
       btn.title = '复制'
       btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const code = pre.querySelector('code')
         if (!code) return
-        navigator.clipboard.writeText(code.textContent).then(() => {
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
-          btn.classList.add('copied')
-          setTimeout(() => {
-            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
-            btn.classList.remove('copied')
-          }, 1500)
-        })
+        const ok = await copyToClipboard(code.textContent)
+        if (!ok) return
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
+        btn.classList.add('copied')
+        setTimeout(() => {
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+          btn.classList.remove('copied')
+        }, 1500)
       })
       pre.style.position = 'relative'
       pre.appendChild(btn)

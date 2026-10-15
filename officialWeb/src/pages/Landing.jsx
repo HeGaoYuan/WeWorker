@@ -148,14 +148,14 @@ export default function Landing() {
           <div className="text-center mb-10 max-w-3xl mx-auto">
             <h2 className="text-3xl font-bold text-[rgb(var(--color-text))] mb-4">效果示例</h2>
             <p className="text-muted text-base sm:text-lg leading-relaxed">
-              发票报销，总是<span className="text-[rgb(var(--color-text))] font-medium">繁琐而重复</span>。
+              跨站查攻略、比价格，总是<span className="text-[rgb(var(--color-text))] font-medium">来回切换、重复粘贴</span>。
             </p>
             <p className="text-accent text-base sm:text-lg leading-relaxed mt-2 font-medium">
-              现在，一句话就够了。
+              现在，一条链路一句话。
             </p>
             <div className="mt-4 demo-prompt-chip">
               <span className="text-accent/70 mr-1.5">›</span>
-              帮我从 QQ 邮箱下载这个月所有发票，并按链接在诺诺网保存 PDF
+              小红书搜杭州周末攻略 → 携程查机票/跟团 → 12306 查高铁，帮我汇总对比
             </div>
           </div>
           <ScrollReveal delay={80}>

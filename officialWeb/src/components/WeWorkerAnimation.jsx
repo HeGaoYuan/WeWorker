@@ -1,76 +1,60 @@
 import { useEffect, useRef, useState } from 'react'
 
-const MSG_TEXT = `step1: 帮我在163邮箱下载在这个月收到的联通发票pdf
-step2: 如果这个发票pdf是加密状态，请你解密
-step3: 帮我把step1的发票pdf上传到范妮斯，并一键匹配这些发票
-step4: 如果step2匹配后发票符合要求请帮我提交，如果不符合要求请告诉我还差哪些发票`
+const MSG_TEXT = `帮我规划本周末上海→杭州的短途出行：
+step1：在小红书搜「杭州周末徒步/攻略」，整理 3 条笔记要点
+step2：在携程查同周末的机票，以及 2–3 个跟团/自由行产品
+step3：在 12306 查周六上海虹桥→杭州东高铁余票与车次
+step4：汇总玩法、交通与预算对比，标出需登录后再确认的项`
 
 const STEPS = [
-  { id: 'wecom-typing',   duration: 9000, phase: 'wecom-input' },
-  { id: 'wecom-sent',     duration: 250, phase: 'wecom-sent' },
-  { id: 'ww-receive',     duration: 300, phase: 'ww-receive' },
-  { id: 'ww-thinking',    duration: 450, phase: 'ww-thinking' },
-  { id: 'open-browser',   duration: 1500, phase: 'tool-call', tool: 'open_browser' },
-  { id: 'mail163-nav',    duration: 1200, phase: 'browser-mail163' },
-  { id: 'mail163-inbox',  duration: 2200, phase: 'mail163-inbox' },
-  { id: 'mail163-dl',     duration: 3200, phase: 'mail163-download' },
-  { id: 'fannisi-nav',    duration: 1200, phase: 'browser-opening' },
-  { id: 'upload-sheet',   duration: 2800, phase: 'upload-invoice-sheet' },
-  { id: 'classify-modal', duration: 2200, phase: 'classify-modal' },
-  { id: 'search-call',    duration: 1500, phase: 'tool-call', tool: 'fannisi.expense.list_invoices' },
-  { id: 'browser-search', duration: 1500, phase: 'browser-searching' },
-  { id: 'order-1',        duration: 1500, phase: 'tool-call', tool: 'fannisi.expense.upload_invoices' },
-  { id: 'order-detail',   duration: 1800, phase: 'opening-order' },
-  { id: 'ww-response',    duration: 2500, phase: 'ww-response' },
-  { id: 'wecom-notify',   duration: 2500, phase: 'wecom-notify' },
-  { id: 'done',           duration: 1500, phase: 'complete' },
+  { id: 'wecom-typing', duration: 9000, phase: 'wecom-input' },
+  { id: 'wecom-sent', duration: 250, phase: 'wecom-sent' },
+  { id: 'ww-receive', duration: 300, phase: 'ww-receive' },
+  { id: 'ww-thinking', duration: 450, phase: 'ww-thinking' },
+  { id: 'open-browser-xhs', duration: 1200, phase: 'tool-call', tool: 'open_browser' },
+  { id: 'xhs-browser', duration: 2200, phase: 'browser-xhs' },
+  { id: 'xhs-search', duration: 1800, phase: 'tool-call', tool: 'xiaohongshu.com.search_notes' },
+  { id: 'xhs-note', duration: 1600, phase: 'tool-call', tool: 'xiaohongshu.com.open_note' },
+  { id: 'open-browser-ctrip', duration: 1200, phase: 'tool-call', tool: 'open_browser' },
+  { id: 'ctrip-browser', duration: 2400, phase: 'browser-ctrip' },
+  { id: 'ctrip-flight', duration: 1800, phase: 'tool-call', tool: 'ctrip.com.flight' },
+  { id: 'ctrip-tour', duration: 1600, phase: 'tool-call', tool: 'ctrip.com.tour' },
+  { id: 'open-browser-12306', duration: 1200, phase: 'tool-call', tool: 'open_browser' },
+  { id: 'rail-browser', duration: 2400, phase: 'browser-12306' },
+  { id: 'rail-trains', duration: 1800, phase: 'tool-call', tool: '12306.cn.trains' },
+  { id: 'ww-response', duration: 2800, phase: 'ww-response' },
+  { id: 'wecom-notify', duration: 2500, phase: 'wecom-notify' },
+  { id: 'done', duration: 1500, phase: 'complete' },
 ]
 
 const AI_THOUGHTS = [
-  '收到企业微信消息...',
-  '登录 163 邮箱，定位本月联通发票 PDF…',
-  '解密（若加密）→ 打开范妮斯上传并一键匹配 → 校验是否可提交…',
+  '收到企业微信消息…',
+  '小红书搜攻略 → 携程查机票/跟团 → 12306 查高铁，再汇总对比',
+  '未登录站点仅做公开检索；下单/支付需你在浏览器确认',
 ]
 
-/** 与范妮思 index.vue + InvoiceCard.vue 列表展示一致（示意数据） */
-const KABAO_INVOICES = [
-  {
-    amount: '153.00',
-    type: 'meal',
-    label: '餐饮',
-    invoiceNumber: '26362000000523858516',
-    invoiceDate: '2026-03-29',
-    seller: '珠山区大江二期景水瑶餐饮店',
-  },
-  {
-    amount: '44.00',
-    type: 'communication',
-    label: '通讯',
-    invoiceNumber: '26427000000323924741',
-    invoiceDate: '2026-03-15',
-    seller: '中国电信股份有限公司武汉分公司',
-  },
+/** 示意数据（占位城市/价格，非真实订单） */
+const XHS_NOTES = [
+  { title: '杭州周末轻徒步｜九溪烟树一日线', author: '示例用户A', likes: '1.2万', tag: '徒步' },
+  { title: '西湖+灵隐慢游｜不踩雷时间表', author: '示例用户B', likes: '8.6k', tag: '攻略' },
+  { title: '杭州东站周边美食地图', author: '示例用户C', likes: '5.1k', tag: '美食' },
 ]
 
-/** 发票归类弹窗示意（与真实交互一致） */
-const CLASSIFY_ROWS = [
-  { title: '通讯发票', period: '2026-04', no: '26427000000323924741' },
-  { title: '餐饮发票', period: '2026-03', no: '26362000000523858516' },
+const CTRIP_FLIGHTS = [
+  { route: '上海虹桥 → 杭州萧山', time: '周六 08:10–09:05', price: '¥420 起', tag: '直飞' },
+  { route: '上海浦东 → 杭州萧山', time: '周六 14:30–15:35', price: '¥380 起', tag: '经济舱' },
 ]
 
-/** 163 收件箱示意（多封联通电子发票，下载动画按 invoiceIdx 顺序） */
-const MAIL163_ROWS = [
-  { from: '中国联通', subject: '【电子发票】您的话费电子发票已开具', snippet: '附件：增值税电子普通发票.pdf · 本月', date: '今天', file: '联通电子发票_202604_01.pdf', invoiceIdx: 0 },
-  { from: '中国联通', subject: '【电子发票】增值电信服务费发票', snippet: '附件：电子发票.pdf · 本月', date: '今天', file: '联通电子发票_202604_02.pdf', invoiceIdx: 1 },
-  { from: '中国联通', subject: '【电子发票】您的话费发票（补开）', snippet: '附件：发票.pdf', date: '昨天', file: '联通电子发票_202603_03.pdf', invoiceIdx: 2 },
-  { from: '网易邮箱团队', subject: '安全登录提醒', snippet: '您在新设备登录邮箱', date: '昨天' },
+const CTRIP_TOURS = [
+  { name: '杭州西湖+灵隐 2 日跟团', price: '¥899/人', meta: '含酒店 · 无购物' },
+  { name: '杭州自由行机+酒套餐', price: '¥1280/人', meta: '可改期 · 需登录确认' },
 ]
 
-function typePillClass(type) {
-  if (type === 'meal') return 'text-[#ffa229] bg-[rgba(255,162,41,0.08)]'
-  if (type === 'communication') return 'text-[#0abf83] bg-[rgba(10,191,131,0.08)]'
-  return 'text-[#3070f0] bg-[rgba(48,112,240,0.08)]'
-}
+const TRAINS_12306 = [
+  { no: 'G7351', depart: '08:12', arrive: '09:08', seat: '二等座', tickets: '有票' },
+  { no: 'G7313', depart: '10:05', arrive: '10:58', seat: '二等座', tickets: '有票' },
+  { no: 'D2289', depart: '13:20', arrive: '14:35', seat: '二等座', tickets: '候补' },
+]
 
 function useTypewriter(text, active, speed = 55) {
   const [displayed, setDisplayed] = useState('')
@@ -93,14 +77,10 @@ export default function WeWorkerAnimation({ paused = false }) {
   const [running, setRunning] = useState(true)
   const [aiThoughts, setAiThoughts] = useState([])
   const [wwMessages, setWwMessages] = useState([])   // messages in WeWorker chat
-  const [showOrders, setShowOrders] = useState(false)
-  const [openedOrder, setOpenedOrder] = useState(-1)
   const [currentTool, setCurrentTool] = useState(null)
   const [browserUrl, setBrowserUrl] = useState('about:blank')
   const [wecomNotify, setWecomNotify] = useState(false)
-  const [mail163DlStep, setMail163DlStep] = useState(0)
   const timerRef = useRef(null)
-  const mail163DlTimersRef = useRef([])
   /** 企业微信打字完成后只触发一次：立刻同步 WeWorker 并跳过中间等待步骤 */
   const wecomHandoffRef = useRef(false)
 
@@ -129,14 +109,14 @@ export default function WeWorkerAnimation({ paused = false }) {
       AI_THOUGHTS.forEach((t, i) => setTimeout(() => setAiThoughts(p => [...p, t]), i * 130))
     }
     if (step.phase === 'tool-call') setCurrentTool(step.tool)
-    if (step.phase === 'browser-mail163') setBrowserUrl('mail.163.com')
-    if (step.phase === 'browser-opening') setBrowserUrl('invoice.fannisi.com')
-    if (step.id === 'search-call') setShowOrders(true)
-    if (step.phase === 'opening-order') setOpenedOrder(0)
+    else setCurrentTool(null)
+    if (step.id === 'open-browser-xhs' || step.phase === 'browser-xhs') setBrowserUrl('www.xiaohongshu.com')
+    if (step.id === 'open-browser-ctrip' || step.phase === 'browser-ctrip') setBrowserUrl('www.ctrip.com')
+    if (step.id === 'open-browser-12306' || step.phase === 'browser-12306') setBrowserUrl('www.12306.cn')
     if (step.phase === 'ww-response') {
       setWwMessages(p => [...p, {
         role: 'assistant',
-        text: '✓ 163 邮箱本月联通发票 PDF 已下载并完成解密\n已上传至范妮斯、一键匹配完成；2 张符合要求，已代为提交，待财务审核',
+        text: '✓ 跨站检索完成（示意汇总）\n\n【玩法】九溪轻徒步 / 西湖+灵隐慢游 / 东站周边美食\n【交通】高铁 G7351 08:12 二等座有票 ≈¥73；机票 ¥380–420 起\n【跟团】西湖灵隐 2 日 ¥899；机+酒自由行 ¥1280（需登录确认库存）\n\n建议：时间紧选高铁+小红书路线；想省心可看跟团。下单与支付请你在浏览器确认。',
       }])
     }
     if (step.phase === 'wecom-notify') setWecomNotify(true)
@@ -146,9 +126,8 @@ export default function WeWorkerAnimation({ paused = false }) {
       if (next >= STEPS.length) {
         setTimeout(() => {
           setStepIdx(0); setAiThoughts([]); setWwMessages([])
-          setShowOrders(false); setOpenedOrder(-1); setCurrentTool(null)
+          setCurrentTool(null)
           setBrowserUrl('about:blank'); setWecomNotify(false)
-          setMail163DlStep(0)
         }, 800)
       } else { setStepIdx(next) }
     }, step.duration)
@@ -167,30 +146,16 @@ export default function WeWorkerAnimation({ paused = false }) {
 
   const phase = step?.phase || 'idle'
 
-  useEffect(() => {
-    mail163DlTimersRef.current.forEach(clearTimeout)
-    mail163DlTimersRef.current = []
-    if (phase !== 'mail163-download') {
-      setMail163DlStep(0)
-      return
-    }
-    setMail163DlStep(0)
-    const delays = [380, 1050, 1780, 2510]
-    delays.forEach((ms, i) => {
-      const id = setTimeout(() => setMail163DlStep(i + 1), ms)
-      mail163DlTimersRef.current.push(id)
-    })
-    return () => {
-      mail163DlTimersRef.current.forEach(clearTimeout)
-      mail163DlTimersRef.current = []
-    }
-  }, [phase])
-
-  const mail163Active = ['browser-mail163', 'mail163-inbox', 'mail163-download'].includes(phase)
-  const dataFlowActive = phase === 'tool-call' || mail163Active || phase === 'browser-opening'
-    || phase === 'upload-invoice-sheet' || phase === 'classify-modal'
+  const travelBrowserActive = ['browser-xhs', 'browser-ctrip', 'browser-12306'].includes(phase)
+  const dataFlowActive = phase === 'tool-call' || travelBrowserActive
   const wecomSent = ['wecom-sent', 'ww-receive', 'ww-thinking', 'tool-call',
-    'browser-mail163', 'mail163-inbox', 'mail163-download', 'browser-opening', 'upload-invoice-sheet', 'classify-modal', 'browser-searching', 'opening-order', 'ww-response', 'wecom-notify', 'complete'].includes(phase)
+    'browser-xhs', 'browser-ctrip', 'browser-12306', 'ww-response', 'wecom-notify', 'complete'].includes(phase)
+
+  const xhsHighlightNotes = ['xhs-search', 'xhs-note'].includes(step?.id) || phase === 'browser-ctrip' || phase === 'browser-12306'
+  const xhsHighlightFirst = step?.id === 'xhs-note'
+  const ctripHighlightFlight = step?.id === 'ctrip-flight' || step?.id === 'ctrip-tour'
+  const ctripHighlightTour = step?.id === 'ctrip-tour'
+  const railHighlight = step?.id === 'rail-trains' || phase === 'ww-response' || phase === 'wecom-notify'
 
   return (
     <div className="w-full select-none py-8 overflow-x-auto">
@@ -251,8 +216,8 @@ export default function WeWorkerAnimation({ paused = false }) {
                     <div className="w-6 h-6 rounded-lg bg-accent/30 flex items-center justify-center text-xs text-accent font-bold flex-shrink-0 mt-0.5">W</div>
                     <div className="bg-white rounded-xl rounded-tl-sm px-2.5 py-1.5 shadow-sm max-w-[85%]">
                       <div className="text-xs text-gray-700 leading-relaxed">
-                        ✅ 任务完成<br/>
-                        <span className="text-gray-500">联通发票已解密并上传范妮斯，匹配通过 2 张，已提交，合计 ¥197.00</span>
+                        ✅ 出行方案已汇总<br/>
+                        <span className="text-gray-500">推荐高铁 G7351 + 九溪徒步；机票/跟团价已对比，详情见 WeWorker 对话</span>
                       </div>
                     </div>
                   </div>
@@ -373,314 +338,134 @@ export default function WeWorkerAnimation({ paused = false }) {
                   </div>
                 </div>
                 <div className="flex flex-1 flex-col min-h-0 overflow-hidden bg-[#f7f7f7] relative rounded-b-xl">
-                  {mail163Active ? (
+                  {browserUrl === 'www.xiaohongshu.com' ? (
                     <>
-                      {/* 163 邮箱：顶部品牌栏 */}
-                      <div className="shrink-0 bg-[#d84640] text-white px-3 py-2 flex items-center gap-2 shadow-sm">
-                        <span className="text-sm font-bold tracking-tight">网易邮箱</span>
-                        <span className="text-[10px] opacity-90 px-1.5 py-0.5 rounded bg-white/15">6.0</span>
-                        <div className="flex-1 max-w-[140px] ml-1 bg-white/95 rounded px-2 py-1 text-[10px] text-gray-500 flex items-center gap-1">
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 opacity-60">
-                            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-                          </svg>
-                          <span className="truncate">搜索邮件</span>
+                      <div className="shrink-0 bg-white border-b border-[#eee] px-3 py-2 flex items-center gap-2">
+                        <span className="text-[#ff2442] text-sm font-bold">小红书</span>
+                        <div className="flex-1 bg-[#f5f5f5] rounded-full px-3 py-1.5 text-[11px] text-[#333] flex items-center gap-1.5">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
+                          <span className="truncate">杭州周末徒步 攻略</span>
                         </div>
                       </div>
-                      <div className="flex flex-1 min-h-0">
-                        <div className="w-[72px] shrink-0 bg-[#f0f0f0] border-r border-[#e0e0e0] py-2 flex flex-col gap-0.5 text-[10px]">
-                          <div className="mx-1 px-1.5 py-1.5 rounded bg-white text-[#d84640] font-semibold shadow-sm border border-[#e8e8e8]">
-                            收件箱
-                          </div>
-                          <div className="mx-1 px-1.5 py-1 text-gray-600">星标</div>
-                          <div className="mx-1 px-1.5 py-1 text-gray-600">草稿箱</div>
-                        </div>
-                        <div className="flex-1 flex flex-col min-w-0 bg-white">
-                          <div className="shrink-0 px-2 py-1.5 border-b border-[#eee] text-[10px] text-gray-500 flex justify-between">
-                            <span>本月 · 联通 · 发票</span>
-                            <span className="text-[#d84640] font-medium">共 3 封发票</span>
-                          </div>
-                          <div className="flex-1 overflow-y-auto">
-                            {MAIL163_ROWS.map((row, i) => {
-                              const invIdx = row.invoiceIdx
-                              const isInvoice = invIdx !== undefined
-                              const highlightInbox = phase === 'mail163-inbox' && isInvoice
-                              const downloading = phase === 'mail163-download' && isInvoice && mail163DlStep === invIdx + 1
-                              const downloaded = phase === 'mail163-download' && isInvoice && mail163DlStep > invIdx + 1
-                              const highlightDl = phase === 'mail163-download' && isInvoice && (downloading || downloaded)
-                              return (
-                                <div
-                                  key={i}
-                                  className={`border-b border-[#f0f0f0] px-2.5 py-2 transition-all duration-500 ${
-                                    highlightInbox || highlightDl ? 'bg-[#fff8f7] ring-2 ring-[#d84640]/35 ring-inset' : ''
-                                  } ${downloading ? 'scale-[1.01]' : ''}`}
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-1.5">
-                                        {phase === 'mail163-download' && isInvoice && (
-                                          <span
-                                            className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
-                                              downloaded
-                                                ? 'border-[#d84640] bg-[#d84640] text-white'
-                                                : downloading
-                                                  ? 'border-[#d84640] border-dashed bg-white'
-                                                  : 'border-[#ddd] bg-white'
-                                            }`}
-                                          >
-                                            {downloaded && (
-                                              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                                <path d="M20 6L9 17l-5-5" />
-                                              </svg>
-                                            )}
-                                            {downloading && (
-                                              <span className="h-1.5 w-1.5 rounded-full bg-[#d84640] animate-pulse" />
-                                            )}
-                                          </span>
-                                        )}
-                                        <span className={`text-[11px] font-semibold truncate ${isInvoice ? 'text-[#333]' : 'text-gray-600'}`}>{row.from}</span>
-                                      </div>
-                                      <div className="text-[11px] text-[#333] mt-0.5 line-clamp-1">{row.subject}</div>
-                                      <div className="text-[10px] text-gray-400 mt-0.5 line-clamp-1">{row.snippet}</div>
-                                    </div>
-                                    <span className="text-[10px] text-gray-400 shrink-0">{row.date}</span>
-                                  </div>
-                                  {downloading && row.file && (
-                                    <div className="mt-2 flex items-center gap-2 rounded-md bg-[#fafafa] border border-[#eee] px-2 py-1.5 animate-fade-in">
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d84640" strokeWidth="1.5" className="shrink-0">
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                        <polyline points="14 2 14 8 20 8" />
-                                      </svg>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-[10px] font-medium text-[#333] truncate">{row.file}</div>
-                                        <div className="h-1 mt-1 rounded-full bg-[#eee] overflow-hidden">
-                                          <div
-                                            key={`dl-${invIdx}-${mail163DlStep}`}
-                                            className="h-full rounded-full bg-[#d84640] origin-left animate-mail163-progress-fast"
-                                            style={{ width: '100%' }}
-                                          />
-                                        </div>
-                                      </div>
-                                      <span className="text-[9px] text-[#d84640] font-semibold whitespace-nowrap">下载中</span>
-                                    </div>
-                                  )}
-                                  {downloaded && row.file && !downloading && (
-                                    <div className="mt-1.5 flex items-center gap-1.5 text-[9px] text-[#2e7d32]">
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                        <path d="M20 6L9 17l-5-5" />
-                                      </svg>
-                                      <span className="truncate font-medium">{row.file}</span>
-                                      <span className="text-gray-400 shrink-0">已保存</span>
-                                    </div>
-                                  )}
+                      <div className="flex-1 overflow-y-auto p-2.5 space-y-2 bg-[#fafafa]">
+                        {XHS_NOTES.map((note, i) => (
+                          <div
+                            key={i}
+                            className={`rounded-xl bg-white p-2.5 border transition-all duration-500 ${
+                              xhsHighlightNotes ? 'border-[#ff2442]/30 shadow-sm' : 'border-[#eee]'
+                            } ${xhsHighlightFirst && i === 0 ? 'ring-2 ring-[#ff2442]/40' : ''}`}
+                          >
+                            <div className="flex gap-2">
+                              <div className="w-14 h-14 rounded-lg bg-gradient-to-br from-[#ffe8ec] to-[#fff0e6] shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[11px] font-semibold text-[#333] line-clamp-2 leading-snug">{note.title}</div>
+                                <div className="mt-1 flex items-center gap-2 text-[9px] text-gray-400">
+                                  <span>{note.author}</span>
+                                  <span className="text-[#ff2442]">♥ {note.likes}</span>
+                                  <span className="px-1 py-0.5 rounded bg-[#fff0f2] text-[#ff2442]">{note.tag}</span>
                                 </div>
-                              )
-                            })}
+                              </div>
+                            </div>
                           </div>
-                          {phase === 'mail163-download' && mail163DlStep >= 1 && mail163DlStep < 4 && (
-                            <div className="shrink-0 mx-2 mb-1 mt-1 rounded-lg bg-[#fff8e6] border border-[#ffe082] px-2.5 py-1.5 text-[10px] text-[#856404] flex items-center gap-1.5">
-                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#d84640] animate-pulse shrink-0" />
-                              正在下载第 {Math.min(mail163DlStep, 3)} / 3 张联通电子发票…
-                            </div>
-                          )}
-                          {phase === 'mail163-download' && mail163DlStep >= 4 && (
-                            <div className="shrink-0 mx-2 mb-2 mt-1 rounded-lg bg-[#e8f5e9] border border-[#a5d6a7] px-2.5 py-1.5 text-[10px] text-[#2e7d32] flex items-center gap-1.5 animate-fade-in">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <path d="M20 6L9 17l-5-5" />
-                              </svg>
-                              3 个 PDF 已保存到下载文件夹，准备打开范妮思上传…
-                            </div>
-                          )}
-                        </div>
+                        ))}
+                        {xhsHighlightNotes && (
+                          <div className="text-[10px] text-center text-[#2e7d32] py-1 animate-fade-in">
+                            Adapter 已返回 3 条笔记摘要，正在打开首条详情…
+                          </div>
+                        )}
                       </div>
                     </>
+                  ) : browserUrl === 'www.ctrip.com' ? (
+                    <>
+                      <div className="shrink-0 bg-[#0086f6] text-white px-3 py-2 flex items-center gap-2">
+                        <span className="text-sm font-bold">携程旅行</span>
+                        <span className="text-[10px] opacity-90">上海 → 杭州 · 本周末</span>
+                      </div>
+                      <div className="flex shrink-0 bg-white border-b border-[#e8e8e8] text-[11px]">
+                        {['机票', '跟团游', '自由行'].map((tab, ti) => (
+                          <div
+                            key={tab}
+                            className={`flex-1 text-center py-2 ${ti <= 1 ? 'border-r border-[#eee]' : ''} ${
+                              (ti === 0 && ctripHighlightFlight) || (ti === 1 && ctripHighlightTour) ? 'text-[#0086f6] font-semibold border-b-2 border-[#0086f6]' : 'text-gray-600'
+                            }`}
+                          >
+                            {tab}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
+                        <div className="text-[10px] text-gray-500 font-medium px-0.5">机票</div>
+                        {CTRIP_FLIGHTS.map((f, i) => (
+                          <div
+                            key={i}
+                            className={`rounded-lg bg-white border p-2.5 transition-all duration-300 ${
+                              ctripHighlightFlight && i === 0 ? 'border-[#0086f6] ring-2 ring-[#0086f6]/25' : 'border-[#eee]'
+                            }`}
+                          >
+                            <div className="text-[11px] font-medium text-[#333]">{f.route}</div>
+                            <div className="flex justify-between mt-1 text-[10px]">
+                              <span className="text-gray-500">{f.time}</span>
+                              <span className="text-[#0086f6] font-semibold">{f.price}</span>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="text-[10px] text-gray-500 font-medium px-0.5 pt-1">跟团 / 套餐</div>
+                        {CTRIP_TOURS.map((t, i) => (
+                          <div
+                            key={i}
+                            className={`rounded-lg bg-white border p-2.5 transition-all duration-300 ${
+                              ctripHighlightTour ? 'border-[#0086f6] ring-2 ring-[#0086f6]/25' : 'border-[#eee]'
+                            }`}
+                          >
+                            <div className="text-[11px] font-medium text-[#333]">{t.name}</div>
+                            <div className="flex justify-between mt-1 text-[10px]">
+                              <span className="text-gray-500">{t.meta}</span>
+                              <span className="text-[#ff6600] font-semibold">{t.price}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : browserUrl === 'www.12306.cn' ? (
+                    <>
+                      <div className="shrink-0 bg-[#3b99fc] text-white px-3 py-2">
+                        <span className="text-sm font-bold">12306</span>
+                        <span className="text-[10px] ml-2 opacity-95">余票查询</span>
+                      </div>
+                      <div className="shrink-0 bg-white border-b border-[#ddd] px-3 py-2 text-[11px] flex flex-wrap gap-x-3 gap-y-1 text-[#333]">
+                        <span>上海虹桥 → 杭州东</span>
+                        <span className="text-gray-500">2026-10-17（周六）</span>
+                        <span className="text-[#3b99fc]">二等座</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto">
+                        <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-2 px-2 py-1.5 bg-[#eef5ff] text-[9px] text-gray-600 font-medium">
+                          <span>车次</span><span>出发</span><span>到达</span><span>余票</span>
+                        </div>
+                        {TRAINS_12306.map((t, i) => (
+                          <div
+                            key={t.no}
+                            className={`grid grid-cols-[auto_1fr_1fr_auto] gap-2 px-2 py-2 border-b border-[#eee] text-[11px] transition-all duration-300 ${
+                              railHighlight && i === 0 ? 'bg-[#e8f4ff] ring-1 ring-[#3b99fc]/40 ring-inset' : 'bg-white'
+                            }`}
+                          >
+                            <span className="font-semibold text-[#333]">{t.no}</span>
+                            <span>{t.depart}</span>
+                            <span>{t.arrive}</span>
+                            <span className={t.tickets === '有票' ? 'text-[#2e7d32] font-medium' : 'text-[#ff9800]'}>{t.tickets}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : browserUrl !== 'about:blank' ? (
+                    <div className="flex flex-1 items-center justify-center text-[13px] text-[#969799]">
+                      正在打开站点…
+                    </div>
                   ) : (
-                    <>
-                      {/* FilterBar：全部类型 / 全部月份（对齐 FilterBar.vue + Vant） */}
-                      <div className="flex shrink-0 bg-white border-b border-[#ebedf0]">
-                        <button
-                          type="button"
-                          className="flex-1 flex items-center justify-center gap-1 py-3 text-[13px] text-[#323233] border-r border-[#ebedf0]"
-                        >
-                          全部类型
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#969799] opacity-80">
-                            <path d="M6 9l6 6 6-6" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          className="flex-1 flex items-center justify-center gap-1 py-3 text-[13px] text-[#323233]"
-                        >
-                          全部月份
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#969799] opacity-80">
-                            <path d="M6 9l6 6 6-6" />
-                          </svg>
-                        </button>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto px-[15px] pt-4 pb-2 min-h-0">
-                        <p className="text-[13px] text-[#757575] text-center leading-5 mb-3">
-                          已关联发票不在这里展示，可点击去报销查看
-                        </p>
-                        {showOrders ? (
-                          <div className="flex flex-col gap-3">
-                            {KABAO_INVOICES.map((inv, i) => (
-                              <div
-                                key={i}
-                                className={`rounded-lg bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.08)] transition-all duration-300 ${
-                                  openedOrder === i ? 'ring-2 ring-[#3070f0] bg-[rgba(48,112,240,0.02)]' : ''
-                                }`}
-                              >
-                                <div className="flex items-center justify-between gap-2 mb-2">
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <span className="text-[15px] font-medium text-[#0F121E] leading-[23px] shrink-0">
-                                      {inv.amount}元
-                                    </span>
-                                    <span
-                                      className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-xs pl-1 ${typePillClass(inv.type)}`}
-                                    >
-                                      {inv.label}
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-70">
-                                        <path d="M6 9l6 6 6-6" />
-                                      </svg>
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="mt-2 space-y-1 text-[13px]">
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-[#757575] shrink-0 w-14">发票号</span>
-                                    <span className="text-[#757575] break-all flex-1 flex items-center gap-1">
-                                      {inv.invoiceNumber}
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-[#757575] shrink-0 opacity-70" aria-hidden>
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                        <polyline points="14 2 14 8 20 8" />
-                                      </svg>
-                                    </span>
-                                  </div>
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-[#757575] shrink-0 w-14">开票日</span>
-                                    <span className="text-[#757575] break-all flex-1">{inv.invoiceDate}</span>
-                                  </div>
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-[#757575] shrink-0 w-14">销售方</span>
-                                    <span className="text-[#757575] break-all flex-1">{inv.seller}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : browserUrl !== 'about:blank' ? (
-                          <div className="flex flex-col items-center justify-center py-10 text-[13px] text-[#969799]">
-                            加载中...
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {/* index.vue 底部操作栏：上传发票 + 去报销 */}
-                      <div className="shrink-0 flex gap-[15px] px-4 pt-4 pb-3 bg-white border-t border-[#F0F0F0]">
-                        <div className="flex-1 min-w-0">
-                          <div
-                            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg text-base font-normal text-white bg-[#3070f0]"
-                            style={{ borderRadius: 8 }}
-                          >
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white">
-                              <path d="M12 16V4m0 0L8 8m4-4l4 4" />
-                              <path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
-                            </svg>
-                            上传发票
-                          </div>
-                        </div>
-                        <div
-                          className="flex flex-1 min-w-0 h-12 items-center justify-center gap-1 rounded-lg text-base text-[#3070F0] bg-[#DDE8FF]"
-                          style={{ borderRadius: 8 }}
-                        >
-                          去报销
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#3070F0]">
-                            <path d="M5 12h14M12 5l7 7-7 7" />
-                          </svg>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {phase === 'upload-invoice-sheet' && (
-                    <div className="absolute inset-0 z-[11] flex flex-col justify-end pointer-events-none">
-                      <div className="absolute inset-0 bg-black/45 pointer-events-auto" aria-hidden />
-                      <div className="relative pointer-events-auto animate-upload-sheet-up bg-white rounded-t-[14px] px-4 pt-3 pb-5 shadow-[0_-6px_28px_rgba(0,0,0,0.12)] border-t border-[#f0f0f0]">
-                        <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-[#e5e5e5]" aria-hidden />
-                        <h2 className="text-center text-[17px] font-bold text-[#323233] tracking-tight mb-4">
-                          上传发票
-                        </h2>
-                        <div className="flex flex-col gap-3">
-                          <div
-                            className="flex w-full items-center gap-3 rounded-[10px] border border-[#ebebeb] bg-white px-3 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.04)] text-left"
-                          >
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-[#f5f5f5]">
-                              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                                <path d="M9 13h6M9 17h4" opacity="0.45" />
-                                <path d="M10 6.5h4.5v4H10z" fill="none" stroke="#1a1a1a" strokeWidth="1.1" />
-                                <path d="M11 8.2h2.2M11 9.4h2.2" stroke="#1a1a1a" strokeWidth="0.9" opacity="0.6" />
-                              </svg>
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-[15px] font-medium text-[#323233] leading-snug">电子发票上传</div>
-                              <div className="mt-0.5 text-[12px] text-[#969799] leading-snug">选择上传文件</div>
-                            </div>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c8c9cc" strokeWidth="2" className="shrink-0" aria-hidden>
-                              <path d="M9 18l6-6-6-6" />
-                            </svg>
-                          </div>
-                          <div
-                            className="flex w-full items-center gap-3 rounded-[10px] border border-[#ebebeb] bg-white px-3 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.04)] text-left"
-                          >
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-[#f5f5f5]">
-                              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                                <path d="M7 4h10l1 3v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
-                                <path d="M6 7h12" />
-                                <path d="M8 10h8M8 13h6M8 16h7" opacity="0.45" />
-                                <path d="M5 19h14l-1.5 3h-11L5 19z" />
-                              </svg>
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-[15px] font-medium text-[#323233] leading-snug">纸质发票上传</div>
-                              <div className="mt-0.5 text-[12px] text-[#969799] leading-snug">拍照/相册</div>
-                            </div>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c8c9cc" strokeWidth="2" className="shrink-0" aria-hidden>
-                              <path d="M9 18l6-6-6-6" />
-                            </svg>
-                          </div>
-                        </div>
-                      </div>
+                    <div className="flex flex-1 items-center justify-center text-[12px] text-[#bbb]">
+                      等待 Adapter 打开浏览器
                     </div>
                   )}
 
-                  {phase === 'classify-modal' && (
-                    <div className="absolute inset-0 z-[12] flex items-center justify-center bg-black/45 px-4">
-                      <div className="w-full max-w-[280px] overflow-hidden rounded-2xl bg-white shadow-xl">
-                        <div className="border-b border-gray-100 py-3.5 text-center text-base font-semibold text-[#323233]">
-                          发票归类
-                        </div>
-                        <div className="divide-y divide-gray-100 px-4 py-1">
-                          {CLASSIFY_ROWS.map((row, idx) => (
-                            <div key={idx} className="py-3">
-                              <div className="flex items-center justify-between text-sm text-[#323233]">
-                                <span className="font-medium">{row.title}</span>
-                                <span className="text-[#969799]">{row.period}</span>
-                              </div>
-                              <div className="mt-1 font-mono text-xs text-[#646566] break-all">{row.no}</div>
-                            </div>
-                          ))}
-                        </div>
-                        <button
-                          type="button"
-                          className="w-full border-t border-gray-100 py-3 text-sm font-medium text-[#3070f0]"
-                        >
-                          我知道了
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -715,27 +500,6 @@ export default function WeWorkerAnimation({ paused = false }) {
       <style>{`
         @keyframes fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
-        @keyframes mail163-progress {
-          from { transform: scaleX(0); }
-          to { transform: scaleX(1); }
-        }
-        .animate-mail163-progress {
-          transform: scaleX(0);
-          transform-origin: left center;
-          animation: mail163-progress 2.4s ease-out forwards;
-        }
-        .animate-mail163-progress-fast {
-          transform: scaleX(0);
-          transform-origin: left center;
-          animation: mail163-progress 0.58s ease-out forwards;
-        }
-        @keyframes upload-sheet-up {
-          from { transform: translateY(18px); opacity: 0.92; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        .animate-upload-sheet-up {
-          animation: upload-sheet-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
       `}</style>
     </div>
   )

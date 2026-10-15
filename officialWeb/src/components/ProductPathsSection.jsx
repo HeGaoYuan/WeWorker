@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import ScrollReveal from './ScrollReveal.jsx'
+import { copyToClipboard } from '../lib/copyToClipboard.js'
 import { ADAPTER_REPO, GITHUB_RELEASES } from '../lib/siteConfig.js'
 
 const SKILL_INSTALL_CMD = 'webcli install --skills'
@@ -8,13 +9,10 @@ const SKILL_INSTALL_CMD = 'webcli install --skills'
 function CopyChip({ text, label = '复制' }) {
   const [copied, setCopied] = useState(false)
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* ignore */
-    }
+    const ok = await copyToClipboard(text)
+    if (!ok) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 2000)
   }
   return (
     <div className="mt-4 rounded-xl border border-border bg-[rgb(var(--color-bg))]/80 px-3 py-2.5 flex items-start gap-2 text-left">

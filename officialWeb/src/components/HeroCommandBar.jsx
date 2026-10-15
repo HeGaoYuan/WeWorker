@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { copyToClipboard } from '../lib/copyToClipboard.js'
 
 const COMMAND =
   '请帮我安装并接入 WebCLI，使用 webcli call 调用 Adapter 完成网页任务。'
@@ -7,13 +8,10 @@ export default function HeroCommandBar() {
   const [copied, setCopied] = useState(false)
 
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(COMMAND)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* ignore */
-    }
+    const ok = await copyToClipboard(COMMAND)
+    if (!ok) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 2000)
   }
 
   return (
