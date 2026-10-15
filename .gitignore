@@ -6,6 +6,10 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# npm 发布凭证（token 等同密码，绝不入库）
+.npmrc
+.npmrc.*
 *.pem
 *.key
 *.p12
