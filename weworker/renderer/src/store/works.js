@@ -164,6 +164,20 @@ export const useWorksStore = create((set, get) => ({
     }
   },
 
+  /** Reload a work's messages without making it the active main chat. */
+  refreshWorkMessages: async (id) => {
+    if (!id || get().streamingWorkIds.has(id)) return
+    try {
+      const res = await backendFetch(`${API}/works/${id}`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (get().streamingWorkIds.has(id)) return
+      set((s) => ({ messages: { ...s.messages, [id]: data.messages } }))
+    } catch (e) {
+      console.error('[works] refreshWorkMessages failed:', e)
+    }
+  },
+
   deleteWork: async (id) => {
     try {
       const res = await backendFetch(`${API}/works/${id}`, { method: 'DELETE' })

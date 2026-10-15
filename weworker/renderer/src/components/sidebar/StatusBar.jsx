@@ -5,6 +5,8 @@ import { useSettingsStore } from '../../store/settings.js'
 import ExtensionGuide from '../ExtensionGuide.jsx'
 import { getWebwrightPresentation } from '../../utils/webwright-status.js'
 import { getPortConflictHelp } from '../../utils/port-conflict-help.js'
+import { showDedicatedAgentsPage } from '../../store/dedicated-agents.js'
+import { isAgentChannelKey, summarizeAgentChannels } from '../../utils/dedicated-agents.js'
 
 export default function StatusBar() {
   const { extension, extensionVersion, channels } = useStatusStore()
@@ -66,6 +68,7 @@ export default function StatusBar() {
   }
 
   const CHANNEL_NAMES = { qq: 'QQ', weixin: '微信', wecom: '企业微信', feishu: '飞书' }
+  const agentChannels = summarizeAgentChannels(channels)
   const STATUS_TEXT = { connected: '已连接', starting: '连接中', error: '错误' }
 
   return (
@@ -161,8 +164,19 @@ export default function StatusBar() {
           <span>后端：外部开发服务</span>
         </span>
       )}
-      {/* Channel statuses */}
-      {Object.entries(channels).map(([name, info]) => (
+      {/* Channel statuses (dedicated agent bots are summarized in one line) */}
+      {agentChannels.total > 0 && (
+        <button
+          type="button"
+          onClick={showDedicatedAgentsPage}
+          title={agentChannels.errors ? `${agentChannels.errors} 个专属 Agent 连接异常` : undefined}
+          style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 0, border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', alignSelf: 'flex-start' }}
+        >
+          {channelDot(agentChannels.errors ? 'error' : agentChannels.connected === agentChannels.total ? 'connected' : 'starting')}
+          专属 Agent {agentChannels.connected}/{agentChannels.total} 在线
+        </button>
+      )}
+      {Object.entries(channels).filter(([name]) => !isAgentChannelKey(name)).map(([name, info]) => (
         <span
           key={name}
           title={info.error ? `${CHANNEL_NAMES[name] || name}: ${info.error}` : undefined}

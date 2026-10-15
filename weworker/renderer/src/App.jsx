@@ -24,6 +24,7 @@ import { useTerminalStore } from './store/terminal.js'
 import { useToolPackagePageStore } from './store/tool-package-page.js'
 import { useExplorationPageStore } from './store/exploration-page.js'
 import { useWebsiteExplorationStore, leaveWebsiteExploration } from './store/website-exploration.js'
+import { useDedicatedAgentsStore, showDedicatedAgentsPage } from './store/dedicated-agents.js'
 import { useSitesStore } from './store/sites.js'
 import { WebsiteExplorationGuard } from './components/website-exploration/WebsiteExplorationPage.jsx'
 import ExtensionGuide from './components/ExtensionGuide.jsx'
@@ -44,6 +45,7 @@ export default function App() {
   const [activeSidebarSection, setActiveSidebarSection] = useState('conversation')
   const [theme, setTheme] = useState(getInitialTheme)
   const themeSwitchTimerRef = useRef(null)
+  const handleOpenDedicatedAgentsRef = useRef(async () => {})
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [showExtensionGuide, setShowExtensionGuide] = useState(false)
@@ -94,7 +96,9 @@ export default function App() {
 
   const explorationOpen = useExplorationPageStore((s) => s.open)
   const websiteOpen = useWebsiteExplorationStore((s) => s.open)
-  const focusedWorkspaceOpen = toolPackageOpen || explorationOpen || websiteOpen
+  // The 专属 Agent page has its own agent and conversation lists, so it hides the main sidebar.
+  const dedicatedAgentsOpen = useDedicatedAgentsStore((s) => s.open)
+  const focusedWorkspaceOpen = toolPackageOpen || explorationOpen || websiteOpen || dedicatedAgentsOpen
 
   useEffect(() => {
     if (!websiteOpen) return
@@ -108,6 +112,9 @@ export default function App() {
   }, [websiteOpen])
 
   useEffect(() => window.electronAPI?.onWebsiteExplorationOpen?.(() => useWebsiteExplorationStore.setState({ open: true })), [])
+
+  // Tray menu → 专属 Agent
+  useEffect(() => window.electronAPI?.onOpenDedicatedAgents?.(() => { void handleOpenDedicatedAgentsRef.current() }), [])
 
 
   useEffect(() => {
@@ -221,6 +228,7 @@ export default function App() {
     setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
+    useDedicatedAgentsStore.getState().closePage()
     setActiveSidebarSection('conversation')
     useToolPackagePageStore.getState().closePage()
     useScheduledTasksStore.setState({ activeTaskId: null })
@@ -237,6 +245,7 @@ export default function App() {
     setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
     useExplorationPageStore.getState().closePage()
+    useDedicatedAgentsStore.getState().closePage()
     setActiveSidebarSection('tasks')
     useToolPackagePageStore.getState().closePage()
     useWorksStore.setState({ activeWorkId: null })
@@ -270,6 +279,15 @@ export default function App() {
     useTerminalStore.getState().closePanel()
     useExplorationPageStore.getState().openPage()
   }
+
+  const handleOpenDedicatedAgents = async () => {
+    setShowSettings(false)
+    if (!await showDedicatedAgentsPage()) return
+    useUserFilesStore.getState().closePanel()
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+  }
+  handleOpenDedicatedAgentsRef.current = handleOpenDedicatedAgents
 
   const handleOpenWebsiteExploration = async () => {
     setShowSettings(false)
@@ -426,6 +444,7 @@ export default function App() {
           onOpenSkills={handleOpenSkills}
           onOpenExploration={handleOpenExploration}
           onOpenWebsiteExploration={handleOpenWebsiteExploration}
+          onOpenDedicatedAgents={handleOpenDedicatedAgents}
           onOpenExtension={() => { setShowSettings(false); setShowExtensionGuide(true) }}
           onOpenSettings={() => setShowSettings((current) => !current)}
         />

@@ -4,10 +4,11 @@ import Tooltip from '../Tooltip.jsx'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
 import { useExplorationPageStore } from '../../store/exploration-page.js'
 import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
+import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
 import { useStatusStore } from '../../store/status.js'
 import { getPortConflictHelp } from '../../utils/port-conflict-help.js'
 
-export default function AppRail({ activeSection, settingsOpen = false, onOpenConversation, onOpenTasks, onOpenSkills, onOpenExploration, onOpenWebsiteExploration, onOpenExtension, onOpenSettings }) {
+export default function AppRail({ activeSection, settingsOpen = false, onOpenConversation, onOpenTasks, onOpenSkills, onOpenExploration, onOpenWebsiteExploration, onOpenDedicatedAgents, onOpenExtension, onOpenSettings }) {
   const [moreOpen, setMoreOpen] = useState(false)
   const [issuesOpen, setIssuesOpen] = useState(false)
   const [bridgeStatus, setBridgeStatus] = useState('unknown')
@@ -15,8 +16,9 @@ export default function AppRail({ activeSection, settingsOpen = false, onOpenCon
   const skillsOpen = useToolPackagePageStore((s) => s.open)
   const explorationOpen = useExplorationPageStore((s) => s.open)
   const websiteOpen = useWebsiteExplorationStore((s) => s.open)
+  const dedicatedAgentsOpen = useDedicatedAgentsStore((s) => s.open)
   const extension = useStatusStore((s) => s.extension)
-  const activeKey = settingsOpen ? 'settings' : skillsOpen ? 'skills' : explorationOpen ? 'exploration' : websiteOpen ? 'website' : activeSection
+  const activeKey = settingsOpen ? 'settings' : skillsOpen ? 'skills' : explorationOpen ? 'exploration' : websiteOpen ? 'website' : dedicatedAgentsOpen ? 'dedicated-agents' : activeSection
 
   useEffect(() => {
     let cancelled = false
@@ -64,6 +66,9 @@ export default function AppRail({ activeSection, settingsOpen = false, onOpenCon
         </RailButton>
         <RailButton label="定时任务" active={activeKey === 'tasks'} onClick={onOpenTasks}>
           <ClockIcon />
+        </RailButton>
+        <RailButton label="专属 Agent" active={activeKey === 'dedicated-agents'} onClick={onOpenDedicatedAgents}>
+          <DedicatedAgentIcon />
         </RailButton>
         <div className={`app-rail__more-wrap app-rail__more-wrap--top${moreOpen ? ' is-open' : ''}`}>
           <Tooltip text={moreOpen ? '收起更多功能' : '展开更多功能'} placement="right">
@@ -195,6 +200,10 @@ function ConversationIcon() {
 
 function ClockIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.2 2" /></svg>
+}
+
+function DedicatedAgentIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3" /><path d="M12 8V4" /><circle cx="12" cy="3.5" r="1" /><path d="M9 14h.01M15 14h.01" /><path d="M2 13v3M22 13v3" /></svg>
 }
 
 function SkillsIcon() {

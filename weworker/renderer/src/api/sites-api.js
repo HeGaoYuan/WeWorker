@@ -341,6 +341,25 @@ export async function fetchPublicSkillDirectory(skillName) {
   return data
 }
 
+export async function importPublicSkillZipPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('请选择 ZIP 文件')
+  try {
+    const res = await backendFetch(`${API}/skills/import-zip-path`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    })
+    const data = await readJsonResponse(res)
+    if (!res.ok) throw new Error(data.detail || '导入 Skill ZIP 失败')
+    return data
+  } catch (error) {
+    if (error instanceof TypeError || error?.message === 'Failed to fetch') {
+      throw new Error('后端服务未重启，请重启 WeWorker 后再导入')
+    }
+    throw error
+  }
+}
+
 export async function fetchCustomSkillDirectory(siteId, skillId) {
   const res = await backendFetch(`${API}/sites/${encodeURIComponent(siteId)}/custom-skills/${encodeURIComponent(skillId)}/directory`)
   const data = await readJsonResponse(res)

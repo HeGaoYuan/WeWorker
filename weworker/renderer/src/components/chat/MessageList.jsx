@@ -183,7 +183,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageIds: ids }),
       })
-      useWorksStore.getState().selectWork(workId)
+      useWorksStore.getState().refreshWorkMessages(workId)
     } catch (e) { console.error('Delete failed:', e) }
   }
 
@@ -195,7 +195,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageIds: [msg.id] }),
       })
-      useWorksStore.getState().selectWork(workId)
+      useWorksStore.getState().refreshWorkMessages(workId)
     } catch (e) { console.error('Delete failed:', e) }
   }
 

@@ -20,7 +20,15 @@ import { applyTerminalEventToMessages } from '../../utils/terminal-chat-output.j
 import { buildTodoWriteContextPrompt, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/user-choice.js'
 
-export default function ChatView({ workId }) {
+/**
+ * @param {object} props
+ * @param {string} props.workId
+ * @param {boolean} [props.embedded] Render inside another page (e.g. 专属 Agent) without
+ *   making this work the active main chat.
+ * @param {(fill: (text: string) => void) => React.ReactNode} [props.renderEmpty] Empty-state override.
+ * @param {() => void} [props.onTurnFinished] Called after each send completes.
+ */
+export default function ChatView({ workId, embedded = false, renderEmpty, onTurnFinished }) {
   const messages = useWorksStore((s) => s.messages[workId] ?? [])
   const contextSnapshot = useWorksStore((s) => s.contextSnapshots[workId] ?? null)
   const contextCompactionStatus = useWorksStore((s) => s.contextCompactionStatuses[workId] ?? null)
@@ -383,6 +391,7 @@ export default function ChatView({ workId }) {
         delete controllers[workId]
         return { streamingWorkIds: next, abortControllers: controllers }
       })
+      onTurnFinished?.()
     }
   }
 
@@ -499,6 +508,10 @@ export default function ChatView({ workId }) {
   useEffect(() => {
     const init = async () => {
       setMessageSelectMode(false)
+      if (embedded) {
+        await useWorksStore.getState().refreshWorkMessages(workId)
+        return
+      }
       await selectWork(workId)
       const pending = useWorksStore.getState().pendingMessage
       const pendingAttachments = useWorksStore.getState().pendingAttachments || []
@@ -554,7 +567,8 @@ export default function ChatView({ workId }) {
   }
   // Only show streaming UI (cursor, disabled input) if THIS workId is the one streaming
   const isStreamingHere = streaming
-  const toolbarContext = !isHealthCheck && messages.length > 0 && toolbarContextTarget
+  // Embedded chats (专属 Agent) do not own the main workspace toolbar.
+  const toolbarContext = !embedded && !isHealthCheck && messages.length > 0 && toolbarContextTarget
     ? createPortal(
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, height: '100%', padding: '0 10px', boxSizing: 'border-box', fontSize: 11, color: 'var(--text-muted)' }}>
           <span style={{ flexShrink: 0, opacity: 0.7 }}>ID: {shortId}</span>
@@ -588,7 +602,7 @@ export default function ChatView({ workId }) {
         null
       ) : null}
 
-      {messages.length === 0 && !contextCompactionStatus ? <WelcomeScreen onFillInput={handleFillInput} /> : <MessageList messages={messages} streaming={isStreamingHere} compactionStatus={contextCompactionStatus} workId={workId} onChoice={handleChoice} onSelectModeChange={setMessageSelectMode} onShellCommand={handleShellCommand} />}
+      {messages.length === 0 && !contextCompactionStatus ? (renderEmpty ? renderEmpty(handleFillInput) : <WelcomeScreen onFillInput={handleFillInput} />) : <MessageList messages={messages} streaming={isStreamingHere} compactionStatus={contextCompactionStatus} workId={workId} onChoice={handleChoice} onSelectModeChange={setMessageSelectMode} onShellCommand={handleShellCommand} />}
 
       {/* Health check panel — between messages and input */}
       {isHealthCheck && messages.length > 0 && (
