@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-15：对话消息区新增历史消息快捷导航条；仅按用户提问生成窄标记，点击可平滑跳转，悬停或键盘聚焦显示提问预览，滚动时同步当前提问高亮。复用现有消息数据与滚动容器，未增加后端存储或依赖；导航工具 4 项单测、Renderer 生产构建与 `git diff --check` 通过。
+
 - 2026-10-13：将 `codex/workspace-model-backup-20261009` 合并到本地 `dev-1.1.0`，保留 1.1.0 版本、Adapter 迁移与供应商兼容修复，并整合工作区、模型配置和机器人接入功能。冲突整合保留独立接口/目录 URL、完整 URL、认证方式与刷新后的模型选择；修复供应商匹配遇到空地址时报错，补充独立目录优先级回归，并更新新增自定义配置保持空白的旧测试。验证：Backend 93 个测试文件、738 项通过（2 文件/4 项跳过），Renderer 244 项、Electron 36 项、构建/Profile/生命周期聚焦 29 项、网站探索agent 配置及进程管理 34 项通过；Backend 类型检查、前后端构建、公开配置与 package/lockfile 一致性检查通过。未进行真实账号联网验证或安装包构建，未推送远端。
 
 - 2026-10-13：客户端版本号从 `1.0.0` 提升到 `1.1.0`，为 `v1.1.0` 发版做准备。同步 `weworker`、`renderer`、`backend-ts`、`webcli`、`officialWeb`、`metrics-server` 六个 `package.json`、`extension/manifest.json` 与官网 `officialWeb/src/lib/downloadConfig.js` 的 `APP_VERSION`，以及五个 lockfile 的自身版本字段；`weworker/changelog.json` 与根 `CHANGELOG.md` 新增 1.1.0 条目，`items` 暂留空，用户可见条目待补写。已通过 `node scripts/check-public-config.mjs` 一致性校验、`scripts/__tests__/check-public-config.test.mjs`（1 项）与 `weworker/scripts/__tests__/build-profile-overlay.test.cjs`（5 项），并另行校验改动 JSON 全部可解析、`weworker` 与 `renderer` 版本一致（`prepare-build.cjs` 前置条件）。未执行 Renderer 构建、安装包构建，也未创建或推送 `v1.1.0` Tag。
