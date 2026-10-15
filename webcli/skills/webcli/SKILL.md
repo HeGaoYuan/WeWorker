@@ -1,6 +1,6 @@
 ---
 name: webcli
-version: 1.0.0
+version: 1.0.1
 description: "Browser automation via WebCLI. Use when the user wants to operate websites (search, click, fill forms, read content, take screenshots) or have Chrome complete web tasks automatically. Covers: open browser, call adapter tools, capture screenshots, and discover a site's tools. Ships adapters for e-commerce and marketplaces (JD, 1688, Goofish), social and content sites (Bilibili, Zhihu, Weibo, Douyin, Xiaohongshu, Tieba, Douban), news and reference (36Kr, Hacker News, Wikipedia, arXiv), email (163, QQ, Gmail), travel and ticketing (12306, Ctrip), job boards (51job, Zhipin), developer sites (GitHub, Gitee, V2EX, Juejin), reviews and finance (Dianping, SMZDM, Xueqiu), and more."
 allowed-tools: Bash(webcli call *), Bash(npm view *)
 ---
@@ -29,15 +29,27 @@ echo "current=$CURRENT latest=$LATEST"
 
 ## The only manual step for the user: load the Chrome extension
 
-Loading the extension is a one-time manual Chrome action the agent cannot do. When a tool call returns `Extension not connected` / `Chrome扩展未连接`, the extension is not loaded yet — guide the user through it:
+The Chrome extension ships inside the npm package — no separate download. Loading it is a one-time manual Chrome action the agent cannot perform.
+
+**Detect**: any tool call returning `Extension not connected` / `Chrome扩展未连接` means the extension is not loaded (or the target site's page is not open).
+
+**Get the exact directory to load this machine:**
+
+```bash
+webcli extension-path          # prints the bundled extension directory
+```
+
+**Guide the user through it:**
 
 1. Open Chrome and go to `chrome://extensions/`.
 2. Turn on **Developer mode** (top-right).
-3. Click **Load unpacked** and select the extension directory shown by WeWorker.
+3. Click **Load unpacked** and select the directory printed by `webcli extension-path`.
 4. Confirm the **WeWorker Browser Adapter** extension appears and is enabled.
 5. Open or refresh the target website and wait at least 5 seconds.
 
 The extension reconnects to the Bridge automatically; no service restart needed. After loading, re-run the failed `webcli call` to verify.
+
+> Desktop-app installs resolve the same way: `webcli extension-path` points at the copy bundled with WeWorker, so this section applies to both install paths.
 
 ## Core commands
 
