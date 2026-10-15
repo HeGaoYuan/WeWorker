@@ -217,7 +217,7 @@ function BackgroundSettingsGroup() {
     <div className="settings-group">
       <SettingRow
         title="后台运行"
-        description="专属 Agent 由 WeWorker 在本机提供服务，WeWorker 退出后它们会停止回复企业微信消息"
+        description="专属 Agent 由 WeWorker 在本机提供服务，WeWorker 退出后它们会停止回复企业微信和微信消息"
         stacked
       >
         <div className="settings-update-settings">

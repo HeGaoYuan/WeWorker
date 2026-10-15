@@ -49,6 +49,14 @@ export function pollWecomQr(sessionId) {
   return postJson('/dedicated-agents/wecom-qr/poll', { session_id: sessionId })
 }
 
+export function startWeixinQr() {
+  return postJson('/dedicated-agents/weixin-qr/start', {})
+}
+
+export function pollWeixinQr(sessionId) {
+  return postJson('/dedicated-agents/weixin-qr/poll', { session_id: sessionId })
+}
+
 export async function fetchAgentSkills() {
   const data = await readJsonResponse(await backendFetch('/dedicated-agents/skills'))
   return Array.isArray(data.skills) ? data.skills : []

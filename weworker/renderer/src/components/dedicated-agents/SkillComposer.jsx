@@ -301,7 +301,7 @@ export default function SkillComposer({ draft, onChange, site }) {
       )}
 
       <div style={{ ...fieldStyle, marginTop: 20 }}>
-        <label style={labelStyle} htmlFor="agent-examples">示例问题（每行一个，会在企业微信里提示给你）</label>
+        <label style={labelStyle} htmlFor="agent-examples">示例问题（每行一个，会在聊天里提示给你）</label>
         <Input.TextArea id="agent-examples" value={draft.examplesText} onChange={(event) => onChange({ examplesText: event.target.value })} placeholder={`例如：请帮我处理「${site?.name || '这个网站'}」上的一项工作`} autoSize={{ minRows: 2, maxRows: 6 }} />
       </div>
     </div>

@@ -136,7 +136,7 @@ import { syncWecomChannel } from './channels/sync-wecom-channel.js'
 import { FeishuChannel } from './channels/feishu-channel.js'
 import { registerDedicatedAgentRoutes } from './dedicated-agents/routes.js'
 import { buildDesktopAgentTurnOptions, startAllDedicatedAgents } from './dedicated-agents/agent-channel.js'
-import { findAgentByBotId, findAgentByWorkId, listAgentWorkIds } from './dedicated-agents/agent-store.js'
+import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId, listAgentWorkIds } from './dedicated-agents/agent-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -883,6 +883,12 @@ function assertWecomBotNotUsedByAgent(botId: string | undefined): void {
   if (agent) throw new Error(`该企业微信机器人已被专属 Agent「${agent.name}」使用，一个机器人只能连接一个 Agent`)
 }
 
+// Same rule for WeChat bots, identified by their login token.
+function assertWeixinTokenNotUsedByAgent(token: string | undefined): void {
+  const agent = token ? findAgentByWeixinToken(token) : null
+  if (agent) throw new Error(`该微信机器人已被专属 Agent「${agent.name}」使用，一个机器人只能连接一个 Agent`)
+}
+
 async function syncChannelSettings(previous: Settings, updated: Settings) {
   await syncAppBotChannel('qq', channelManager, previous.channels.qq, updated.channels.qq,
     config => new QQChannel(config), () => channelLog.error('QQ channel start failed'))
@@ -902,9 +908,10 @@ async function mutateChannelProfile(type: ChannelType, action: string, id: unkno
       input = { ...input, base_url: assertAllowedWeixinBaseUrl(input.base_url, ALLOWED_WEIXIN_BASE_URLS) }
     }
     const change = changeChannelConfiguration(previous, type, action, id, input)
-    if (type === 'wecom' && (action === 'save' || action === 'activate')) {
+    if (action === 'save' || action === 'activate') {
       const entry = change.updates.channel_configurations[change.id]
-      assertWecomBotNotUsedByAgent(entry ? (entry.config as { bot_id?: string }).bot_id : '')
+      if (type === 'wecom') assertWecomBotNotUsedByAgent(entry ? (entry.config as { bot_id?: string }).bot_id : '')
+      if (type === 'weixin') assertWeixinTokenNotUsedByAgent(entry ? (entry.config as { token?: string }).token : '')
     }
     const updated = updateSettings(change.updates)
     await syncChannelSettings(previous, updated)
@@ -978,6 +985,11 @@ app.post('/settings/channels', async (req, res) => {
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
+  }
+  try {
+    assertWeixinTokenNotUsedByAgent(nextWeixinToken)
+  } catch (e) {
+    return res.status(409).json({ detail: e instanceof Error ? e.message : String(e) })
   }
 
   const updated = updateSettings({
@@ -1120,6 +1132,7 @@ app.post('/settings/weixin/qr-poll', async (req, res) => {
       }
       if (run.profileId) await mutateChannelProfile('weixin', 'save', run.profileId, config)
       else await queueChannelMutation('settings', async () => {
+        assertWeixinTokenNotUsedByAgent(config.token)
         const previous = getSettings()
         const updated = updateSettings({ channels: { ...previous.channels, weixin: { ...previous.channels.weixin, ...config, owner_permission_level: normalizeOwnerPermissionLevel(config.owner_permission_level) } } })
         await syncChannelSettings(previous, updated)

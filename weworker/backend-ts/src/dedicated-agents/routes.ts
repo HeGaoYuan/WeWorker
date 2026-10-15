@@ -19,11 +19,14 @@ import {
   resetPairing,
   toAgentView,
   updateAgent,
+  type AgentBotInput,
   type DedicatedAgentRecord,
+  type ReservedBots,
 } from './agent-store.js'
 import { getAgentChannelStatus, restartAgentChannel, startAgentChannel, stopAgentChannel } from './agent-channel.js'
 import { removeAgentRuntime } from './agent-runtime.js'
 import { createWecomQrSessions } from './wecom-qr.js'
+import { createWeixinQrSessions } from './weixin-qr.js'
 import {
   generateAgentSkill,
   reviseAgentSkill,
@@ -49,6 +52,7 @@ const log = createLogger('dedicated-agent-api')
 
 export interface DedicatedAgentRouteDeps {
   qrSessions?: ReturnType<typeof createWecomQrSessions>
+  weixinQrSessions?: ReturnType<typeof createWeixinQrSessions>
   skillLocations?: () => SkillLocations
 }
 
@@ -62,18 +66,21 @@ function sendError(res: express.Response, error: unknown): void {
   res.status(500).json({ detail: message })
 }
 
-/** WeCom bots saved for the main channel (active or not) cannot also serve an agent. */
-function reservedBotIds(): string[] {
+/** Bots saved for the main channels (active or not) cannot also serve an agent. */
+function reservedBots(): ReservedBots {
   const settings = getSettings()
-  const ids = new Set<string>()
-  const active = settings.channels.wecom.bot_id?.trim()
-  if (active) ids.add(active)
+  const botIds = new Set<string>()
+  const tokens = new Set<string>()
+  const wecomActive = settings.channels.wecom.bot_id?.trim()
+  if (wecomActive) botIds.add(wecomActive)
+  const weixinActive = settings.channels.weixin.token?.trim()
+  if (weixinActive) tokens.add(weixinActive)
   for (const entry of Object.values(settings.channel_configurations ?? {})) {
-    if (entry.type !== 'wecom') continue
-    const botId = String((entry.config as { bot_id?: string }).bot_id ?? '').trim()
-    if (botId) ids.add(botId)
+    const config = entry.config as { bot_id?: string; token?: string }
+    if (entry.type === 'wecom' && String(config.bot_id ?? '').trim()) botIds.add(String(config.bot_id).trim())
+    if (entry.type === 'weixin' && String(config.token ?? '').trim()) tokens.add(String(config.token).trim())
   }
-  return [...ids]
+  return { reservedBotIds: [...botIds], reservedWeixinTokens: [...tokens] }
 }
 
 function viewWithStatus(agent: DedicatedAgentRecord) {
@@ -114,20 +121,38 @@ function conversationView(work: works.Work) {
 
 export function registerDedicatedAgentRoutes(app: express.Express, deps: DedicatedAgentRouteDeps = {}): void {
   const qrSessions = deps.qrSessions ?? createWecomQrSessions()
+  const weixinQrSessions = deps.weixinQrSessions ?? createWeixinQrSessions()
   const locations = deps.skillLocations ?? (() => ({}))
 
   const assertSkillExists = (name: string) => {
     if (name && !locateSkill(name, locations())) throw new DedicatedAgentError(`Skill「${name}」不存在或已停用`)
   }
-  const resolveBot = (body: Record<string, unknown>) => {
+  /**
+   * Bot credentials from a scan session (企业微信 / 微信) or, for WeCom, manual
+   * BotID + Secret. Scanned secrets never pass through the renderer.
+   */
+  const resolveBot = (body: Record<string, unknown>): { bot: AgentBotInput; consume: () => void } | null => {
     const sessionId = typeof body.qr_session_id === 'string' ? body.qr_session_id : ''
+    if (body.channel === 'weixin') {
+      if (!sessionId) throw new DedicatedAgentError('请先用微信扫码绑定机器人')
+      const creds = weixinQrSessions.peek(sessionId)
+      if (!creds) throw new DedicatedAgentError('扫码结果已失效，请重新扫码', 410)
+      return {
+        bot: { channel: 'weixin', bot_id: creds.botId, token: creds.token, base_url: creds.baseUrl },
+        consume: () => { weixinQrSessions.consume(sessionId) },
+      }
+    }
+    if (body.channel !== undefined && body.channel !== 'wecom') throw new DedicatedAgentError('不支持的机器人类型')
     if (sessionId) {
       const creds = qrSessions.peek(sessionId)
       if (!creds) throw new DedicatedAgentError('扫码结果已失效，请重新扫码', 410)
-      return { bot_id: creds.botId, secret: creds.secret, sessionId }
+      return {
+        bot: { channel: 'wecom', bot_id: creds.botId, secret: creds.secret },
+        consume: () => { qrSessions.consume(sessionId) },
+      }
     }
     if (body.bot_id !== undefined || body.secret !== undefined) {
-      return { bot_id: String(body.bot_id ?? ''), secret: String(body.secret ?? ''), sessionId: '' }
+      return { bot: { channel: 'wecom', bot_id: String(body.bot_id ?? ''), secret: String(body.secret ?? '') }, consume: () => {} }
     }
     return null
   }
@@ -154,6 +179,31 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
     }
     try {
       res.json(await qrSessions.poll(sessionId))
+    } catch (error) {
+      // Transient network errors: let the client keep polling.
+      res.json({ status: 'waiting', warning: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  // ── WeChat QR: log in an iLink bot by scanning ──
+  app.post('/dedicated-agents/weixin-qr/start', async (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    try {
+      res.json(await weixinQrSessions.start())
+    } catch (error) {
+      res.status(502).json({ detail: error instanceof Error ? error.message : '获取微信二维码失败' })
+    }
+  })
+
+  app.post('/dedicated-agents/weixin-qr/poll', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    const sessionId = typeof req.body?.session_id === 'string' ? req.body.session_id : ''
+    if (!sessionId) {
+      res.status(400).json({ detail: 'session_id required' })
+      return
+    }
+    try {
+      res.json(await weixinQrSessions.poll(sessionId))
     } catch (error) {
       // Transient network errors: let the client keep polling.
       res.json({ status: 'waiting', warning: error instanceof Error ? error.message : String(error) })
@@ -319,18 +369,17 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       const adapter = requireAdapter(body.site_id)
       const skillName = normalizeSkillName(body.skill_name)
       assertSkillExists(skillName)
-      const bot = resolveBot(body)
-      if (!bot) throw new DedicatedAgentError('请先扫码绑定企业微信机器人')
+      const resolved = resolveBot(body)
+      if (!resolved) throw new DedicatedAgentError('请先扫码绑定机器人')
       const agent = createAgent({
         name: String(body.name ?? ''),
         description: String(body.description ?? ''),
         site_id: adapter.id,
         skill_name: skillName,
         examples: Array.isArray(body.examples) ? body.examples as string[] : [],
-        bot_id: bot.bot_id,
-        secret: bot.secret,
-      }, { reservedBotIds: reservedBotIds() })
-      if (bot.sessionId) qrSessions.consume(bot.sessionId)
+        ...resolved.bot,
+      }, reservedBots())
+      resolved.consume()
       await startAgentChannel(agent)
       res.json({ agent: viewWithStatus(agent) })
     } catch (error) {
@@ -343,7 +392,7 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       const body = (req.body ?? {}) as Record<string, unknown>
       if (body.site_id !== undefined) requireAdapter(body.site_id)
       if (body.skill_name !== undefined) assertSkillExists(normalizeSkillName(body.skill_name))
-      const bot = resolveBot(body)
+      const resolved = resolveBot(body)
       const agent = updateAgent(req.params.id, {
         name: body.name as string | undefined,
         description: body.description as string | undefined,
@@ -351,10 +400,10 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
         skill_name: body.skill_name as string | undefined,
         examples: Array.isArray(body.examples) ? body.examples as string[] : undefined,
         enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
-        bot: bot ? { bot_id: bot.bot_id, secret: bot.secret } : undefined,
-      }, { reservedBotIds: reservedBotIds() })
-      if (bot?.sessionId) qrSessions.consume(bot.sessionId)
-      if (bot || typeof body.enabled === 'boolean') await restartAgentChannel(agent.id)
+        bot: resolved?.bot,
+      }, reservedBots())
+      resolved?.consume()
+      if (resolved || typeof body.enabled === 'boolean') await restartAgentChannel(agent.id)
       res.json({ agent: viewWithStatus(agent) })
     } catch (error) {
       sendError(res, error)

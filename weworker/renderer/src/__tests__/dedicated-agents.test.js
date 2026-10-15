@@ -2,6 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SKILL_MODES,
+  agentBotId,
+  agentChannelOf,
+  boundBotPayload,
+  channelLabel,
   agentStatusPresentation,
   compactSiteCapabilities,
   conversationPresentation,
@@ -104,4 +108,17 @@ test('conversation titles show where they came from', () => {
   assert.equal(formatRelativeTime('2026-01-01T23:30:00.000Z', now), '30 分钟前')
   assert.equal(formatRelativeTime('2026-01-01T20:00:00.000Z', now), '4 小时前')
   assert.equal(formatRelativeTime('invalid', now), '')
+})
+
+test('agents can be served by WeCom or WeChat bots', () => {
+  assert.equal(agentChannelOf({}), 'wecom')
+  assert.equal(agentChannelOf({ channel: 'weixin' }), 'weixin')
+  assert.equal(channelLabel('weixin'), '微信')
+  assert.equal(channelLabel('wecom', { short: true }), '企微')
+  assert.equal(channelLabel('unknown'), '企业微信')
+  assert.equal(agentBotId({ channel: 'weixin', weixin: { bot_id: 'fixture@im.bot' }, wecom: { bot_id: '' } }), 'fixture@im.bot')
+  assert.equal(agentBotId({ wecom: { bot_id: 'placeholder-bot' } }), 'placeholder-bot')
+  assert.deepEqual(boundBotPayload({ channel: 'weixin', qr_session_id: 's1', bot_id: 'x' }), { channel: 'weixin', qr_session_id: 's1' })
+  assert.deepEqual(boundBotPayload({ channel: 'wecom', qr_session_id: 's2' }), { channel: 'wecom', qr_session_id: 's2' })
+  assert.deepEqual(boundBotPayload({ channel: 'wecom', bot_id: 'placeholder-bot', secret: 'placeholder-secret' }), { channel: 'wecom', bot_id: 'placeholder-bot', secret: 'placeholder-secret' })
 })

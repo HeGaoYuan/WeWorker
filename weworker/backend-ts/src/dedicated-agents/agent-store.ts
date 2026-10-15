@@ -2,14 +2,24 @@
  * Dedicated agent records.
  *
  * Stored in ~/.weworker/dedicated-agents.json (override: WEWORKER_DEDICATED_AGENTS_FILE).
- * The WeCom bot secret is SM4-encrypted with the settings master key and never
- * leaves the backend; API views only expose `has_secret`.
+ * Each agent is served by one bot: a WeCom (企业微信) smart bot or a WeChat
+ * (微信) iLink bot. Bot secrets/tokens are SM4-encrypted with the settings
+ * master key and never leave the backend; API views only expose `has_secret`
+ * / `has_token`.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomInt, randomUUID } from 'node:crypto'
 import { getConfigDirectory } from '../config.js'
+import { assertAllowedWeixinBaseUrl } from '../channel-egress.js'
 import { decryptSecret, encryptSecret, isSecretStoreReady } from '../secret-store.js'
+
+export type AgentChannelType = 'wecom' | 'weixin'
+
+export const AGENT_CHANNEL_LABELS: Record<AgentChannelType, string> = {
+  wecom: '企业微信',
+  weixin: '微信',
+}
 
 export interface DedicatedAgentRecord {
   id: string
@@ -21,8 +31,11 @@ export interface DedicatedAgentRecord {
   skill_name: string
   examples: string[]
   enabled: boolean
+  /** Which IM serves this agent. Records written before WeChat support are WeCom. */
+  channel?: AgentChannelType
   wecom: { bot_id: string; secret_enc: string }
-  /** WeCom userid of the person who paired the bot. Only this user is served. */
+  weixin?: { bot_id: string; token_enc: string; base_url: string }
+  /** IM user id of the person who paired the bot. Only this user is served. */
   owner_user_id: string
   /** One-time code the owner sends to the bot to pair; '' after pairing. */
   pairing_code: string
@@ -32,14 +45,24 @@ export interface DedicatedAgentRecord {
   updated_at: string
 }
 
-export interface DedicatedAgentInput {
+/** Bot credentials for either channel. `channel` defaults to WeCom. */
+export interface AgentBotInput {
+  channel?: AgentChannelType
+  bot_id: string
+  /** WeCom long-connection secret. */
+  secret?: string
+  /** WeChat iLink bot token. */
+  token?: string
+  /** WeChat iLink API host returned by the QR login. */
+  base_url?: string
+}
+
+export interface DedicatedAgentInput extends AgentBotInput {
   name: string
   description?: string
   site_id: string
   skill_name?: string
   examples?: string[]
-  bot_id: string
-  secret: string
 }
 
 export interface DedicatedAgentPatch {
@@ -49,7 +72,13 @@ export interface DedicatedAgentPatch {
   skill_name?: string
   examples?: string[]
   enabled?: boolean
-  bot?: { bot_id: string; secret: string }
+  bot?: AgentBotInput
+}
+
+/** Bots already used outside dedicated agents (the main 设置 → 通道). */
+export interface ReservedBots {
+  reservedBotIds?: string[]
+  reservedWeixinTokens?: string[]
 }
 
 interface StoreFile {
@@ -70,17 +99,34 @@ const EXAMPLE_MAX = 120
 const EXAMPLES_MAX = 6
 const SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const BOT_ID_PATTERN = /^[A-Za-z0-9_-]{4,128}$/
+const WEIXIN_BOT_ID_PATTERN = /^[A-Za-z0-9@._:-]{1,128}$/
+const WEIXIN_TOKEN_MAX = 4096
 
 export function getDedicatedAgentsFile(): string {
   return process.env.WEWORKER_DEDICATED_AGENTS_FILE
     || path.join(getConfigDirectory(), 'dedicated-agents.json')
 }
 
+export function agentChannel(agent: Pick<DedicatedAgentRecord, 'channel'>): AgentChannelType {
+  return agent.channel === 'weixin' ? 'weixin' : 'wecom'
+}
+
+function normalizeRecord(agent: DedicatedAgentRecord): DedicatedAgentRecord {
+  return {
+    ...agent,
+    channel: agentChannel(agent),
+    wecom: agent.wecom ?? { bot_id: '', secret_enc: '' },
+  }
+}
+
 function readFile(): StoreFile {
   try {
     const parsed = JSON.parse(fs.readFileSync(getDedicatedAgentsFile(), 'utf8')) as Partial<StoreFile>
     if (parsed && Array.isArray(parsed.agents)) {
-      return { version: 1, agents: parsed.agents.filter((agent) => agent && typeof agent.id === 'string') }
+      return {
+        version: 1,
+        agents: parsed.agents.filter((agent) => agent && typeof agent.id === 'string').map(normalizeRecord),
+      }
     }
   } catch {
     // Missing or unreadable file: start empty.
@@ -121,12 +167,32 @@ export function normalizeSkillName(value: unknown): string {
   return name
 }
 
-function validateBot(botId: unknown, secret: unknown): { bot_id: string; secret: string } {
-  const bot_id = String(botId ?? '').trim()
-  const plain = String(secret ?? '').trim()
+type ValidBot =
+  | { channel: 'wecom'; bot_id: string; secret: string }
+  | { channel: 'weixin'; bot_id: string; token: string; base_url: string }
+
+function validateBot(input: AgentBotInput): ValidBot {
+  if (input.channel !== undefined && input.channel !== 'wecom' && input.channel !== 'weixin') {
+    throw new DedicatedAgentError('不支持的机器人类型')
+  }
+  if (input.channel === 'weixin') {
+    const bot_id = String(input.bot_id ?? '').trim()
+    const token = String(input.token ?? '').trim()
+    if (bot_id && !WEIXIN_BOT_ID_PATTERN.test(bot_id)) throw new DedicatedAgentError('微信机器人 ID 格式不正确')
+    if (!token || token.length > WEIXIN_TOKEN_MAX) throw new DedicatedAgentError('微信机器人凭证无效，请重新扫码')
+    let base_url: string
+    try {
+      base_url = assertAllowedWeixinBaseUrl(input.base_url)
+    } catch {
+      throw new DedicatedAgentError('微信机器人服务地址不在允许列表中')
+    }
+    return { channel: 'weixin', bot_id, token, base_url }
+  }
+  const bot_id = String(input.bot_id ?? '').trim()
+  const plain = String(input.secret ?? '').trim()
   if (!BOT_ID_PATTERN.test(bot_id)) throw new DedicatedAgentError('机器人 BotID 格式不正确')
   if (!plain || plain.length > 512) throw new DedicatedAgentError('机器人 Secret 不能为空')
-  return { bot_id, secret: plain }
+  return { channel: 'wecom', bot_id, secret: plain }
 }
 
 function encrypt(secret: string): string {
@@ -136,14 +202,52 @@ function encrypt(secret: string): string {
   return encryptSecret(secret)
 }
 
-function assertBotUnused(agents: DedicatedAgentRecord[], botId: string, exceptId: string | null, reservedBotIds: string[]): void {
-  if (reservedBotIds.includes(botId)) {
-    throw new DedicatedAgentError('该机器人已在「设置 → 通道 → 企业微信」中使用。一个机器人只能连接一个 Agent，请换一个机器人', 409)
+function decryptOrEmpty(value: string | undefined): string {
+  if (!value) return ''
+  try {
+    return decryptSecret(value)
+  } catch {
+    return ''
   }
-  const owner = agents.find((agent) => agent.id !== exceptId && agent.wecom.bot_id === botId)
+}
+
+function assertBotUnused(agents: DedicatedAgentRecord[], bot: ValidBot, exceptId: string | null, reserved: ReservedBots): void {
+  const others = agents.filter((agent) => agent.id !== exceptId && agentChannel(agent) === bot.channel)
+  if (bot.channel === 'wecom') {
+    if ((reserved.reservedBotIds ?? []).includes(bot.bot_id)) {
+      throw new DedicatedAgentError('该机器人已在「设置 → 通道 → 企业微信」中使用。一个机器人只能连接一个 Agent，请换一个机器人', 409)
+    }
+    const owner = others.find((agent) => agent.wecom.bot_id === bot.bot_id)
+    if (owner) throw new DedicatedAgentError(`该机器人已被专属 Agent「${owner.name}」使用。一个机器人只能连接一个 Agent`, 409)
+    return
+  }
+  if ((reserved.reservedWeixinTokens ?? []).includes(bot.token)) {
+    throw new DedicatedAgentError('该微信机器人已在「设置 → 通道 → 微信」中使用。一个机器人只能连接一个 Agent，请换一个微信号扫码', 409)
+  }
+  const owner = others.find((agent) => (bot.bot_id && agent.weixin?.bot_id === bot.bot_id)
+    || decryptOrEmpty(agent.weixin?.token_enc) === bot.token)
   if (owner) {
-    throw new DedicatedAgentError(`该机器人已被专属 Agent「${owner.name}」使用。一个机器人只能连接一个 Agent`, 409)
+    throw new DedicatedAgentError(`这个微信号的机器人已被专属 Agent「${owner.name}」使用。一个机器人只能连接一个 Agent，请换一个微信号扫码`, 409)
   }
+}
+
+/** Store fields for a validated bot; the other channel's fields are cleared. */
+function botFields(bot: ValidBot): Pick<DedicatedAgentRecord, 'channel' | 'wecom' | 'weixin'> {
+  if (bot.channel === 'weixin') {
+    return {
+      channel: 'weixin',
+      wecom: { bot_id: '', secret_enc: '' },
+      weixin: { bot_id: bot.bot_id, token_enc: encrypt(bot.token), base_url: bot.base_url },
+    }
+  }
+  return { channel: 'wecom', wecom: { bot_id: bot.bot_id, secret_enc: encrypt(bot.secret) }, weixin: undefined }
+}
+
+/** Identity used to decide whether rebinding changed who can reach the bot. */
+function botIdentity(agent: DedicatedAgentRecord): string {
+  return agentChannel(agent) === 'weixin'
+    ? `weixin:${agent.weixin?.bot_id || decryptOrEmpty(agent.weixin?.token_enc)}`
+    : `wecom:${agent.wecom.bot_id}`
 }
 
 export function listAgents(): DedicatedAgentRecord[] {
@@ -154,24 +258,24 @@ export function getAgent(id: string): DedicatedAgentRecord | null {
   return readFile().agents.find((agent) => agent.id === id) ?? null
 }
 
-/** Plaintext secret for starting the WeCom connection. Backend use only. */
+/** Plaintext WeCom secret for starting the connection. Backend use only. */
 export function getAgentBotSecret(agent: DedicatedAgentRecord): string {
-  if (!agent.wecom.secret_enc) return ''
-  try {
-    return decryptSecret(agent.wecom.secret_enc)
-  } catch {
-    return ''
-  }
+  return decryptOrEmpty(agent.wecom?.secret_enc)
 }
 
-export function createAgent(input: DedicatedAgentInput, options: { reservedBotIds?: string[] } = {}): DedicatedAgentRecord {
+/** Plaintext WeChat token for starting the connection. Backend use only. */
+export function getAgentWeixinToken(agent: DedicatedAgentRecord): string {
+  return decryptOrEmpty(agent.weixin?.token_enc)
+}
+
+export function createAgent(input: DedicatedAgentInput, options: ReservedBots = {}): DedicatedAgentRecord {
   const name = cleanText(input.name, NAME_MAX)
   if (!name) throw new DedicatedAgentError('请填写 Agent 名称')
   const site_id = String(input.site_id ?? '').trim()
   if (!site_id) throw new DedicatedAgentError('请选择要操作的网站')
-  const bot = validateBot(input.bot_id, input.secret)
+  const bot = validateBot(input)
   const data = readFile()
-  assertBotUnused(data.agents, bot.bot_id, null, options.reservedBotIds ?? [])
+  assertBotUnused(data.agents, bot, null, options)
   const now = new Date().toISOString()
   const record: DedicatedAgentRecord = {
     id: randomUUID().replace(/-/g, '').slice(0, 12),
@@ -181,13 +285,14 @@ export function createAgent(input: DedicatedAgentInput, options: { reservedBotId
     skill_name: normalizeSkillName(input.skill_name),
     examples: cleanExamples(input.examples),
     enabled: true,
-    wecom: { bot_id: bot.bot_id, secret_enc: encrypt(bot.secret) },
+    ...botFields(bot),
     owner_user_id: '',
     pairing_code: generatePairingCode(),
     work_ids: [],
     created_at: now,
     updated_at: now,
   }
+  if (!record.weixin) delete record.weixin
   data.agents.push(record)
   writeFile(data)
   return record
@@ -203,7 +308,7 @@ function mutate(id: string, apply: (agent: DedicatedAgentRecord, all: DedicatedA
   return agent
 }
 
-export function updateAgent(id: string, patch: DedicatedAgentPatch, options: { reservedBotIds?: string[] } = {}): DedicatedAgentRecord {
+export function updateAgent(id: string, patch: DedicatedAgentPatch, options: ReservedBots = {}): DedicatedAgentRecord {
   return mutate(id, (agent, all) => {
     if (patch.name !== undefined) {
       const name = cleanText(patch.name, NAME_MAX)
@@ -220,11 +325,12 @@ export function updateAgent(id: string, patch: DedicatedAgentPatch, options: { r
     if (patch.examples !== undefined) agent.examples = cleanExamples(patch.examples)
     if (patch.enabled !== undefined) agent.enabled = patch.enabled === true
     if (patch.bot) {
-      const bot = validateBot(patch.bot.bot_id, patch.bot.secret)
-      assertBotUnused(all, bot.bot_id, agent.id, options.reservedBotIds ?? [])
-      const changedBot = bot.bot_id !== agent.wecom.bot_id
-      agent.wecom = { bot_id: bot.bot_id, secret_enc: encrypt(bot.secret) }
-      if (changedBot) {
+      const bot = validateBot(patch.bot)
+      assertBotUnused(all, bot, agent.id, options)
+      const previousIdentity = botIdentity(agent)
+      Object.assign(agent, botFields(bot))
+      if (!agent.weixin) delete agent.weixin
+      if (botIdentity(agent) !== previousIdentity) {
         // A different bot may be visible to different people: pair again.
         agent.owner_user_id = ''
         agent.pairing_code = generatePairingCode()
@@ -268,7 +374,14 @@ export function removeAgentWork(id: string, workId: string): DedicatedAgentRecor
 export function findAgentByBotId(botId: string): DedicatedAgentRecord | null {
   const id = String(botId ?? '').trim()
   if (!id) return null
-  return readFile().agents.find((agent) => agent.wecom.bot_id === id) ?? null
+  return readFile().agents.find((agent) => agentChannel(agent) === 'wecom' && agent.wecom.bot_id === id) ?? null
+}
+
+/** The agent bound to a WeChat bot token, so main channel settings cannot reuse it. */
+export function findAgentByWeixinToken(token: string): DedicatedAgentRecord | null {
+  const value = String(token ?? '').trim()
+  if (!value) return null
+  return readFile().agents.find((agent) => agentChannel(agent) === 'weixin' && getAgentWeixinToken(agent) === value) ?? null
 }
 
 export function findAgentByWorkId(workId: string): DedicatedAgentRecord | null {
@@ -297,7 +410,9 @@ export interface DedicatedAgentView {
   skill_name: string
   examples: string[]
   enabled: boolean
+  channel: AgentChannelType
   wecom: { bot_id: string; has_secret: boolean }
+  weixin: { bot_id: string; has_token: boolean }
   paired: boolean
   owner_user_id: string
   pairing_code: string
@@ -315,7 +430,9 @@ export function toAgentView(agent: DedicatedAgentRecord): DedicatedAgentView {
     skill_name: agent.skill_name,
     examples: [...agent.examples],
     enabled: agent.enabled,
-    wecom: { bot_id: agent.wecom.bot_id, has_secret: !!agent.wecom.secret_enc },
+    channel: agentChannel(agent),
+    wecom: { bot_id: agent.wecom?.bot_id ?? '', has_secret: !!agent.wecom?.secret_enc },
+    weixin: { bot_id: agent.weixin?.bot_id ?? '', has_token: !!agent.weixin?.token_enc },
     paired: !!agent.owner_user_id,
     owner_user_id: agent.owner_user_id,
     pairing_code: agent.owner_user_id ? '' : agent.pairing_code,

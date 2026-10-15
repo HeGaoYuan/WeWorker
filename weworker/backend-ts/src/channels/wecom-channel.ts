@@ -23,7 +23,8 @@ import { streamChat } from '../agent.js'
 import { resolveZcfPrefs } from '../zcf-sync.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
 import type { ChannelPermissionMode } from './channel-permissions.js'
-import type { MemoryScope } from '../memory/memory-types.js'
+import { parseChannelCommand } from './channel-profile.js'
+import type { ChannelAccessDecision, ChannelProfile, ChannelProfileChatOptions } from './channel-profile.js'
 import { resolveToolDisplayName } from '../tools.js'
 import { getSettings } from '../config.js'
 import { generateTitle, generateTitleWithLLM } from '../title-utils.js'
@@ -50,31 +51,7 @@ function stripAtMention(content: string): string {
   return content.replace(/@\S+\s?/g, '').trim()
 }
 
-export type ChannelCommand = '/new' | '/stop' | '/id' | '/myid' | '/help'
-
-const COMMAND_ALIASES: Record<string, ChannelCommand> = {
-  '/new': '/new', '/reset': '/new', '/clear': '/new', '新对话': '/new', '/新对话': '/new', '新建对话': '/new',
-  '/stop': '/stop', '停止': '/stop', '/停止': '/stop',
-  '/id': '/id',
-  '/myid': '/myid',
-  '/help': '/help', '帮助': '/help', '/帮助': '/help',
-}
-
-/**
- * Recognize channel commands tolerantly: full-width slash, zero-width or
- * non-breaking spaces and trailing punctuation from IM input methods.
- */
-export function parseChannelCommand(text: string): ChannelCommand | null {
-  const normalized = String(text ?? '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/\u00A0/g, ' ')
-    .replace(/[／⁄∕]/g, '/')
-    .trim()
-    .replace(/[。.!！?？]+$/u, '')
-    .trim()
-    .toLowerCase()
-  return COMMAND_ALIASES[normalized] ?? null
-}
+export { parseChannelCommand, type ChannelCommand } from './channel-profile.js'
 
 export interface WecomChannelConfig {
   enabled: boolean
@@ -82,39 +59,10 @@ export interface WecomChannelConfig {
   secret: string
 }
 
-export type WecomAccessDecision =
-  | { kind: 'allow'; mode: ChannelPermissionMode }
-  | { kind: 'reply'; text: string }
-
-type StreamChatOptions = NonNullable<Parameters<typeof streamChat>[3]>
-
-/** Extra per-turn agent options a profile may contribute. */
-export type WecomProfileChatOptions = Pick<
-  StreamChatOptions,
-  'isolatedClaudeConfigDir' | 'appendSystemPrompt' | 'extraToolGuard' | 'extraDisallowedTools'
->
-
-/**
- * A profile decides who a bot serves and which agent answers.
- * The default profile keeps the original single-bot behavior; dedicated
- * agents supply their own profile so several bots can run side by side.
- */
-export interface WecomChannelProfile {
-  /** Namespace for channel sessions and notify targets. */
-  channelKey: string
-  /** Prefix shown in conversation titles, e.g. 企微 / 企微群聊. */
-  titleLabel(chatType: 'single' | 'group'): string
-  welcomeText(): string
-  /** Called before any other handling. A reply short-circuits the message. */
-  authorize(userId: string, text: string): WecomAccessDecision
-  memoryScope(userId: string): MemoryScope
-  /** May prepare per-turn resources (e.g. an isolated skills directory). */
-  chatOptions(userId: string): WecomProfileChatOptions
-  /** Reject a new turn from the same user while one is still running. */
-  serializeTurns?: boolean
-  helpText?(): string
-  onWorkCreated?(workId: string): void
-}
+/** Aliases kept for callers written against the WeCom-only profile. */
+export type WecomAccessDecision = ChannelAccessDecision
+export type WecomProfileChatOptions = ChannelProfileChatOptions
+export type WecomChannelProfile = ChannelProfile
 
 export function createDefaultWecomProfile(): WecomChannelProfile {
   return {
