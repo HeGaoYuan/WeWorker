@@ -1,7 +1,7 @@
 ---
 name: webcli
 version: 1.0.8
-description: "Browser automation via WebCLI. Use when the user wants to operate websites (search, click, fill forms, read content, take screenshots) or have Chrome complete web tasks automatically. Covers: open browser, call adapter tools, capture screenshots. Supports JD shopping, ITSM tickets, email, invoices, ProjectDemo, SCM, Pace+, ExpenseDemo and more."
+description: "Browser automation via WebCLI. Use when the user wants to operate websites (search, click, fill forms, read content, take screenshots) or have Chrome complete web tasks automatically. Covers: open browser, call adapter tools, capture screenshots, and discover a site's tools. Ships adapters for e-commerce and marketplaces (JD, 1688, Goofish), social and content sites (Bilibili, Zhihu, Weibo, Douyin, Xiaohongshu, Tieba, Douban), news and reference (36Kr, Hacker News, Wikipedia, arXiv), email (163, QQ, Gmail), travel and ticketing (12306, Ctrip), job boards (51job, Zhipin), developer sites (GitHub, Gitee, V2EX, Juejin), reviews and finance (Dianping, SMZDM, Xueqiu), and more."
 allowed-tools: Bash(webcli call *), Bash(npm view *)
 ---
 
@@ -57,7 +57,7 @@ webcli call mail.google.com.search_emails --keyword=invoice
 webcli call open_browser --url=<url>
 ```
 
-Use the **Homepage** URL from the target adapter's skill doc — it has the correct protocol (http/https) and path. Do NOT guess or default to https; many internal sites require http.
+Use the **Homepage** URL from the target adapter's skill doc — it has the correct protocol (http/https) and path. Do NOT guess or default to https; some sites are http-only.
 
 After opening a supported site, **wait at least 5 seconds** before calling page/DOM tools — the adapter needs time to inject and register.
 
@@ -66,6 +66,20 @@ After opening a supported site, **wait at least 5 seconds** before calling page/
 ```bash
 webcli call capture_screenshot
 webcli call capture_screenshot --fullPage=true
+```
+
+## Discovering tools
+
+Do not guess tool names or arguments — the installed adapters are the source of truth. Explore from coarse to fine:
+
+```bash
+webcli help                        # Installed sites — first level of progressive help
+webcli list                        # Installed sites (shorthand for `adapter list`)
+webcli list --json                 # Installed sites with full tool definitions
+webcli <site> help                 # One site's command list — second level
+webcli <site> <command> help       # One command's arguments — third level
+webcli <site> -help -f json        # Structured tool list for programmatic parsing
+webcli adapter skill <id>          # The site's SKILL.md (includes the Homepage URL)
 ```
 
 ## Adapter management
