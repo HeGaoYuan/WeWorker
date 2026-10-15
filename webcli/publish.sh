@@ -143,6 +143,8 @@ cleanup() {
     echo "    已回滚 dry-run 的版本改动"
   fi
   rm -f "$PKG_BACKUP" "$VERSION_BACKUP" "$PLUGIN_BACKUP" "$SKILL_BACKUP"
+  [ -n "$TEMP_NPMRC" ] && rm -f "$TEMP_NPMRC"
+  return 0
 }
 trap cleanup EXIT
 
@@ -209,8 +211,19 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 echo "[6/6] npm publish..."
-# 凭证来自本机 `npm login`（~/.npmrc）或 CI 注入的 NPM_CONFIG_*；脚本不代管凭据。
-( cd "$SCRIPT_DIR" && npm publish --registry="$REGISTRY" )
+# 凭证二选一：
+#   - 已 `npm login`：直接用本机 ~/.npmrc
+#   - 设了 NPM_TOKEN：写进临时配置并只对本次发布生效，不改动本机 ~/.npmrc
+PUBLISH_ARGS=(--registry="$REGISTRY")
+TEMP_NPMRC=""
+if [ -n "$NPM_TOKEN" ]; then
+  TEMP_NPMRC="$(mktemp)"
+  printf '//%s/:_authToken=%s\n' "${REGISTRY#*//}" "$NPM_TOKEN" > "$TEMP_NPMRC"
+  chmod 600 "$TEMP_NPMRC"
+  PUBLISH_ARGS+=(--userconfig="$(win_path "$TEMP_NPMRC")")
+  echo "      使用 NPM_TOKEN（临时配置，不写入 ~/.npmrc）"
+fi
+( cd "$SCRIPT_DIR" && npm publish "${PUBLISH_ARGS[@]}" )
 
 echo ""
 echo "==> 发布完成! weworker-webcli@$VERSION"
