@@ -1,0 +1,277 @@
+/**
+ * Long-lived Claude Code sessions for desktop chat.
+ *
+ * A cold `query()` spawns a new Claude Code CLI for every turn, which costs
+ * several seconds before the first model request, and the conversation must
+ * be replayed as text. A desktop work instead keeps one CLI in streaming-input
+ * mode: later turns push only the new user message into the same process.
+ *
+ * Safety rules:
+ * - A session is reused only when its configuration fingerprint matches and
+ *   the stored history extends exactly what the session has already seen.
+ * - Any abort, error, unfinished turn or configuration change closes the
+ *   session; the next turn starts a fresh one from stored history.
+ * - A busy session is never shared; concurrent turns fall back to a one-off query.
+ * - Idle sessions are closed after CHAT_SESSION_IDLE_MS and the pool keeps at
+ *   most CHAT_SESSION_MAX_SESSIONS processes. Process-tree cleanup on exit is
+ *   handled by claude-process.ts; an idle CLI also exits when its stdin closes.
+ */
+import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { createLogger } from './logger.js'
+
+const log = createLogger('chat-session')
+
+export const CHAT_SESSION_IDLE_MS = 10 * 60_000
+export const CHAT_SESSION_MAX_SESSIONS = 3
+const SWEEP_INTERVAL_MS = 60_000
+
+type AskUserEvent = { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }
+type ToolGuard = (toolName: string, input: Record<string, unknown>) => { behavior: 'allow' } | { behavior: 'deny'; message: string }
+
+/** Callbacks owned by the current turn. A reused session rebinds them before every turn. */
+export interface ChatTurnBindings {
+  onAskUser: ((event: AskUserEvent) => void) | null
+  extraToolGuard?: ToolGuard
+  memory: { userPromptInjections: number; postToolBatchInjections: number }
+}
+
+export interface ChatHistoryEntry {
+  id: string
+  role: string
+}
+
+/** Push-based prompt stream for streaming-input mode. */
+export class PromptQueue implements AsyncIterable<SDKUserMessage> {
+  private pending: SDKUserMessage[] = []
+  private waiter: (() => void) | null = null
+  private ended = false
+
+  push(message: SDKUserMessage): void {
+    if (this.ended) throw new Error('Prompt queue is closed')
+    this.pending.push(message)
+    this.wake()
+  }
+
+  end(): void {
+    this.ended = true
+    this.wake()
+  }
+
+  private wake(): void {
+    const waiter = this.waiter
+    this.waiter = null
+    waiter?.()
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
+    for (;;) {
+      if (this.pending.length > 0) {
+        yield this.pending.shift()!
+        continue
+      }
+      if (this.ended) return
+      await new Promise<void>((resolve) => { this.waiter = resolve })
+    }
+  }
+}
+
+export interface ChatSessionQuery extends AsyncIterable<SDKMessage> {
+  close(): void
+}
+
+export class ChatSession {
+  readonly workId: string
+  readonly fingerprint: string
+  readonly bindings: ChatTurnBindings
+  busy = false
+  closed = false
+  lastUsedAt = Date.now()
+  completedTurns = 0
+  private consumedIds: string[] = []
+  private closeStarted = false
+  private iterator: AsyncIterator<SDKMessage> | undefined
+  private readonly queue: PromptQueue
+  private readonly query: ChatSessionQuery
+  private readonly onClose?: () => void | Promise<void>
+
+  constructor(input: {
+    workId: string
+    fingerprint: string
+    bindings: ChatTurnBindings
+    queue: PromptQueue
+    query: ChatSessionQuery
+    onClose?: () => void | Promise<void>
+  }) {
+    this.workId = input.workId
+    this.fingerprint = input.fingerprint
+    this.bindings = input.bindings
+    this.queue = input.queue
+    this.query = input.query
+    this.onClose = input.onClose
+  }
+
+  /**
+   * True when `history` (ending with the new user message) appends to what
+   * this session already holds: the same stored messages in the same order,
+   * then only this session's own assistant replies, then one new user message.
+   */
+  continues(history: ChatHistoryEntry[]): boolean {
+    if (this.closed || this.busy || this.consumedIds.length === 0) return false
+    if (history.length <= this.consumedIds.length) return false
+    for (let index = 0; index < this.consumedIds.length; index++) {
+      if (history[index]?.id !== this.consumedIds[index]) return false
+    }
+    const added = history.slice(this.consumedIds.length)
+    if (added[added.length - 1]?.role !== 'user') return false
+    return added.slice(0, -1).every((entry) => entry.role === 'assistant')
+  }
+
+  /** Send one user message and yield SDK messages until that turn's result. */
+  async *runTurn(message: SDKUserMessage): AsyncGenerator<SDKMessage> {
+    if (this.closed) throw new Error('Chat session is closed')
+    this.busy = true
+    this.lastUsedAt = Date.now()
+    this.queue.push(message)
+    this.iterator ??= this.query[Symbol.asyncIterator]()
+    for (;;) {
+      const next = await this.iterator.next()
+      if (next.done) {
+        // The CLI exited; the caller sees an unfinished turn and disposes the session.
+        this.closed = true
+        return
+      }
+      yield next.value
+      if (next.value.type === 'result') return
+    }
+  }
+
+  /** Record that the CLI now holds `history` and accept the next turn. */
+  complete(history: ChatHistoryEntry[]): void {
+    this.consumedIds = history.map((entry) => entry.id)
+    this.completedTurns += 1
+    this.busy = false
+    this.lastUsedAt = Date.now()
+  }
+
+  /** Idempotent: ends the prompt stream, closes the CLI process tree and runs cleanup once. */
+  close(reason: string): void {
+    this.closed = true
+    this.busy = false
+    if (this.closeStarted) return
+    this.closeStarted = true
+    log.info('chat_session_closed', { work_id: this.workId, reason, turns: this.completedTurns })
+    this.queue.end()
+    try {
+      this.query.close()
+    } catch (error) {
+      log.warn('chat session close failed', error instanceof Error ? error.message : String(error))
+    }
+    Promise.resolve(this.onClose?.()).catch((error) => {
+      log.warn('chat session cleanup failed', error instanceof Error ? error.message : String(error))
+    })
+  }
+}
+
+const sessions = new Map<string, ChatSession>()
+let sweeper: ReturnType<typeof setInterval> | null = null
+
+function ensureSweeper(): void {
+  if (sweeper) return
+  sweeper = setInterval(() => sweepIdleChatSessions(), SWEEP_INTERVAL_MS)
+  sweeper.unref?.()
+}
+
+function stopSweeperIfEmpty(): void {
+  if (sessions.size > 0 || !sweeper) return
+  clearInterval(sweeper)
+  sweeper = null
+}
+
+export function isChatSessionBusy(workId: string): boolean {
+  return sessions.get(workId)?.busy === true
+}
+
+/**
+ * Return the idle session for `workId` when it can continue `history` under
+ * `fingerprint`. A stale idle session is closed so its process is released.
+ */
+export function findReusableChatSession(
+  workId: string,
+  fingerprint: string,
+  history: ChatHistoryEntry[],
+): ChatSession | undefined {
+  const session = sessions.get(workId)
+  if (!session) return undefined
+  if (session.closed) {
+    sessions.delete(workId)
+    stopSweeperIfEmpty()
+    return undefined
+  }
+  if (session.busy) return undefined
+  if (session.fingerprint !== fingerprint) {
+    disposeChatSession(workId, 'config_changed')
+    return undefined
+  }
+  if (!session.continues(history)) {
+    disposeChatSession(workId, 'history_changed')
+    return undefined
+  }
+  return session
+}
+
+export function registerChatSession(session: ChatSession): void {
+  const existing = sessions.get(session.workId)
+  if (existing && existing !== session) existing.close('replaced')
+  sessions.set(session.workId, session)
+  // Keep the process count bounded; only idle sessions can be evicted.
+  const idle = [...sessions.values()]
+    .filter((entry) => entry !== session && !entry.busy)
+    .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
+  while (sessions.size > CHAT_SESSION_MAX_SESSIONS && idle.length > 0) {
+    const oldest = idle.shift()!
+    sessions.delete(oldest.workId)
+    oldest.close('evicted')
+  }
+  ensureSweeper()
+}
+
+/** Close the work's session unless a turn is running in it. */
+export function disposeIdleChatSession(workId: string, reason: string): void {
+  if (!isChatSessionBusy(workId)) disposeChatSession(workId, reason)
+}
+
+/** Close the work's session. With `only`, close it only if it is still that session. */
+export function disposeChatSession(workId: string, reason: string, only?: ChatSession): void {
+  const session = sessions.get(workId)
+  if (only && session !== only) {
+    only.close(reason)
+    return
+  }
+  if (!session) return
+  sessions.delete(workId)
+  session.close(reason)
+  stopSweeperIfEmpty()
+}
+
+export function sweepIdleChatSessions(now = Date.now()): void {
+  for (const [workId, session] of sessions) {
+    if (session.closed || (!session.busy && now - session.lastUsedAt > CHAT_SESSION_IDLE_MS)) {
+      sessions.delete(workId)
+      session.close(session.closed ? 'process_ended' : 'idle_timeout')
+    }
+  }
+  stopSweeperIfEmpty()
+}
+
+export function disposeAllChatSessions(reason = 'shutdown'): void {
+  for (const workId of [...sessions.keys()]) disposeChatSession(workId, reason)
+}
+
+/** Test and diagnostics view. */
+export function listChatSessions(): Array<{ workId: string; busy: boolean; turns: number }> {
+  return [...sessions.values()].map((session) => ({
+    workId: session.workId,
+    busy: session.busy,
+    turns: session.completedTurns,
+  }))
+}

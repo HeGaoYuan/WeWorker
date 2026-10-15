@@ -24,6 +24,7 @@ import {
   type DedicatedAgentRecord,
 } from './agent-store.js'
 import { buildAgentChatOptions } from './agent-runtime.js'
+import { DEFAULT_ZCF_MODE } from '../zcf-role-settings.js'
 
 const log = createLogger('dedicated-agent')
 const KEY_PREFIX = 'agent:'
@@ -187,11 +188,15 @@ export function createAgentProfile(agentId: string, options: { attempts?: Pairin
  * Options for continuing an agent conversation from the desktop chat.
  * The desktop user is the owner, so access checks do not apply; long-term
  * memory stays off so agent turns never write into the main chat's memory.
+ * A single-site agent never needs the development workflows of auto-plan mode,
+ * so it always runs in direct mode (no inlined workflow guides, no
+ * "selected workflow" preamble).
  */
 export function buildDesktopAgentTurnOptions(agent: DedicatedAgentRecord) {
   return {
     ...buildAgentChatOptions({ agent, siteName: resolveSite(agent.site_id).name }),
     memoryEnabled: false,
+    zcfMode: DEFAULT_ZCF_MODE,
   }
 }
 

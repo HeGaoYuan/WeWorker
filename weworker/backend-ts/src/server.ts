@@ -95,6 +95,7 @@ import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveS
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, streamChat } from './agent.js'
+import { disposeChatSession, disposeIdleChatSession } from './chat-session.js'
 import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
 import { importSkillZip, importSkillZipFile } from './skill-zip-import.js'
@@ -2157,6 +2158,7 @@ app.patch('/works/:id', (req, res) => {
 
 app.delete('/works/:id', (req, res) => {
   store.deleteWork(req.params.id)
+  disposeChatSession(req.params.id, 'work_deleted')
   res.json({ ok: true })
 })
 
@@ -2724,6 +2726,8 @@ app.post('/works/:id/compact', async (req, res) => {
     const result = await streamConversationCompaction(workId, work.messages, settings, (event) => {
       events.push(event)
     })
+    // The next turn must start from the compacted history, not the live session's full context.
+    if (result.status === 'completed') disposeIdleChatSession(workId, 'manual_compaction')
     res.json({ ok: true, ...result, events })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -2945,6 +2949,8 @@ app.post('/works/:id/chat', async (req, res) => {
       thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, thinkingEffort),
       memoryScope: initialMemoryScope,
       onAskUser: (event) => send(event),
+      // Keep this work's Claude Code process between turns (skips the CLI cold start).
+      reuseSession: true,
       ...(dedicatedAgentOptions ?? {}),
     })) {
       if (ev.type === 'skill_context' && ev.skillContext) {

@@ -117,6 +117,13 @@ describe('dedicated agent runtime and skill library', () => {
     expect(prompt).toContain('example.com')
     expect(prompt).toContain('inventory-helper')
     expect(prompt).toContain('webcli call example.com.<工具名>')
+    // The private Skill is loaded once per conversation, not on every turn.
+    expect(prompt).toContain('本对话中第一次处理请求前')
+    expect(prompt).toContain('不要重复加载')
+    expect(prompt).not.toContain('每个会话处理第一个请求前')
+    // Unrecoverable errors must not trigger blind waits or retries.
+    expect(prompt).toContain('webcli trace')
+    expect(prompt).toContain('不要 Start-Sleep')
   })
 
   it('rejects unsafe agent ids and removes the runtime directory', () => {

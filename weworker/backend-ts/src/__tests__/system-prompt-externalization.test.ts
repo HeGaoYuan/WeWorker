@@ -246,6 +246,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       当某个工具调用返回错误时，最多重试 2 次（即总共调用不超过 3 次）。
       如果同一个工具连续失败且错误信息相同或相似，立即停止重试，向用户说明情况，并调用 \`TodoWrite\` 更新当前计划：可将当前 todo 保持为 \`in_progress\` 并写入 \`blocked_reason\` 或 \`failure_reason\`，也可调整/删除未完成计划。
+      以下错误不会因等待或重试而恢复，第一次出现就停止，不要用 \`Start-Sleep\` 等待后重试：未登录或被重定向到登录页、扩展需要重载或未连接、没有匹配的页面或标签页——直接告诉用户需要完成的操作。命令、参数或引号格式被拒绝时，先修正输入再调用，不要原样重试。
 
       ## 登录检测规则
 
@@ -411,6 +412,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       当某个工具调用返回错误时，最多重试 2 次（即总共调用不超过 3 次）。
       如果同一个工具连续失败且错误信息相同或相似，立即停止重试，向用户说明情况，并调用 \`TodoWrite\` 更新当前计划：可将当前 todo 保持为 \`in_progress\` 并写入 \`blocked_reason\` 或 \`failure_reason\`，也可调整/删除未完成计划。
+      以下错误不会因等待或重试而恢复，第一次出现就停止，不要用 \`Start-Sleep\` 等待后重试：未登录或被重定向到登录页、扩展需要重载或未连接、没有匹配的页面或标签页——直接告诉用户需要完成的操作。命令、参数或引号格式被拒绝时，先修正输入再调用，不要原样重试。
 
 
       [[MEMORY_PROTOCOL_NO_BASH]]"

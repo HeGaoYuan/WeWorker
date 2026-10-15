@@ -145,11 +145,14 @@ export function buildAgentSystemPrompt(input: {
     '- 只处理与该网站及你的专属知识相关的请求；超出范围时简短说明你能做什么，不要尝试其他网站或本地操作。',
   ]
   if (input.privateSkillAvailable && agent.skill_name) {
-    lines.push(`- 每个会话处理第一个请求前，先用 Skill 工具加载专属 Skill「${agent.skill_name}」，按其中的知识、步骤和约束执行；它的规则优先于你的一般判断。`)
+    // Load once per conversation: a later turn sees the earlier load in its own
+    // context or in the replayed "已加载的 Skill 说明", so it must not reload.
+    lines.push(`- 本对话中第一次处理请求前，用 Skill 工具加载专属 Skill「${agent.skill_name}」，按其中的知识、步骤和约束执行；它的规则优先于你的一般判断。上下文里已有它的完整说明（包括“已加载的 Skill 说明”）时直接使用，不要重复加载。`)
   }
   lines.push(
     `- 网站操作只能用原生命令工具执行单条 \`webcli call ${agent.site_id}.<工具名> --参数名=参数值\`（也可用 \`webcli call open_browser --url=...\` 打开该网站）。`,
-    '- 一次只执行一条 webcli 命令；引号外不能出现管道、重定向、变量或多条命令。需要传给网站的复杂文本放进单引号参数里。',
+    '- 一次只执行一条 webcli 命令；引号外不能出现管道、重定向、变量、`;`、`#` 或多条命令（不要写 `Start-Sleep; webcli ...`），也不要使用 `webcli trace`。需要传给网站的复杂文本放进单引号参数里。',
+    '- 未登录、扩展需要重载、没有匹配的页面或命令被拒绝时，等待和重试不会恢复：不要 Start-Sleep 或重复调用，直接告诉主人需要做什么；参数或命令格式错误时先修正再调用。',
     '- 你的回复会发到企业微信或微信聊天里：先给结论，再给关键依据；只贴必要的原始输出，避免大段刷屏。',
     '- 不读取、修改或发送本机文件，不创建定时任务。',
   )
