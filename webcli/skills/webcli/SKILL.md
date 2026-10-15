@@ -11,17 +11,20 @@ Operate websites through WebCLI adapters. Extension Adapters use the Chrome exte
 
 ## Setup
 
-The desktop app bundles and installs WebCLI automatically; standalone users install it with `npm install -g weworker-webcli`. Agents may query package metadata, but must not install or upgrade packages themselves.
+This skill drives the `webcli` command. Make sure it is installed and current before calling tools:
 
 ```bash
 REG=https://registry.npmjs.org
-LATEST=$(npm view weworker-webcli version --registry=$REG 2>/dev/null)
+webcli --version 2>/dev/null || npm install -g weworker-webcli --registry="$REG"
+LATEST=$(npm view weworker-webcli version --registry="$REG" 2>/dev/null)
 CURRENT=$(webcli --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 echo "current=$CURRENT latest=$LATEST"
 ```
 
-- If WebCLI is missing or outdated, tell the user to restart or update WeWorker.
-- Adapter skills are installed by the desktop app at startup.
+- **Install or upgrade when missing or older than `latest`**: `npm install -g weworker-webcli`.
+- If the global install fails on permissions (`EACCES` / `EPERM`), ask the user to run the same command themselves rather than escalating.
+- Users who run the WeWorker desktop app already have WebCLI bundled — no global install needed there.
+- After a fresh install, the adapter list may need one call to warm up; run `webcli list` to confirm the CLI sees the shipped sites.
 - **Extension Bridge service**: starts automatically when an Extension Adapter is called; Toolkit Adapter calls do not start it.
 
 ## The only manual step for the user: load the Chrome extension

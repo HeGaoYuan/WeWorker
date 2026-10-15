@@ -148,6 +148,26 @@ webcli adapter knowledge mail.example.com --json
 └── ...
 ```
 
+## 安装
+
+两种装法，二选一：
+
+```bash
+# 1) 只装命令行工具
+npm install -g weworker-webcli
+
+# 2) 连同「操作指令」一起装进 AI 客户端（Claude Code / Codex / Cursor 等）
+npx skills add https://cdn.jsdelivr.net/npm/weworker-webcli/skills/webcli/SKILL.md
+```
+
+第 2 种会把 `skills/webcli/SKILL.md` 装进你的 AI 客户端；之后直接用自然语言驱动即可（如「帮我搜下京东的手机」），
+助手会调用 `webcli`，缺命令时按 SKILL.md 里的说明从 npm 装上。
+
+两种方式都还需要一次性在 Chrome 加载扩展：`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序，
+目录用 `webcli extension-path` 查询。
+
+> 桌面端用户无需单独安装——WeWorker 已内置 WebCLI。
+
 ## 发布
 
 两条发布线相互独立：npm 包是完整运行时（含 Chrome 扩展），skill 市场只发纯 skill（SKILL.md）。
