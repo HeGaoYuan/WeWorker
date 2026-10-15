@@ -4,8 +4,6 @@ import { useSettingsStore } from '../../store/settings.js'
 import ExtensionGuide from '../ExtensionGuide.jsx'
 import StatusAlerts from './StatusAlerts.jsx'
 import { buildStatusAlerts } from '../../utils/status-alerts.js'
-import { getWebwrightPresentation } from '../../utils/webwright-status.js'
-import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 
 export default function StatusBar() {
   const { extension, extensionVersion, channels } = useStatusStore()
@@ -22,7 +20,6 @@ export default function StatusBar() {
   // Polled from the Electron main process — backend does not know about this.
   const [bridgeStatus, setBridgeStatus] = useState('unknown')
   const [backendStatus, setBackendStatus] = useState('unknown')
-  const [webwrightStatus, setWebwrightStatus] = useState('unknown')
   React.useEffect(() => {
     let cancelled = false
     const poll = async () => {
@@ -31,7 +28,6 @@ export default function StatusBar() {
         if (!cancelled) {
           if (s?.bridge) setBridgeStatus(s.bridge)
           if (s?.python) setBackendStatus(s.python)
-          if (s?.webwright) setWebwrightStatus(s.webwright)
         }
       } catch {}
     }
@@ -42,11 +38,6 @@ export default function StatusBar() {
   const externalBackendRunning = backendStatus === 'external_running'
   const isWindows = navigator.userAgent.includes('Windows')
   const alerts = buildStatusAlerts({ extension, appVersion, extensionVersion, bridgeStatus, backendStatus, channels, isWindows })
-  const webwright = getWebwrightPresentation(webwrightStatus)
-  const webwrightColor = webwright.tone === 'success' ? 'var(--success)'
-    : webwright.tone === 'warning' ? 'var(--warning)'
-      : webwright.tone === 'error' ? 'var(--error)'
-        : 'var(--text-muted)'
 
   const dot = (status) => {
     const color = status === 'connected' ? 'var(--success)'
@@ -68,30 +59,6 @@ export default function StatusBar() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <button
-        type="button"
-        disabled={!webwright.enabled}
-        onClick={() => useWebsiteExplorationStore.setState({ open: true })}
-        title={webwright.label}
-        style={{
-          alignSelf: 'flex-start',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-          maxWidth: '100%',
-          padding: 0,
-          border: 'none',
-          background: 'none',
-          color: webwrightColor,
-          cursor: webwright.enabled ? 'pointer' : 'default',
-          fontSize: 11,
-          fontFamily: 'inherit',
-          opacity: webwrightStatus === 'stopped' || webwrightStatus === 'unknown' ? 0.75 : 1,
-        }}
-      >
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', flexShrink: 0 }} />
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{webwright.label}</span>
-      </button>
       {/* Current model */}
       <div style={{ fontSize: 11, color: hasApiKey ? 'var(--text-secondary)' : 'var(--warning)', display: 'flex', alignItems: 'center', gap: 4 }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>

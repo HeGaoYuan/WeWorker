@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import re
 import shutil
-import subprocess
+import sys
 import tempfile
 import threading
+import types
 import uuid
 import zipfile
 from pathlib import Path
@@ -41,6 +44,32 @@ DISTRIBUTION_CHECKSUM_NAMES = (
 
 def skill_name(toolkit_id: str) -> str:
     return toolkit_id.replace("_", "-")
+
+
+def _load_generated_module(script_path: Path) -> types.ModuleType:
+    """Import the freshly rendered toolkit.py in an isolated namespace.
+
+    The generated module only touches the filesystem through path resolution
+    at import time (RUNNER construction); nothing connects to a browser. The
+    ``toolkit_runtime`` import resolves from the artifact's scripts directory,
+    and both modules are removed from ``sys.modules`` afterwards so repeat
+    publishes never reuse a stale template.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "webwright_publish_toolkit", script_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    scripts_dir = str(script_path.parent)
+    previous_bytecode_flag = sys.dont_write_bytecode
+    sys.path.insert(0, scripts_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(scripts_dir)
+        sys.dont_write_bytecode = previous_bytecode_flag
+        sys.modules.pop("toolkit_runtime", None)
+        sys.modules.pop("webwright_publish_toolkit", None)
+    return module
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -476,26 +505,34 @@ class ToolkitPublisher:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding="utf-8")
             script_path = root / "scripts" / "toolkit.py"
-            commands = [self.launcher.script_command(script_path, ["--help"])]
-            commands.extend(
-                self.launcher.script_command(
-                    script_path, [tool_id.replace("_", "-"), "--help"]
-                )
-                for tool_id in tool_ids
-            )
-            for command in commands:
-                completed = subprocess.run(
-                    command,
-                    cwd=root,
-                    env=self.launcher.internal_worker_environment(),
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if completed.returncode != 0:
+            # Exercise the generated CLI in-process instead of spawning the
+            # freshly written script: endpoint security holds "a process
+            # executes the file it just wrote" children indefinitely, which
+            # deadlocked publish (subprocess never returned, bridge timed out).
+            module = _load_generated_module(script_path)
+            build_parser = getattr(module, "_parser", None)
+            if build_parser is None:
+                raise ValueError("Generated CLI validation failed: no _parser().")
+            for arguments in [
+                ["--help"],
+                *[[tool_id.replace("_", "-"), "--help"] for tool_id in tool_ids],
+            ]:
+                buffer = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(
+                        buffer
+                    ):
+                        build_parser(debug_parameters=False).parse_args(arguments)
+                except SystemExit as exc:
+                    if exc.code != 0:
+                        raise ValueError(
+                            "Generated CLI validation failed: "
+                            f"{buffer.getvalue().strip()}"
+                        ) from exc
+                except Exception as exc:
                     raise ValueError(
-                        f"Generated CLI validation failed: {completed.stderr.strip()}"
-                    )
+                        f"Generated CLI validation failed: {exc}"
+                    ) from exc
 
     def _install(self, toolkit_id: str, artifacts: dict[str, str]) -> dict[str, Any]:
         root = self.store.toolkit_dir(toolkit_id) / skill_name(toolkit_id)

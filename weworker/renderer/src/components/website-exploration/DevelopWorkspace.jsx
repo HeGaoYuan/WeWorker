@@ -29,6 +29,7 @@ export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy
   const developing = ['queued', 'running'].includes(data?.latest_run?.status)
   const blocked = disabled || globalBusy || developing || action.busy || dirty || snapshot.loading
   const initial = (!dev && !data?.formal) || rebuilding || (developing && !dev)
+  const effectiveSource = source || String(data?.latest_run?.source_exploration_id || '')
   const successful = explorations.data?.filter(item => item.status === 'succeeded') || []
   const perform = (task, feedback) => action.run(async () => { setMessage(''); await task(); setMessage(feedback) })
   const stopDevelopment = () => perform(() => api.cancelDevelopment(toolkitId, tool.tool_id), '已取消本次开发')
@@ -55,12 +56,12 @@ export default function DevelopWorkspace({ toolkitId, tool, disabled, globalBusy
       <div className="wx-development">
         <div className="wx-code-pane">
           {initial ? <section className="wx-dev-card">
-            <h3>首次开发</h3><p>来源探索：{source || data.latest_run?.source_exploration_id || '尚未选择'}</p>
-            {!developing && (source ? <p className="wx-muted">{rebuilding ? '本轮会完全基于所选探索重新实现此 Tool。点击「开始开发」后才清空当前开发中修改。' : 'Developer Agent 将基于所选探索和下面的指令生成首个实现。'}</p> : <p>请先到探索工作区选择一次成功探索作为开发输入。<button className="wx-quiet" onClick={() => changeWebsiteContext({ workspace: 'explore' })}>前往探索</button></p>)}
+            <h3>首次开发</h3><p>来源探索：{effectiveSource || '尚未选择'}</p>
+            {!developing && (effectiveSource ? <p className="wx-muted">{rebuilding ? '本轮会完全基于所选探索重新实现此 Tool。点击「开始开发」后才清空当前开发中修改。' : source ? 'Developer Agent 将基于所选探索和下面的指令生成首个实现。' : '上次开发未完成，Developer Agent 将沿用其来源探索和下面的指令重新生成首个实现。'}</p> : <p>请先到探索工作区选择一次成功探索作为开发输入。<button className="wx-quiet" onClick={() => changeWebsiteContext({ workspace: 'explore' })}>前往探索</button></p>)}
             {failure}
-            <DevelopmentPrompt label="首次开发指令" value={initialInstruction} onChange={setInitialInstruction} placeholder="描述首个实现需要重点关注的内容" hint="必填。该指令会与所选探索一起提供给 Developer Agent。" submitLabel="开始开发" developing={developing} disabled={blocked || !modelReady || !source || !initialInstruction.trim()} stopDisabled={disabled || action.busy} onStop={stopDevelopment} onSubmit={() => perform(async () => {
-              if (rebuilding) await api.restartDevelopmentFromExploration(toolkitId, tool.tool_id, source, initialInstruction)
-              else await api.startDevelopment(toolkitId, tool.tool_id, { instruction: initialInstruction, sourceExplorationId: source })
+            <DevelopmentPrompt label="首次开发指令" value={initialInstruction} onChange={setInitialInstruction} placeholder="描述首个实现需要重点关注的内容" hint="必填。该指令会与所选探索一起提供给 Developer Agent。" submitLabel="开始开发" developing={developing} disabled={blocked || !modelReady || !effectiveSource || !initialInstruction.trim()} stopDisabled={disabled || action.busy} onStop={stopDevelopment} onSubmit={() => perform(async () => {
+              if (rebuilding) await api.restartDevelopmentFromExploration(toolkitId, tool.tool_id, effectiveSource, initialInstruction)
+              else await api.startDevelopment(toolkitId, tool.tool_id, { instruction: initialInstruction, sourceExplorationId: effectiveSource })
               setSource(''); setRebuilding(false); setEvidence(null); setInitialInstruction('')
             }, '已提交开发指令')} />
           </section> : dev ? <>
