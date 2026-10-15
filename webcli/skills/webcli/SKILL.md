@@ -1,6 +1,6 @@
 ---
 name: webcli
-version: 1.0.1
+version: 1.0.2
 description: "Browser automation via WebCLI. Use when the user wants to operate websites (search, click, fill forms, read content, take screenshots) or have Chrome complete web tasks automatically. Covers: open browser, call adapter tools, capture screenshots, and discover a site's tools. Ships adapters for e-commerce and marketplaces (JD, 1688, Goofish), social and content sites (Bilibili, Zhihu, Weibo, Douyin, Xiaohongshu, Tieba, Douban), news and reference (36Kr, Hacker News, Wikipedia, arXiv), email (163, QQ, Gmail), travel and ticketing (12306, Ctrip), job boards (51job, Zhipin), developer sites (GitHub, Gitee, V2EX, Juejin), reviews and finance (Dianping, SMZDM, Xueqiu), and more."
 allowed-tools: Bash(webcli call *), Bash(npm view *)
 ---
