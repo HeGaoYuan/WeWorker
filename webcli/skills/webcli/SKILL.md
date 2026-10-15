@@ -1,6 +1,6 @@
 ---
 name: webcli
-version: 1.0.8
+version: 1.0.0
 description: "Browser automation via WebCLI. Use when the user wants to operate websites (search, click, fill forms, read content, take screenshots) or have Chrome complete web tasks automatically. Covers: open browser, call adapter tools, capture screenshots, and discover a site's tools. Ships adapters for e-commerce and marketplaces (JD, 1688, Goofish), social and content sites (Bilibili, Zhihu, Weibo, Douyin, Xiaohongshu, Tieba, Douban), news and reference (36Kr, Hacker News, Wikipedia, arXiv), email (163, QQ, Gmail), travel and ticketing (12306, Ctrip), job boards (51job, Zhipin), developer sites (GitHub, Gitee, V2EX, Juejin), reviews and finance (Dianping, SMZDM, Xueqiu), and more."
 allowed-tools: Bash(webcli call *), Bash(npm view *)
 ---
@@ -11,7 +11,7 @@ Operate websites through WebCLI adapters. Extension Adapters use the Chrome exte
 
 ## Setup
 
-The desktop app bundles and installs WebCLI automatically. Agents may query package metadata, but must not install or upgrade packages themselves.
+The desktop app bundles and installs WebCLI automatically; standalone users install it with `npm install -g weworker-webcli`. Agents may query package metadata, but must not install or upgrade packages themselves.
 
 ```bash
 REG=https://registry.npmjs.org
