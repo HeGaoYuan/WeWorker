@@ -157,7 +157,7 @@ webcli adapter knowledge mail.example.com --json
 npm install -g weworker-webcli
 
 # 2) 连同「操作指令」一起装进 AI 客户端（Claude Code / Codex / Cursor 等）
-npx skills add https://cdn.jsdelivr.net/npm/weworker-webcli/skills/webcli/SKILL.md
+npx skills add https://unpkg.com/weworker-webcli/skills/webcli/SKILL.md
 ```
 
 第 2 种会把 `skills/webcli/SKILL.md` 装进你的 AI 客户端；之后直接用自然语言驱动即可（如「帮我搜下京东的手机」），

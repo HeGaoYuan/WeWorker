@@ -17,7 +17,7 @@ Chrome 扩展运行在浏览器沙箱中，外部进程无法直接调用。WebC
 npm install -g weworker-webcli
 
 # 或者让 AI 助手连「操作指令」一起装好
-npx skills add https://cdn.jsdelivr.net/npm/weworker-webcli/skills/webcli/SKILL.md
+npx skills add https://unpkg.com/weworker-webcli/skills/webcli/SKILL.md
 ```
 
 用户只需一次性在 Chrome 加载扩展（`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序）。之后用自然语言驱动即可，例如：
