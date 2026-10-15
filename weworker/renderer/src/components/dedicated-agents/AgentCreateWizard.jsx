@@ -15,9 +15,12 @@ import {
   parseExamples,
   resolveDraftSkillName,
   validateWizardStep,
+  agentChannelOf,
+  boundBotPayload,
+  channelLabel,
 } from '../../utils/dedicated-agents.js'
 import SkillComposer from './SkillComposer.jsx'
-import WecomQrBind from './WecomQrBind.jsx'
+import WecomQrBind, { BotChannelPicker } from './WecomQrBind.jsx'
 import { showConfirm } from '../../store/dialog.js'
 import { codeBadgeStyle, fieldStyle, hintStyle, labelStyle, sectionStyle, titleStyle } from './styles.js'
 
@@ -97,12 +100,14 @@ function PairingStep({ agent, onDone }) {
     return () => clearInterval(timer)
   }, [agent.id, current?.paired, upsertAgent])
 
+  const channel = agentChannelOf(current)
+  const im = channelLabel(channel)
   if (current?.paired) {
     return (
       <Result
         status="success"
         title={`「${current.name}」已就绪`}
-        subTitle="现在直接在企业微信里和这个机器人对话就可以了。"
+        subTitle={`现在直接在${im}里和这个机器人对话就可以了。`}
         extra={[
           <Button type="primary" key="open" onClick={() => onDone(current.id)}>查看 Agent</Button>,
         ]}
@@ -123,14 +128,18 @@ function PairingStep({ agent, onDone }) {
   return (
     <div>
       <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 12 }}>
-        最后一步：在<strong>企业微信</strong>里找到刚才的机器人，给它发送下面这句话：
+        最后一步：在<strong>{im}</strong>里找到刚才的机器人，给它发送下面这句话：
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <span style={codeBadgeStyle}>{pairingCommand(current?.pairing_code)}</span>
         <Button onClick={() => navigator.clipboard?.writeText(pairingCommand(current?.pairing_code)).catch(() => {})}>复制</Button>
       </div>
       <ul style={{ ...hintStyle, paddingLeft: 18 }}>
-        <li>机器人一般出现在企业微信的消息列表或「工作台 → 智能机器人」中，也可以直接搜索它的名字。</li>
+        <li>
+          {channel === 'weixin'
+            ? '机器人一般出现在扫码那个微信号的聊天列表中，也可以在微信里搜索它。'
+            : '机器人一般出现在企业微信的消息列表或「工作台 → 智能机器人」中，也可以直接搜索它的名字。'}
+        </li>
         <li>发送绑定码的人会成为这个 Agent 的主人，之后它只为你服务。</li>
       </ul>
       <div style={{ ...hintStyle, marginTop: 12 }}>
@@ -153,6 +162,7 @@ export default function AgentCreateWizard() {
   const [saving, setSaving] = useState(false)
   const [createdAgent, setCreatedAgent] = useState(null)
   const [bindKey, setBindKey] = useState(0)
+  const [botChannel, setBotChannel] = useState('wecom')
 
   useEffect(() => {
     if (!sites.length) loadSites()
@@ -214,7 +224,7 @@ export default function AgentCreateWizard() {
         site_id: draft.siteId,
         skill_name: skillName,
         examples: parseExamples(draft.examplesText),
-        ...(bot.qr_session_id ? { qr_session_id: bot.qr_session_id } : { bot_id: bot.bot_id, secret: bot.secret }),
+        ...boundBotPayload(bot),
       }
       const result = await createAgent(body)
       upsertAgent(result.agent)
@@ -233,7 +243,7 @@ export default function AgentCreateWizard() {
         <h2 style={titleStyle}>新建专属 Agent</h2>
         {!createdAgent && <Button onClick={cancel}>取消</Button>}
       </div>
-      <div style={{ ...hintStyle, marginBottom: 18 }}>一个专属 Agent = 一个网站的能力 + 你的专属知识 + 一个企业微信机器人。大约 5 分钟完成。</div>
+      <div style={{ ...hintStyle, marginBottom: 18 }}>一个专属 Agent = 一个网站的能力 + 你的专属知识 + 一个企业微信或微信机器人。大约 5 分钟完成。</div>
       <Steps size="small" current={step} items={WIZARD_STEPS.map((item) => ({ title: item.title }))} style={{ marginBottom: 20 }} />
 
       <div style={sectionStyle}>
@@ -260,8 +270,13 @@ export default function AgentCreateWizard() {
 
         {stepKey === 'bind' && (
           <div>
-            <div style={{ ...labelStyle, marginBottom: 12 }}>给「{draft.name}」绑定一个企业微信机器人</div>
-            <WecomQrBind key={bindKey} onBound={handleBound} busy={saving} />
+            <div style={{ ...labelStyle, marginBottom: 12 }}>给「{draft.name}」绑定一个机器人，之后在{channelLabel(botChannel)}里和它对话</div>
+            <BotChannelPicker
+              value={botChannel}
+              disabled={saving}
+              onChange={(next) => { setError(''); setBotChannel(next); setBindKey((value) => value + 1) }}
+            />
+            <WecomQrBind key={`${botChannel}-${bindKey}`} channel={botChannel} onBound={handleBound} busy={saving} />
             {error && (
               <Alert
                 type="error"

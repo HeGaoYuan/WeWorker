@@ -1,21 +1,26 @@
 /**
- * WeCom bot connection per dedicated agent.
+ * IM bot connection per dedicated agent (企业微信 or 微信).
  *
  * Each agent owns one bot. The bot serves only its owner, who pairs once by
  * sending the code shown in WeWorker. Every turn runs the agent with its own
  * isolated skills, memory scope and focused tool limits.
  */
 import { channelManager, type ChannelStatus } from '../channels/channel-manager.js'
-import { WecomChannel, type WecomAccessDecision, type WecomChannelProfile } from '../channels/wecom-channel.js'
+import type { ChannelAccessDecision, ChannelProfile } from '../channels/channel-profile.js'
+import { WecomChannel } from '../channels/wecom-channel.js'
+import { WeixinChannel } from '../channels/weixin-channel.js'
 import { parseAllAdapters } from '../adapter-parser.js'
 import { getSiteEnabled } from '../config.js'
 import { createLogger } from '../logger.js'
 import {
   addAgentWork,
+  agentChannel,
   completePairing,
   getAgent,
   getAgentBotSecret,
+  getAgentWeixinToken,
   listAgents,
+  AGENT_CHANNEL_LABELS,
   type DedicatedAgentRecord,
 } from './agent-store.js'
 import { buildAgentChatOptions } from './agent-runtime.js'
@@ -71,10 +76,10 @@ export function decideAgentAccess(input: {
   attempts: PairingAttempts
   now: number
   onPair: (userId: string) => DedicatedAgentRecord
-}): WecomAccessDecision {
+}): ChannelAccessDecision {
   const { agent, userId, text, site, attempts, now } = input
   if (text.trim() === '/myid') {
-    return { kind: 'reply', text: `你的企业微信用户 ID：${userId}` }
+    return { kind: 'reply', text: `你的${AGENT_CHANNEL_LABELS[agentChannel(agent)]}用户 ID：${userId}` }
   }
   if (!agent.enabled) {
     return { kind: 'reply', text: `「${agent.name}」已在 WeWorker 中停用。` }
@@ -115,7 +120,7 @@ export function decideAgentAccess(input: {
   return { kind: 'allow', mode: 'full' }
 }
 
-export function createAgentProfile(agentId: string, options: { attempts?: PairingAttempts; now?: () => number } = {}): WecomChannelProfile {
+export function createAgentProfile(agentId: string, options: { attempts?: PairingAttempts; now?: () => number } = {}): ChannelProfile {
   const attempts: PairingAttempts = options.attempts ?? new Map()
   const now = options.now ?? Date.now
   const current = (): DedicatedAgentRecord => {
@@ -144,6 +149,7 @@ export function createAgentProfile(agentId: string, options: { attempts?: Pairin
         agent.skill_name ? `专属 Skill：${agent.skill_name}` : '专属 Skill：未设置（仅使用网站能力）',
         '',
         '/new 开启新对话',
+        '/stop 停止当前任务',
         '/id 查看当前对话 ID',
         '/help 查看本说明',
       ].join('\n') + examplesText(agent)
@@ -165,7 +171,10 @@ export function createAgentProfile(agentId: string, options: { attempts?: Pairin
         },
       })
     },
-    memoryScope: (userId) => ({ user: `wecom:${userId}`, project: `agent:${agentId}` }),
+    memoryScope: (userId) => {
+      const agent = getAgent(agentId)
+      return { user: `${agent ? agentChannel(agent) : 'wecom'}:${userId}`, project: `agent:${agentId}` }
+    },
     chatOptions: () => {
       const agent = current()
       return buildAgentChatOptions({ agent, siteName: resolveSite(agent.site_id).name })
@@ -193,15 +202,22 @@ export async function stopAgentChannel(agentId: string): Promise<void> {
 export async function startAgentChannel(agent: DedicatedAgentRecord): Promise<void> {
   await stopAgentChannel(agent.id)
   if (!agent.enabled) return
-  const secret = getAgentBotSecret(agent)
-  if (!agent.wecom.bot_id || !secret) {
-    log.warn(`agent ${agent.id}: missing bot credentials, not starting`)
-    return
+  let channel: WecomChannel | WeixinChannel
+  if (agentChannel(agent) === 'weixin') {
+    const token = getAgentWeixinToken(agent)
+    if (!token) {
+      log.warn(`agent ${agent.id}: missing WeChat bot credentials, not starting`)
+      return
+    }
+    channel = new WeixinChannel({ token, base_url: agent.weixin?.base_url }, createAgentProfile(agent.id))
+  } else {
+    const secret = getAgentBotSecret(agent)
+    if (!agent.wecom.bot_id || !secret) {
+      log.warn(`agent ${agent.id}: missing bot credentials, not starting`)
+      return
+    }
+    channel = new WecomChannel({ enabled: true, bot_id: agent.wecom.bot_id, secret }, createAgentProfile(agent.id))
   }
-  const channel = new WecomChannel(
-    { enabled: true, bot_id: agent.wecom.bot_id, secret },
-    createAgentProfile(agent.id),
-  )
   channelManager.register(agentChannelKey(agent.id), channel)
   channel.start().catch((error) => log.error(`agent ${agent.id} start error:`, error))
 }

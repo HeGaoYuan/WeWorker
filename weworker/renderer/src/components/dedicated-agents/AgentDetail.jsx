@@ -14,8 +14,18 @@ import {
   setSkillScope,
   updateAgent,
 } from '../../api/dedicated-agents-api.js'
-import { agentStatusPresentation, pairingCommand, parseExamples, SKILL_SCOPE_LABELS, TONE_COLORS } from '../../utils/dedicated-agents.js'
-import WecomQrBind from './WecomQrBind.jsx'
+import {
+  agentBotId,
+  agentChannelOf,
+  agentStatusPresentation,
+  boundBotPayload,
+  channelLabel,
+  pairingCommand,
+  parseExamples,
+  SKILL_SCOPE_LABELS,
+  TONE_COLORS,
+} from '../../utils/dedicated-agents.js'
+import WecomQrBind, { BotChannelPicker } from './WecomQrBind.jsx'
 import { SkillEditorCard } from './SkillComposer.jsx'
 import AgentChatPanel from './AgentChatPanel.jsx'
 import { showConfirm } from '../../store/dialog.js'
@@ -88,11 +98,14 @@ function BotCard({ agent, onChanged }) {
   const [error, setError] = useState('')
   const [rebindKey, setRebindKey] = useState(0)
 
+  const channel = agentChannelOf(agent)
+  const im = channelLabel(channel)
+  const [rebindChannel, setRebindChannel] = useState(channel)
   const rebind = async (bot) => {
     setBusy(true)
     setError('')
     try {
-      const result = await updateAgent(agent.id, bot.qr_session_id ? { qr_session_id: bot.qr_session_id } : { bot_id: bot.bot_id, secret: bot.secret })
+      const result = await updateAgent(agent.id, boundBotPayload(bot))
       onChanged(result.agent)
       setRebindOpen(false)
     } catch (err) {
@@ -112,10 +125,10 @@ function BotCard({ agent, onChanged }) {
   const connection = agent.connection || {}
   return (
     <div style={sectionStyle}>
-      <h3 style={sectionTitleStyle}>企业微信机器人</h3>
+      <h3 style={sectionTitleStyle}>{im}机器人</h3>
       <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', rowGap: 8, fontSize: 13, color: 'var(--text-primary)' }}>
-        <span style={hintStyle}>BotID</span>
-        <span style={monoStyle}>{agent.wecom?.bot_id}</span>
+        <span style={hintStyle}>{channel === 'weixin' ? '机器人 ID' : 'BotID'}</span>
+        <span style={monoStyle}>{agentBotId(agent) || '—'}</span>
         <span style={hintStyle}>连接</span>
         <span>
           {connection.status === 'connected' && <span style={{ color: TONE_COLORS.success }}>已连接</span>}
@@ -129,7 +142,7 @@ function BotCard({ agent, onChanged }) {
 
       {!agent.paired && agent.pairing_code && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ ...hintStyle, marginBottom: 8 }}>在企业微信里给这个机器人发送：</div>
+          <div style={{ ...hintStyle, marginBottom: 8 }}>在{im}里给这个机器人发送：</div>
           <Space wrap>
             <span style={codeBadgeStyle}>{pairingCommand(agent.pairing_code)}</span>
             <Button onClick={() => navigator.clipboard?.writeText(pairingCommand(agent.pairing_code)).catch(() => {})}>复制</Button>
@@ -137,13 +150,16 @@ function BotCard({ agent, onChanged }) {
         </div>
       )}
 
-      {connection.status === 'error' && /订阅失败|stopped|disconnect/i.test(connection.error || '') && (
+      {channel === 'wecom' && connection.status === 'error' && /订阅失败|stopped|disconnect/i.test(connection.error || '') && (
         <Alert type="warning" showIcon style={{ marginTop: 12 }} message="同一个机器人只能保持一个连接。如果它在别处（例如另一台电脑）也连着，这里会掉线。" />
+      )}
+      {channel === 'weixin' && connection.status === 'error' && /过期|重新扫码/.test(connection.error || '') && (
+        <Alert type="warning" showIcon style={{ marginTop: 12 }} message="微信登录已失效（可能在别处重新扫码登录了同一个机器人）。点「更换机器人」用微信重新扫码即可恢复。" />
       )}
       {error && <Alert type="error" showIcon style={{ marginTop: 12 }} message={error} />}
 
       <Space style={{ marginTop: 14 }} wrap>
-        <Button onClick={() => { setError(''); setRebindKey((value) => value + 1); setRebindOpen(true) }}>更换机器人</Button>
+        <Button onClick={() => { setError(''); setRebindChannel(channel); setRebindKey((value) => value + 1); setRebindOpen(true) }}>更换机器人</Button>
         {agent.paired && (
           <Popconfirm title="重新配对？" description="当前主人将失效，需要重新发送新的绑定码。" okText="重新配对" cancelText="取消" onConfirm={rePair}>
             <Button>重新配对</Button>
@@ -151,9 +167,14 @@ function BotCard({ agent, onChanged }) {
         )}
       </Space>
 
-      <Modal title="更换企业微信机器人" open={rebindOpen} onCancel={() => !busy && setRebindOpen(false)} footer={null} destroyOnClose maskClosable={false} width={620}>
-        <div style={{ ...hintStyle, marginBottom: 12 }}>换成新的机器人后需要重新配对。</div>
-        <WecomQrBind key={rebindKey} onBound={rebind} busy={busy} />
+      <Modal title="更换机器人" open={rebindOpen} onCancel={() => !busy && setRebindOpen(false)} footer={null} destroyOnClose maskClosable={false} width={620}>
+        <div style={{ ...hintStyle, marginBottom: 12 }}>可以换成企业微信或微信机器人。换成另一个机器人后需要重新配对。</div>
+        <BotChannelPicker
+          value={rebindChannel}
+          disabled={busy}
+          onChange={(next) => { setError(''); setRebindChannel(next); setRebindKey((value) => value + 1) }}
+        />
+        <WecomQrBind key={`${rebindChannel}-${rebindKey}`} channel={rebindChannel} onBound={rebind} busy={busy} />
         {error && <Alert type="error" showIcon style={{ marginTop: 12 }} message={error} />}
       </Modal>
     </div>

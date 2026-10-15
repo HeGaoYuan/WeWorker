@@ -7,6 +7,34 @@ export const WIZARD_STEPS = [
   { key: 'pair', title: '完成配对' },
 ]
 
+/** IM channels a dedicated agent can be reached from. */
+export const AGENT_CHANNELS = [
+  { value: 'wecom', label: '企业微信', short: '企微' },
+  { value: 'weixin', label: '微信', short: '微信' },
+]
+
+export function agentChannelOf(agent) {
+  return agent?.channel === 'weixin' ? 'weixin' : 'wecom'
+}
+
+export function channelLabel(channel, { short = false } = {}) {
+  const entry = AGENT_CHANNELS.find((item) => item.value === channel) || AGENT_CHANNELS[0]
+  return short ? entry.short : entry.label
+}
+
+/** Bot id shown in settings: WeCom BotID or the WeChat iLink bot id. */
+export function agentBotId(agent) {
+  return agentChannelOf(agent) === 'weixin' ? (agent?.weixin?.bot_id || '') : (agent?.wecom?.bot_id || '')
+}
+
+/** Request body for a bound bot from the QR/manual binding step. */
+export function boundBotPayload(bot) {
+  if (bot?.channel === 'weixin') return { channel: 'weixin', qr_session_id: bot.qr_session_id }
+  return bot?.qr_session_id
+    ? { channel: 'wecom', qr_session_id: bot.qr_session_id }
+    : { channel: 'wecom', bot_id: bot?.bot_id, secret: bot?.secret }
+}
+
 export const SKILL_MODES = {
   generate: 'generate',
   existing: 'existing',

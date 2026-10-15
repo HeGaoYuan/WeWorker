@@ -41,14 +41,14 @@ function Intro({ onCreate, hasAgents }) {
     <div style={{ maxWidth: 720 }}>
       <h2 style={titleStyle}>专属 Agent</h2>
       <div style={{ ...hintStyle, fontSize: 13, margin: '8px 0 20px' }}>
-        为某个网站打造一个小而专注的 Agent：它掌握你的专属知识，连接一个企业微信机器人。你在企业微信里直接和它对话，它独立运行，不影响 WeWorker 的主对话。
+        为某个网站打造一个小而专注的 Agent：它掌握你的专属知识，连接一个企业微信或微信机器人。你在手机上直接和它对话，它独立运行，不影响 WeWorker 的主对话。
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 20 }}>
         {[
           ['1. 选网站', '选一个 WeWorker 已经能操作的网站'],
           ['2. 写专属知识', '用大白话描述，AI 帮你整理成 Skill'],
-          ['3. 扫码绑定', '企业微信扫码，一键创建机器人'],
-          ['4. 发绑定码', '在企业微信里发一句话完成配对'],
+          ['3. 扫码绑定', '企业微信或微信扫码，一键获得机器人'],
+          ['4. 发绑定码', '给机器人发一句话完成配对'],
         ].map(([title, text]) => (
           <div key={title} style={{ ...sectionStyle, marginBottom: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>{title}</div>

@@ -4,6 +4,7 @@ import * as store from '../works-store.js'
 import { streamChat } from '../agent.js'
 import { createLogger } from '../logger.js'
 import type { MemoryScope } from '../memory/memory-types.js'
+import type { ChannelProfileChatOptions } from './channel-profile.js'
 
 const log = createLogger('channel-manager')
 
@@ -70,6 +71,10 @@ export async function runChannelChat(
     memoryScope?: MemoryScope
     /** Called when ask_user tool fires — channel should send options to user and wait for reply */
     askUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>
+    /** Lets /stop and /new interrupt the running turn. */
+    abortController?: AbortController
+    /** Per-turn agent options from a channel profile (e.g. a dedicated agent). */
+    profileOptions?: ChannelProfileChatOptions
   },
 ): Promise<{ text: string; images: string[]; toolCalls: store.ContentBlock[]; timing: store.ContentBlock | null }> {
   let text = ''
@@ -88,7 +93,8 @@ export async function runChannelChat(
   let stepIndex = 0
   const seenToolIds = new Set<string>()
 
-  for await (const event of streamChat(messages, settings, undefined, {
+  for await (const event of streamChat(messages, settings, opts?.abortController, {
+    ...(opts?.profileOptions ?? {}),
     streaming: false,
     channelPermissionMode: opts?.channelPermissionMode ?? 'full',
     memoryScope: opts?.memoryScope,
@@ -151,6 +157,7 @@ export async function runChannelChat(
     } else if (event.type === 'done') {
       break
     }
+    if (opts?.abortController?.signal.aborted) break
   }
 
   // Account for trailing LLM text generation after the last tool
