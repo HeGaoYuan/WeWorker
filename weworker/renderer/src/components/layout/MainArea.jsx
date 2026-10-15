@@ -15,6 +15,8 @@ import { useExplorationPageStore } from '../../store/exploration-page.js'
 import ExplorationPage from '../exploration/ExplorationPage.jsx'
 import WebsiteExplorationPage from '../website-exploration/WebsiteExplorationPage.jsx'
 import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
+import DedicatedAgentsPage from '../dedicated-agents/DedicatedAgentsPage.jsx'
+import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
 
 export default function MainArea({ onOpenSettings }) {
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
@@ -23,6 +25,7 @@ export default function MainArea({ onOpenSettings }) {
   const toolPackageOpen = useToolPackagePageStore((s) => s.open)
   const explorationOpen = useExplorationPageStore((s) => s.open)
   const websiteOpen = useWebsiteExplorationStore((s) => s.open)
+  const dedicatedAgentsOpen = useDedicatedAgentsStore((s) => s.open)
   const closeExplorationPage = useExplorationPageStore((s) => s.closePage)
   const closeToolPackagePage = useToolPackagePageStore((s) => s.closePage)
   const [inputText, setInputText] = React.useState('')
@@ -99,6 +102,14 @@ export default function MainArea({ onOpenSettings }) {
 
   if (websiteOpen) {
     return <MainWorkspaceShell><WebsiteExplorationPage onOpenSettings={onOpenSettings} /></MainWorkspaceShell>
+  }
+
+  if (dedicatedAgentsOpen) {
+    return (
+      <MainWorkspaceShell>
+        <DedicatedAgentsPage />
+      </MainWorkspaceShell>
+    )
   }
 
   if (activeWorkId) {

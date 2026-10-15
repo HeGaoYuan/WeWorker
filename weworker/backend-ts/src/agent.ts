@@ -98,8 +98,11 @@ const MODEL_AUTH_ENV_KEYS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
 ]
 
-function ensureIsolatedClaudeConfigDir(platform: NodeJS.Platform = process.platform): string {
-  const dir = path.join(getConfigDirectory(), 'claude-config')
+export function ensureIsolatedClaudeConfigDir(
+  platform: NodeJS.Platform = process.platform,
+  configDir: string = path.join(getConfigDirectory(), 'claude-config'),
+): string {
+  const dir = configDir
   fs.mkdirSync(dir, { recursive: true })
   fs.mkdirSync(path.join(dir, 'skills'), { recursive: true })
   const configFile = path.join(dir, '.claude.json')
@@ -140,6 +143,7 @@ export function buildClaudeNativeShellEnv(
 export function buildConfiguredModelEnv(
   settings: Pick<Settings, 'api_key' | 'base_url'> & Partial<Pick<Settings, 'active_provider' | 'custom_auth_type' | 'active_auth_type'>>,
   extraEnv?: NodeJS.ProcessEnv,
+  claudeConfigDir?: string,
 ): NodeJS.ProcessEnv {
   const env = { ...process.env, ...buildClaudeNativeShellEnv(), ...extraEnv }
   for (const key of MODEL_AUTH_ENV_KEYS) delete env[key]
@@ -154,7 +158,9 @@ export function buildConfiguredModelEnv(
   } else {
     env.ANTHROPIC_API_KEY = settings.api_key
   }
-  env.CLAUDE_CONFIG_DIR = ensureIsolatedClaudeConfigDir()
+  env.CLAUDE_CONFIG_DIR = claudeConfigDir
+    ? ensureIsolatedClaudeConfigDir(process.platform, claudeConfigDir)
+    : ensureIsolatedClaudeConfigDir()
   if (baseUrl !== 'https://api.anthropic.com') {
     env.ANTHROPIC_BASE_URL = baseUrl
   } else {
@@ -943,6 +949,18 @@ async function* streamChatWithBaseUrl(
     forceCompaction?: boolean;
     compactionOnly?: boolean;
     thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    /**
+     * Run against a dedicated CLAUDE_CONFIG_DIR whose skills/ directory the caller
+     * has already populated. Project skills under the user directory and the global
+     * managed-skill refresh are skipped so the run only sees the caller's skills.
+     */
+    isolatedClaudeConfigDir?: string;
+    /** Extra system prompt text appended after the standard WeWorker prompt. */
+    appendSystemPrompt?: string;
+    /** Additional tool guard evaluated before the standard WeWorker policy. */
+    extraToolGuard?: (toolName: string, input: Record<string, unknown>) => { behavior: 'allow' } | { behavior: 'deny'; message: string };
+    /** Additional tools hidden from the model. */
+    extraDisallowedTools?: string[];
   } = {},
 ): AsyncGenerator<SSEEvent> {
   // Claude Code discovers user Skills when each query starts. If a website was
@@ -980,7 +998,7 @@ async function* streamChatWithBaseUrl(
   }
   let queryEnv: NodeJS.ProcessEnv
   try {
-    queryEnv = buildConfiguredModelEnv(settings, claudeSetup.extraEnv)
+    queryEnv = buildConfiguredModelEnv(settings, claudeSetup.extraEnv, opts.isolatedClaudeConfigDir)
   } catch (e) {
     yield { type: 'error', content: e instanceof Error ? e.message : 'LLM base URL is not allowed' }
     return
@@ -991,7 +1009,10 @@ async function* streamChatWithBaseUrl(
   // skills so visitors get plain text answers instead of silent tool attempts.
   // Runtime skills are stored under the isolated CLAUDE_CONFIG_DIR/skills,
   // which Claude Code treats as the user skill source.
-  const settingSources: SettingSource[] = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? [] : ['user', 'project']
+  const isolatedSkills = !!opts.isolatedClaudeConfigDir
+  const settingSources: SettingSource[] = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools
+    ? []
+    : isolatedSkills ? ['user'] : ['user', 'project']
   const includePartialMessages = channelPermissionMode === 'qa_only'
     ? false
     : opts.streaming !== false
@@ -1014,16 +1035,25 @@ async function* streamChatWithBaseUrl(
     ...(process.env.WEWORKER_PACKAGED ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 
-  const disallowedTools = buildDisallowedTools(
-    channelPermissionMode,
-    process.platform,
-    opts.restrictBuiltInTools,
-  )
+  const disallowedTools = [
+    ...buildDisallowedTools(
+      channelPermissionMode,
+      process.platform,
+      opts.restrictBuiltInTools,
+    ),
+    ...(opts.extraDisallowedTools ?? []),
+  ]
   const agentCwd = ensureAgentWorkingDirectory()
   const filesystemSettings = buildAgentFilesystemSettings(agentCwd, channelPermissionMode)
   const filesystemToolGuard = createUnifiedToolGuard(channelPermissionMode)
   const toolPolicy = createWeWorkerToolPolicy(channelPermissionMode)
   const canUseTool: typeof toolPolicy = async (toolName, input, context) => {
+    if (opts.extraToolGuard) {
+      const extraDecision = opts.extraToolGuard(toolName, input as Record<string, unknown>)
+      if (extraDecision.behavior === 'deny') {
+        return { behavior: 'deny', message: extraDecision.message, interrupt: false }
+      }
+    }
     const policyDecision = await toolPolicy(toolName, input, context)
     if (!policyDecision) {
       return { behavior: 'deny', message: `Tool permission was not resolved: ${toolName}`, interrupt: false }
@@ -1033,11 +1063,17 @@ async function* streamChatWithBaseUrl(
   }
 
   const memoryEnabled = opts.memoryEnabled !== false && !opts.restrictBuiltInTools
-  const skillRoots = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? [] : [
-    path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
-    path.join(getUserDirectory(), '.claude', 'skills'),
-  ]
-  if (skillRoots.length) refreshDesktopAdapterSkills(skillRoots[0])
+  const skillRoots = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools
+    ? []
+    : isolatedSkills
+      ? [path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills')]
+      : [
+          path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
+          path.join(getUserDirectory(), '.claude', 'skills'),
+        ]
+  // Isolated runs receive a caller-curated skills directory; a global refresh
+  // would write every managed Adapter Skill into it.
+  if (skillRoots.length && !isolatedSkills) refreshDesktopAdapterSkills(skillRoots[0])
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
   log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
@@ -1074,13 +1110,16 @@ async function* streamChatWithBaseUrl(
       previousTaskFailed: opts.previousTaskFailed,
     })
     : ''
-  const systemPrompt = opts.systemPromptOverride ?? buildSystemPrompt({
+  const baseSystemPrompt = opts.systemPromptOverride ?? buildSystemPrompt({
     channelPermissionMode,
     zcfRole: opts.zcfRole,
     zcfMode: opts.zcfMode,
     zcfCustomRoles: settings.zcf_custom_roles,
     memoryProtocol,
   })
+  const systemPrompt = opts.appendSystemPrompt?.trim()
+    ? `${baseSystemPrompt}\n\n${opts.appendSystemPrompt.trim()}`
+    : baseSystemPrompt
   const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
   const buildAssembly = (conversationPrompt: string, compaction?: ConversationCompactionSnapshot) => buildContextAssembly({
     systemPrompt,

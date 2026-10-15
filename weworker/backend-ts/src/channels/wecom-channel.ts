@@ -22,6 +22,8 @@ import { runChannelChat } from './channel-manager.js'
 import { streamChat } from '../agent.js'
 import { resolveZcfPrefs } from '../zcf-sync.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
+import type { ChannelPermissionMode } from './channel-permissions.js'
+import type { MemoryScope } from '../memory/memory-types.js'
 import { resolveToolDisplayName } from '../tools.js'
 import { getSettings } from '../config.js'
 import { generateTitle, generateTitleWithLLM } from '../title-utils.js'
@@ -48,16 +50,91 @@ function stripAtMention(content: string): string {
   return content.replace(/@\S+\s?/g, '').trim()
 }
 
+export type ChannelCommand = '/new' | '/stop' | '/id' | '/myid' | '/help'
+
+const COMMAND_ALIASES: Record<string, ChannelCommand> = {
+  '/new': '/new', '/reset': '/new', '/clear': '/new', '新对话': '/new', '/新对话': '/new', '新建对话': '/new',
+  '/stop': '/stop', '停止': '/stop', '/停止': '/stop',
+  '/id': '/id',
+  '/myid': '/myid',
+  '/help': '/help', '帮助': '/help', '/帮助': '/help',
+}
+
+/**
+ * Recognize channel commands tolerantly: full-width slash, zero-width or
+ * non-breaking spaces and trailing punctuation from IM input methods.
+ */
+export function parseChannelCommand(text: string): ChannelCommand | null {
+  const normalized = String(text ?? '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[／⁄∕]/g, '/')
+    .trim()
+    .replace(/[。.!！?？]+$/u, '')
+    .trim()
+    .toLowerCase()
+  return COMMAND_ALIASES[normalized] ?? null
+}
+
 export interface WecomChannelConfig {
   enabled: boolean
   bot_id: string
   secret: string
 }
 
+export type WecomAccessDecision =
+  | { kind: 'allow'; mode: ChannelPermissionMode }
+  | { kind: 'reply'; text: string }
+
+type StreamChatOptions = NonNullable<Parameters<typeof streamChat>[3]>
+
+/** Extra per-turn agent options a profile may contribute. */
+export type WecomProfileChatOptions = Pick<
+  StreamChatOptions,
+  'isolatedClaudeConfigDir' | 'appendSystemPrompt' | 'extraToolGuard' | 'extraDisallowedTools'
+>
+
+/**
+ * A profile decides who a bot serves and which agent answers.
+ * The default profile keeps the original single-bot behavior; dedicated
+ * agents supply their own profile so several bots can run side by side.
+ */
+export interface WecomChannelProfile {
+  /** Namespace for channel sessions and notify targets. */
+  channelKey: string
+  /** Prefix shown in conversation titles, e.g. 企微 / 企微群聊. */
+  titleLabel(chatType: 'single' | 'group'): string
+  welcomeText(): string
+  /** Called before any other handling. A reply short-circuits the message. */
+  authorize(userId: string, text: string): WecomAccessDecision
+  memoryScope(userId: string): MemoryScope
+  /** May prepare per-turn resources (e.g. an isolated skills directory). */
+  chatOptions(userId: string): WecomProfileChatOptions
+  /** Reject a new turn from the same user while one is still running. */
+  serializeTurns?: boolean
+  helpText?(): string
+  onWorkCreated?(workId: string): void
+}
+
+export function createDefaultWecomProfile(): WecomChannelProfile {
+  return {
+    channelKey: 'wecom',
+    titleLabel: (chatType) => (chatType === 'group' ? '企微群聊' : '企微'),
+    welcomeText: () => '你好！我是 WeWorker 智能助手，有什么可以帮你的吗？发送 /new 开启新对话，发送 /id 查看对话 ID。',
+    authorize: (userId) => ({ kind: 'allow', mode: getChannelPermissionMode('wecom', userId) }),
+    memoryScope: (userId) => ({ user: `wecom:${userId}` }),
+    chatOptions: () => ({}),
+  }
+}
+
 export class WecomChannel implements Channel {
   private _config: WecomChannelConfig
+  private _profile: WecomChannelProfile
 
   private _ws: WebSocket | null = null
+  private _subscribeReqId: string | null = null
+  // In-flight agent turns per user, so /new and /stop can interrupt them
+  private _activeTurns = new Map<string, AbortController>()
   private _running = false
   private _status: ChannelStatus = { status: 'starting' }
   private _heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -71,9 +148,13 @@ export class WecomChannel implements Channel {
   // Pending WebSocket request resolvers: reqId → resolve function
   private _pendingWsRequests = new Map<string, (resp: Record<string, unknown>) => void>()
 
-  constructor(config: WecomChannelConfig) {
+  constructor(config: WecomChannelConfig, profile: WecomChannelProfile = createDefaultWecomProfile()) {
     this._config = config
+    this._profile = profile
+  }
 
+  getBotId(): string {
+    return this._config.bot_id
   }
 
   getStatus(): ChannelStatus {
@@ -95,7 +176,7 @@ export class WecomChannel implements Channel {
     this._status = { status: 'starting' }
 
     // Restore persisted notify target from DB
-    const saved = store.getLatestChannelNotifyTarget('wecom')
+    const saved = store.getLatestChannelNotifyTarget(this._profile.channelKey)
     if (saved?.user_id) {
       this._lastUserId = saved.user_id
       if (saved.extra?.chat_type) this._lastChatType = parseInt(saved.extra.chat_type, 10) || 1
@@ -142,7 +223,8 @@ export class WecomChannel implements Channel {
 
     // Persist to work
     try {
-      const { work } = store.getOrCreateChannelWork('wecom', this._lastUserId, '')
+      const { work, created } = store.getOrCreateChannelWork(this._profile.channelKey, this._lastUserId, '')
+      if (created) this._profile.onWorkCreated?.(work.id)
       store.appendMessage(work.id, 'assistant', [{ type: 'text', text }])
       store.markExternalWrite()
     } catch (e) {
@@ -384,10 +466,11 @@ export class WecomChannel implements Channel {
     }
 
     this._ws.on('open', () => {
-      log.info('WebSocket connected, subscribing...')
+      log.info(`[${this._profile.channelKey}] WebSocket connected, subscribing...`)
+      this._subscribeReqId = randomUUID()
       this._send({
         cmd: 'aibot_subscribe',
-        headers: { req_id: randomUUID() },
+        headers: { req_id: this._subscribeReqId },
         body: {
           bot_id: this._config.bot_id,
           secret: this._config.secret,
@@ -471,14 +554,18 @@ export class WecomChannel implements Channel {
       return
     }
 
-    // Subscribe response
+    // Subscribe response (ping acks share this shape, so match the subscribe req_id)
     if (reqId && errcode !== undefined && !cmd) {
+      // Pings only start after a successful subscribe, so before that any ack is the subscribe reply.
+      const isSubscribeReply = reqId === this._subscribeReqId || this._status.status !== 'connected'
+      if (!isSubscribeReply) return
+      this._subscribeReqId = null
       if (errcode === 0) {
-        log.info('subscribe success')
+        log.info(`[${this._profile.channelKey}] subscribe success`)
         this._status = { status: 'connected' }
         this._startHeartbeat()
       } else {
-        log.error(`subscribe failed: ${data.errmsg}`)
+        log.error(`[${this._profile.channelKey}] subscribe failed: ${data.errmsg}`)
         this._status = { status: 'error', error: `订阅失败: ${data.errmsg}` }
       }
       return
@@ -509,7 +596,7 @@ export class WecomChannel implements Channel {
         headers: { req_id: headers.req_id },
         body: {
           msgtype: 'text',
-          text: { content: '你好！我是 WeWorker 智能助手，有什么可以帮你的吗？发送 /new 开启新对话，发送 /id 查看对话 ID。' },
+          text: { content: this._profile.welcomeText() },
         },
       })
     } else if (event?.eventtype === 'disconnected_event') {
@@ -553,35 +640,61 @@ export class WecomChannel implements Channel {
     }
     if (!text) return
 
+    const replyOnce = (content: string) => this._send({
+      cmd: 'aibot_respond_msg',
+      headers: { req_id: reqId },
+      body: { msgtype: 'stream', stream: { id: randomUUID(), finish: true, content } },
+    })
+
+    const access = this._profile.authorize(userId, text)
+    if (access.kind === 'reply') {
+      replyOnce(access.text)
+      return
+    }
+    const channelKey = this._profile.channelKey
+
     // Cache user info for sendNotification
     this._lastUserId = chatType === 'single' ? userId : (chatId ?? userId)
     this._lastChatType = chatType === 'single' ? 1 : 2
-    store.saveChannelNotifyTarget('wecom', this._lastUserId, {
+    store.saveChannelNotifyTarget(channelKey, this._lastUserId, {
       chat_type: String(this._lastChatType),
       user_id: userId,
     })
 
+    // Commands take priority over a pending ask_user question, so /new always works.
+    const command = parseChannelCommand(text)
+    log.info(`[${channelKey}] message from ${userId.slice(0, 4)}…${command ? ` command=${command}` : ''}`)
+
+    if (command === '/help' && this._profile.helpText) {
+      replyOnce(this._profile.helpText())
+      return
+    }
+
+    if (command === '/new' || command === '/stop') {
+      const interrupted = this._interruptUser(userId)
+      if (command === '/stop') {
+        replyOnce(interrupted ? '已停止当前任务。' : '当前没有正在执行的任务。')
+        return
+      }
+      const fresh = store.resetChannelWork(channelKey, userId, '')
+      this._profile.onWorkCreated?.(fresh.id)
+      store.markExternalWrite()
+      log.info(`[${channelKey}] new conversation ${fresh.id.slice(0, 8)}${interrupted ? ' (previous task stopped)' : ''}`)
+      replyOnce(interrupted ? '已停止上一个任务，并开启新对话 ✓' : '已开启新对话 ✓')
+      return
+    }
+
     // Check if there's a pending ask_user choice for this user
     const pendingResolver = this._pendingChoiceResolvers.get(userId)
-    if (pendingResolver) {
+    if (pendingResolver && !command) {
       this._pendingChoiceResolvers.delete(userId)
       pendingResolver(text.trim())
       return
     }
 
-    // Handle slash commands
-    if (text === '/new') {
-      store.resetChannelWork('wecom', userId, '')
-      this._send({
-        cmd: 'aibot_respond_msg',
-        headers: { req_id: reqId },
-        body: { msgtype: 'stream', stream: { id: randomUUID(), finish: true, content: '已开启新对话 ✓' } },
-      })
-      return
-    }
-
-    if (text === '/id') {
-      const existing = store.getOrCreateChannelWork('wecom', userId, '')
+    if (command === '/id') {
+      const existing = store.getOrCreateChannelWork(channelKey, userId, '')
+      if (existing.created) this._profile.onWorkCreated?.(existing.work.id)
       const shortId = existing.work.id.slice(0, 8)
       this._send({
         cmd: 'aibot_respond_msg',
@@ -591,7 +704,7 @@ export class WecomChannel implements Channel {
       return
     }
 
-    if (text === '/myid') {
+    if (command === '/myid') {
       this._send({
         cmd: 'aibot_respond_msg',
         headers: { req_id: reqId },
@@ -611,12 +724,48 @@ export class WecomChannel implements Channel {
       return
     }
 
-    const { work } = store.getOrCreateChannelWork('wecom', userId, '')
+    if (this._profile.serializeTurns && this._activeTurns.has(userId)) {
+      replyOnce('⏳ 上一个请求还在处理中。发送 /stop 可停止它，发送 /new 可停止并开启新对话。')
+      return
+    }
+    const abortController = new AbortController()
+    this._activeTurns.set(userId, abortController)
+    try {
+      await this._runTurn({ reqId, userId, chatType, chatId, text, settings, mode: access.mode, abortController })
+    } finally {
+      if (this._activeTurns.get(userId) === abortController) this._activeTurns.delete(userId)
+    }
+  }
+
+  /** Abort the user's running turn and drop a pending ask_user question. */
+  private _interruptUser(userId: string): boolean {
+    this._pendingChoiceResolvers.delete(userId)
+    const active = this._activeTurns.get(userId)
+    if (!active) return false
+    this._activeTurns.delete(userId)
+    active.abort()
+    return true
+  }
+
+  private async _runTurn(turn: {
+    reqId: string
+    userId: string
+    chatType: string
+    chatId: string | undefined
+    text: string
+    settings: ReturnType<typeof getSettings>
+    mode: ChannelPermissionMode
+    abortController: AbortController
+  }): Promise<void> {
+    const { reqId, userId, chatType, chatId, text, settings } = turn
+    const channelKey = this._profile.channelKey
+    const { work, created } = store.getOrCreateChannelWork(channelKey, userId, '')
+    if (created) this._profile.onWorkCreated?.(work.id)
     store.appendMessage(work.id, 'user', [{ type: 'text', text }])
     store.markExternalWrite()
 
     // Auto-title
-    const sourceLabel = chatType === 'group' ? '企微群聊' : '企微'
+    const sourceLabel = this._profile.titleLabel(chatType === 'group' ? 'group' : 'single')
     if (!work.title) {
       store.updateTitle(work.id, `（${sourceLabel}）${generateTitle(text)}`)
       generateTitleWithLLM(text, settings).then(llmTitle => {
@@ -702,17 +851,20 @@ export class WecomChannel implements Channel {
       })
     }
 
-    const channelPermissionMode = getChannelPermissionMode('wecom', userId)
+    const channelPermissionMode = turn.mode
     const zcfPrefs = resolveZcfPrefs(work, settings)
+    let chatFailure: unknown = null
 
     try {
-      for await (const event of streamChat(wm.messages, settings, undefined, {
+      const profileOptions = this._profile.chatOptions(userId)
+      for await (const event of streamChat(wm.messages, settings, turn.abortController, {
+        ...profileOptions,
         streaming: true,
         workId: work.id,
         zcfRole: zcfPrefs.zcfRole,
         zcfMode: zcfPrefs.zcfMode,
         channelPermissionMode,
-        memoryScope: { user: `wecom:${userId}` },
+        memoryScope: this._profile.memoryScope(userId),
         channelAskUserHandler: askUserHandler,
       })) {
         if (event.type === 'skill_context' && event.skillContext) {
@@ -796,9 +948,30 @@ export class WecomChannel implements Channel {
         } else if (event.type === 'done') {
           break
         }
+        if (turn.abortController.signal.aborted) break
       }
     } catch (e) {
-      log.error('chat error:', e)
+      if (!turn.abortController.signal.aborted) {
+        log.error('chat error:', e)
+        chatFailure = e
+      }
+    }
+    if (turn.abortController.signal.aborted) {
+      if (assistantContent.length > 0 || currentTextChunk.trim()) {
+        if (currentTextChunk.trim()) assistantContent.push({ type: 'text', text: currentTextChunk })
+        assistantContent.push({ type: 'text', text: '（已停止）' })
+        store.appendMessage(work.id, 'assistant', assistantContent)
+        store.markExternalWrite()
+      }
+      this._send({
+        cmd: 'aibot_respond_msg',
+        headers: { req_id: reqId },
+        body: { msgtype: 'stream', stream: { id: streamId, finish: true, content: `${fullText ? `${fullText}\n\n` : ''}（已停止）` } },
+      })
+      return
+    }
+    if (chatFailure) {
+      const e = chatFailure
       this._send({
         cmd: 'aibot_respond_msg',
         headers: { req_id: reqId },

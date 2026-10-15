@@ -182,6 +182,73 @@ export default function SettingsPage({ onClose }) {
   )
 }
 
+function SwitchField({ checked, disabled, onChange, label }) {
+  return (
+    <label className="settings-switch-row" style={disabled ? { opacity: 0.55 } : undefined}>
+      <AppSwitch checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <span className="settings-switch-label">{label}</span>
+    </label>
+  )
+}
+
+/** Keep WeWorker running so dedicated agents stay online. Saved immediately. */
+function BackgroundSettingsGroup() {
+  const [settings, setSettings] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI?.getAppSettings?.().then((value) => { if (!cancelled) setSettings(value || null) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  if (!settings) return null
+  const update = async (patch) => {
+    setError('')
+    try {
+      const saved = await window.electronAPI?.setAppSettings?.(patch)
+      if (saved) setSettings(saved)
+    } catch (err) {
+      setError(err?.message || '保存失败')
+    }
+  }
+
+  return (
+    <div className="settings-group">
+      <SettingRow
+        title="后台运行"
+        description="专属 Agent 由 WeWorker 在本机提供服务，WeWorker 退出后它们会停止回复企业微信消息"
+        stacked
+      >
+        <div className="settings-update-settings">
+          {settings.closeToTraySupported && (
+            <SwitchField
+              checked={settings.closeToTray}
+              onChange={(closeToTray) => update({ closeToTray })}
+              label="关闭窗口时最小化到系统托盘，保持后台运行"
+            />
+          )}
+          <SwitchField
+            checked={settings.launchAtLogin}
+            disabled={!settings.launchAtLoginSupported}
+            onChange={(launchAtLogin) => update({ launchAtLogin })}
+            label="开机自动启动 WeWorker（在后台启动，不弹出窗口）"
+          />
+          {!settings.launchAtLoginSupported && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>开发模式下不可用，安装后的客户端默认开启。</div>
+          )}
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {settings.platform === 'darwin'
+              ? '关闭窗口后 WeWorker 仍在运行，可通过菜单栏图标或程序坞打开；按 ⌘Q 或在菜单栏图标中退出。'
+              : '真正退出请右键系统托盘中的 WeWorker 图标，选择「退出 WeWorker」。'}
+          </div>
+          {error && <div style={{ fontSize: 12, color: 'var(--error, #ef4444)' }}>{error}</div>}
+        </div>
+      </SettingRow>
+    </div>
+  )
+}
+
 function AboutTab({ appVersion, commitHash }) {
   const [updateState, setUpdateState] = useState(null)
   const [checking, setChecking] = useState(false)
@@ -307,6 +374,8 @@ function AboutTab({ appVersion, commitHash }) {
           <InfoLine label="下载" value={DOWNLOAD_URL} href={DOWNLOAD_URL} />
         </div>
       </div>
+
+      <BackgroundSettingsGroup />
 
       <div className="settings-group">
         <SettingRow
