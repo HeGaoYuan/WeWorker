@@ -134,7 +134,7 @@ import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
 import type { MemoryParseOutcome } from './memory/memory-extractor.js'
 import { getMemoryStore, type MemoryStore } from './memory/memory-store.js'
 import {
-  enforceMemoryBudget,
+  enforceConfiguredMemoryBudget,
   resolveMemoryBudgetKey,
   summarizeMemoryBudgetUsage,
   type MemoryBudgetKey,
@@ -3534,23 +3534,9 @@ function enforceMemoryBudgetAfterWrite(
   memoryType: string | undefined,
   tag: string,
 ): void {
-  try {
-    const budgetType = resolveMemoryBudgetKey(memoryType)
-    if (!budgetType) return
-    const budgets = normalizeMemoryBudgets(getSettings().memory_budgets)
-    const result = enforceMemoryBudget(memoryStore, budgetType, budgets[budgetType])
-    chatLog.info(`${tag} memory_budget_enforced`, {
-      type: budgetType,
-      before: result.before,
-      after: result.after,
-      consolidated: result.consolidated.length,
-      evicted: result.evicted.length,
-    })
-  } catch (error) {
-    chatLog.info(`${tag} memory_budget_enforced_failed`, {
-      error: error instanceof Error ? error.message : String(error),
-    })
-  }
+  enforceConfiguredMemoryBudget(memoryStore, memoryType, getSettings().memory_budgets, (payload) => {
+    chatLog.info(`${tag} memory_budget_enforced`, payload)
+  })
 }
 
 app.get('/memory/settings', (_req, res) => {

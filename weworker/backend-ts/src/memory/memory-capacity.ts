@@ -271,3 +271,36 @@ export function enforceMemoryBudget(
 
   return { before, after: used, consolidated, evicted }
 }
+
+/**
+ * 按当前配置的预算执行容量管理，供对话路径（server.ts）与定时任务路径（task-executor.ts）共用。
+ * `log` 只接收数量与用量，调用方不得把记忆正文写进日志。
+ * 任何异常都被吞掉：容量管理绝不能影响记忆写入或上层响应。
+ */
+export function enforceConfiguredMemoryBudget(
+  store: MemoryStore,
+  memoryType: string | undefined,
+  budgets: MemoryBudgets,
+  log?: (payload: {
+    type: MemoryBudgetKey
+    before: number
+    after: number
+    consolidated: number
+    evicted: number
+  }) => void,
+): void {
+  try {
+    const budgetType = resolveMemoryBudgetKey(memoryType)
+    if (!budgetType) return
+    const result = enforceMemoryBudget(store, budgetType, budgets[budgetType])
+    log?.({
+      type: budgetType,
+      before: result.before,
+      after: result.after,
+      consolidated: result.consolidated.length,
+      evicted: result.evicted.length,
+    })
+  } catch {
+    // 容量管理失败不影响记忆写入与响应，调用方无需感知
+  }
+}
