@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Settings } from '../config.js'
 import type { Message } from '../works-store.js'
 
-const mocks = vi.hoisted(() => ({ query: vi.fn(), directory: '' }))
+const mocks = vi.hoisted(() => ({ query: vi.fn(), directory: '', mcpContexts: [] as unknown[] }))
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: mocks.query }))
 vi.mock('../config.js', () => ({
   getConfigDirectory: () => mocks.directory,
@@ -14,7 +14,13 @@ vi.mock('../config.js', () => ({
   getUserDirectoryBlacklist: () => [],
   getSiteEnabled: () => false,
 }))
-vi.mock('../tools.js', () => ({ buildMcpServer: () => ({}), getMcpToolDefinitionSummary: () => '' }))
+vi.mock('../tools.js', () => ({
+  buildMcpServer: (context: unknown) => {
+    mocks.mcpContexts.push(context)
+    return {}
+  },
+  getMcpToolDefinitionSummary: () => '',
+}))
 vi.mock('../logger.js', () => ({ createLogger: () => ({ info() {}, error() {}, warn() {}, debug() {} }) }))
 vi.mock('../zcf-sync.js', () => ({ composeSystemPromptWithZcf: (prompt: string) => prompt }))
 vi.mock('../adapter-parser.js', () => ({ parseAllAdapters: () => new Map() }))
@@ -34,6 +40,7 @@ import {
   sweepIdleChatSessions,
   CHAT_SESSION_IDLE_MS,
   CHAT_SESSION_MAX_SESSIONS,
+  CHAT_SESSION_WARM_IDLE_MS,
 } from '../chat-session.js'
 import { clearDesktopAdapterCatalogCache } from '../adapter-catalog-cache.js'
 
@@ -108,6 +115,7 @@ beforeEach(() => {
   vi.stubEnv('WEWORKER_CLAUDE_CODE_PATH', process.execPath)
   clearDesktopAdapterCatalogCache()
   mocks.query.mockReset()
+  mocks.mcpContexts.length = 0
 })
 
 afterEach(() => {
@@ -229,13 +237,72 @@ describe('desktop chat session reuse', () => {
   })
 })
 
+describe('chat session pre-start', () => {
+  async function warmup(overrides: Record<string, unknown> = {}, turnSettings = settings, messages: Message[] = []) {
+    for await (const _event of streamChat(messages, turnSettings, undefined, { ...baseOptions, warmupOnly: true, ...overrides })) { /* drain */ }
+  }
+
+  it('starts a work session before the first message and uses it for that turn', async () => {
+    const sessions = installFakeCli()
+    const history = [message('u0', '旧问题'), message('a0', '旧回答', 'assistant')]
+    await warmup({}, settings, history)
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].received).toEqual([])
+    expect(listChatSessions()).toEqual([{ workId: 'work-a', busy: false, turns: 0 }])
+    // A second warm-up is a no-op while the session exists.
+    await warmup({}, settings, history)
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+
+    await collect([...history, message('u1', '新问题')])
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    // The warm CLI has no history yet, so the first turn carries the full replay.
+    expect(sessions[0].received[0]).toContain(HISTORY_REPLAY_HEADER)
+    expect(sessions[0].received[0]).toContain('新问题')
+    expect(listChatSessions()).toEqual([{ workId: 'work-a', busy: false, turns: 1 }])
+  })
+
+  it('binds a spare session to the first new work that matches its configuration', async () => {
+    const sessions = installFakeCli()
+    await warmup({ workId: undefined })
+    expect(listChatSessions()).toEqual([])
+    const context = mocks.mcpContexts.at(-1) as { workIdRef: { current: string | null } }
+    expect(context.workIdRef.current).toBeNull()
+
+    await collect([message('u1', '第一问')])
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].received).toEqual(['第一问'])
+    expect(context.workIdRef.current).toBe('work-a')
+    expect(listChatSessions()).toEqual([{ workId: 'work-a', busy: false, turns: 1 }])
+  })
+
+  it('keeps a spare built for another configuration and starts a separate session', async () => {
+    const sessions = installFakeCli()
+    await warmup({ workId: undefined }, { ...settings, model: 'other-model' })
+    await collect([message('u1', '第一问')])
+    expect(mocks.query).toHaveBeenCalledTimes(2)
+    expect(sessions[0].closed).toBe(false)
+    expect(sessions[1].received).toEqual(['第一问'])
+    disposeAllChatSessions('test')
+    expect(sessions[0].closed).toBe(true)
+  })
+
+  it('closes unused warm sessions sooner than idle conversations', async () => {
+    const sessions = installFakeCli()
+    await warmup()
+    await warmup({ workId: undefined })
+    sweepIdleChatSessions(Date.now() + CHAT_SESSION_WARM_IDLE_MS + 1)
+    expect(listChatSessions()).toEqual([])
+    expect(sessions.every((session) => session.closed)).toBe(true)
+  })
+})
+
 describe('chat session pool', () => {
   function fakeSession(workId: string) {
     const close = vi.fn()
     const session = new ChatSession({
       workId,
       fingerprint: 'fixture',
-      bindings: { onAskUser: null, memory: { userPromptInjections: 0, postToolBatchInjections: 0 } },
+      bindings: { workIdRef: { current: workId }, onAskUser: null, memory: { userPromptInjections: 0, postToolBatchInjections: 0 } },
       queue: new PromptQueue(),
       query: { async *[Symbol.asyncIterator]() {}, close },
     })

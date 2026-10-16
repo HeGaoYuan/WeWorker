@@ -28,8 +28,11 @@ import {
   PromptQueue,
   disposeChatSession,
   findReusableChatSession,
+  hasChatSession,
+  hasSpareChatSession,
   isChatSessionBusy,
   registerChatSession,
+  registerSpareChatSession,
   type ChatHistoryEntry,
   type ChatTurnBindings,
 } from './chat-session.js'
@@ -1022,6 +1025,11 @@ async function* streamChatWithBaseUrl(
      * Later turns send only the new message; see chat-session.ts for reuse rules.
      */
     reuseSession?: boolean;
+    /**
+     * With reuseSession: prepare the turn and start the CLI without sending a
+     * message. Without workId the session waits as the spare for the next new work.
+     */
+    warmupOnly?: boolean;
     [STREAM_CHAT_INTERNAL]?: StreamChatInternalOptions;
   } = {},
 ): AsyncGenerator<SSEEvent> {
@@ -1036,7 +1044,7 @@ async function* streamChatWithBaseUrl(
   // Session reuse is limited to the plain desktop path: channel handlers, custom
   // prompts/tools and compaction-only runs keep the one-off query behavior.
   const sessionMode = opts.reuseSession === true
-    && !!opts.workId
+    && (!!opts.workId || opts.warmupOnly === true)
     && !!internal
     && opts.streaming !== false
     && channelPermissionMode === 'full'
@@ -1048,6 +1056,7 @@ async function* streamChatWithBaseUrl(
     && !opts.compactionOnly
   // Callbacks that a reused session must take from the current turn.
   const turnBindings: ChatTurnBindings = {
+    workIdRef: { current: opts.workId ?? null },
     onAskUser: opts.onAskUser ?? null,
     extraToolGuard: opts.extraToolGuard,
     memory: { userPromptInjections: 0, postToolBatchInjections: 0 },
@@ -1441,12 +1450,14 @@ async function* streamChatWithBaseUrl(
   // Session mode: reuse this work's live CLI when its configuration and history match.
   const history: ChatHistoryEntry[] = messages.map((message) => ({ id: message.id, role: message.role }))
   const recalledMemoryBlock = longTermMemory.recalled ? `${RECALLED_MEMORY_HEADER}\n${longTermMemory.recalled}\n\n` : ''
+  // A new (or still unused warm) session has seen no history: send replay + current message.
+  const fullFirstPrompt = recalledMemoryBlock ? `${recalledMemoryBlock}${contextAssembly.sdk.prompt}` : contextAssembly.sdk.prompt
   let session: ChatSession | undefined
-  let sessionState: 'cold' | 'new' | 'reused' = 'cold'
+  let sessionState: 'cold' | 'new' | 'reused' | 'prewarmed' = 'cold'
   let turnMessages: AsyncIterable<SDKMessage>
   let closeTurn: () => void
-  if (sessionMode && internal && opts.workId && !isChatSessionBusy(opts.workId)) {
-    const workId = opts.workId
+  if (sessionMode && internal && (!opts.workId || !isChatSessionBusy(opts.workId))) {
+    const workId = opts.workId ?? null
     const fingerprint = sha256(JSON.stringify({
       model: settings.model,
       baseUrl: internal.sessionBaseUrl,
@@ -1467,30 +1478,18 @@ async function* streamChatWithBaseUrl(
       openBrowserOrigins: envWithWebcli.WEWORKER_ALLOWED_OPEN_BROWSER_ORIGINS,
       path: envWithWebcli.PATH,
     }))
-    const reusable = needsCompaction ? undefined : findReusableChatSession(workId, fingerprint, history)
-    if (!reusable && needsCompaction) disposeChatSession(workId, 'compaction')
-    let firstPrompt: string
-    if (reusable) {
-      session = reusable
-      sessionState = 'reused'
-      reusable.bindings.onAskUser = turnBindings.onAskUser
-      reusable.bindings.extraToolGuard = turnBindings.extraToolGuard
-      reusable.bindings.memory = turnBindings.memory
-      activeBindings = reusable.bindings
-      // The CLI already holds the conversation and loaded Skills: send only the new message.
-      firstPrompt = `${recalledMemoryBlock}${messagePromptText(messages[messages.length - 1])}`
-    } else {
+    const startSession = (): ChatSession => {
       const sessionAbort = new AbortController()
       const queue = new PromptQueue()
       const bindings = turnBindings
       const sessionMcp = _buildMcpServer({
         channelPermissionMode,
-        workId,
+        workIdRef: bindings.workIdRef,
         askUserSSECallback: (event) => bindings.onAskUser?.(event),
         channelAskUserHandler: null,
       })
       const releaseRuntime = internal.adoptModelRuntime()
-      const created = new ChatSession({
+      return new ChatSession({
         workId,
         fingerprint,
         bindings,
@@ -1502,15 +1501,57 @@ async function* streamChatWithBaseUrl(
           await releaseRuntime()
         },
       })
+    }
+
+    if (opts.warmupOnly) {
+      // Start the CLI now so the user's first message skips its startup.
+      const exists = workId ? hasChatSession(workId) : hasSpareChatSession()
+      if (!exists) {
+        const warm = startSession()
+        if (workId) registerChatSession(warm)
+        else registerSpareChatSession(warm)
+        log.info('chat_session_prewarmed', {
+          work_id: workId ? sha256(workId).slice(0, 12) : null,
+          spare: !workId,
+          prepare_ms: Date.now() - phase.startedAt,
+        })
+      }
+      yield { type: 'done' }
+      return
+    }
+
+    const turnWorkId = workId!
+    const reusable = needsCompaction ? undefined : findReusableChatSession(turnWorkId, fingerprint, history)
+    if (!reusable && needsCompaction) disposeChatSession(turnWorkId, 'compaction')
+    let firstPrompt: string
+    if (reusable) {
+      session = reusable
+      const prewarmed = reusable.fresh
+      sessionState = prewarmed ? 'prewarmed' : 'reused'
+      reusable.bindings.workIdRef.current = turnWorkId
+      reusable.bindings.onAskUser = turnBindings.onAskUser
+      reusable.bindings.extraToolGuard = turnBindings.extraToolGuard
+      reusable.bindings.memory = turnBindings.memory
+      activeBindings = reusable.bindings
+      // A live CLI already holds the conversation and loaded Skills: send only the new message.
+      firstPrompt = prewarmed
+        ? fullFirstPrompt
+        : `${recalledMemoryBlock}${messagePromptText(messages[messages.length - 1])}`
+    } else {
+      const created = startSession()
       registerChatSession(created)
       session = created
       sessionState = 'new'
-      firstPrompt = recalledMemoryBlock ? `${recalledMemoryBlock}${contextAssembly.sdk.prompt}` : contextAssembly.sdk.prompt
+      firstPrompt = fullFirstPrompt
     }
     const activeSession = session
     turnMessages = activeSession.runTurn(userTurnMessage(firstPrompt))
-    closeTurn = () => disposeChatSession(workId, 'aborted', activeSession)
+    closeTurn = () => disposeChatSession(turnWorkId, 'aborted', activeSession)
   } else {
+    if (opts.warmupOnly) {
+      yield { type: 'done' }
+      return
+    }
     const queryHandle = query(buildQueryParams(contextAssembly.sdk.prompt, {
       systemPrompt: contextAssembly.sdk.system_prompt,
     }) as Parameters<typeof query>[0])

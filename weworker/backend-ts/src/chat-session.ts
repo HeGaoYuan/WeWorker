@@ -15,6 +15,14 @@
  * - Idle sessions are closed after CHAT_SESSION_IDLE_MS and the pool keeps at
  *   most CHAT_SESSION_MAX_SESSIONS processes. Process-tree cleanup on exit is
  *   handled by claude-process.ts; an idle CLI also exits when its stdin closes.
+ *
+ * Pre-start (warm-up): while the user types, the Renderer asks the Backend to
+ * start the CLI ahead of the first turn. A work-bound warm session waits in the
+ * pool; a "spare" session for a conversation that has no work yet (welcome
+ * screen) waits in a single slot and is bound to the work on its first turn.
+ * A warm session has not seen any history, so its first turn sends the full
+ * prompt like a new session. Unused warm sessions close after
+ * CHAT_SESSION_WARM_IDLE_MS.
  */
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createLogger } from './logger.js'
@@ -23,6 +31,7 @@ const log = createLogger('chat-session')
 
 export const CHAT_SESSION_IDLE_MS = 10 * 60_000
 export const CHAT_SESSION_MAX_SESSIONS = 3
+export const CHAT_SESSION_WARM_IDLE_MS = 3 * 60_000
 const SWEEP_INTERVAL_MS = 60_000
 
 type AskUserEvent = { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }
@@ -30,6 +39,8 @@ type ToolGuard = (toolName: string, input: Record<string, unknown>) => { behavio
 
 /** Callbacks owned by the current turn. A reused session rebinds them before every turn. */
 export interface ChatTurnBindings {
+  /** Work used by the session's MCP tools; set when a spare session is bound to a work. */
+  workIdRef: { current: string | null }
   onAskUser: ((event: AskUserEvent) => void) | null
   extraToolGuard?: ToolGuard
   memory: { userPromptInjections: number; postToolBatchInjections: number }
@@ -80,7 +91,7 @@ export interface ChatSessionQuery extends AsyncIterable<SDKMessage> {
 }
 
 export class ChatSession {
-  readonly workId: string
+  workId: string | null
   readonly fingerprint: string
   readonly bindings: ChatTurnBindings
   busy = false
@@ -88,6 +99,7 @@ export class ChatSession {
   lastUsedAt = Date.now()
   completedTurns = 0
   private consumedIds: string[] = []
+  private started = false
   private closeStarted = false
   private iterator: AsyncIterator<SDKMessage> | undefined
   private readonly queue: PromptQueue
@@ -95,7 +107,7 @@ export class ChatSession {
   private readonly onClose?: () => void | Promise<void>
 
   constructor(input: {
-    workId: string
+    workId: string | null
     fingerprint: string
     bindings: ChatTurnBindings
     queue: PromptQueue
@@ -116,7 +128,10 @@ export class ChatSession {
    * then only this session's own assistant replies, then one new user message.
    */
   continues(history: ChatHistoryEntry[]): boolean {
-    if (this.closed || this.busy || this.consumedIds.length === 0) return false
+    if (this.closed || this.busy) return false
+    // A warm session holds no history yet; its first turn carries the full prompt.
+    if (this.fresh) return history.length > 0 && history[history.length - 1].role === 'user'
+    if (this.consumedIds.length === 0) return false
     if (history.length <= this.consumedIds.length) return false
     for (let index = 0; index < this.consumedIds.length; index++) {
       if (history[index]?.id !== this.consumedIds[index]) return false
@@ -126,9 +141,21 @@ export class ChatSession {
     return added.slice(0, -1).every((entry) => entry.role === 'assistant')
   }
 
+  /** True until the first turn starts: the CLI has been started but holds no conversation. */
+  get fresh(): boolean {
+    return !this.started && this.completedTurns === 0
+  }
+
+  /** Bind a spare session to the work whose first turn it serves. */
+  adoptWork(workId: string): void {
+    this.workId = workId
+    this.bindings.workIdRef.current = workId
+  }
+
   /** Send one user message and yield SDK messages until that turn's result. */
   async *runTurn(message: SDKUserMessage): AsyncGenerator<SDKMessage> {
     if (this.closed) throw new Error('Chat session is closed')
+    this.started = true
     this.busy = true
     this.lastUsedAt = Date.now()
     this.queue.push(message)
@@ -173,6 +200,8 @@ export class ChatSession {
 }
 
 const sessions = new Map<string, ChatSession>()
+/** Pre-started session for a conversation that has no work yet. */
+let spare: ChatSession | null = null
 let sweeper: ReturnType<typeof setInterval> | null = null
 
 function ensureSweeper(): void {
@@ -182,13 +211,42 @@ function ensureSweeper(): void {
 }
 
 function stopSweeperIfEmpty(): void {
-  if (sessions.size > 0 || !sweeper) return
+  if (sessions.size > 0 || spare || !sweeper) return
   clearInterval(sweeper)
   sweeper = null
 }
 
 export function isChatSessionBusy(workId: string): boolean {
   return sessions.get(workId)?.busy === true
+}
+
+/** Whether the work already has a live session (used to skip redundant warm-ups). */
+export function hasChatSession(workId: string): boolean {
+  const session = sessions.get(workId)
+  return !!session && !session.closed
+}
+
+export function hasSpareChatSession(): boolean {
+  return !!spare && !spare.closed
+}
+
+/** Keep one pre-started session for the next new conversation, replacing an older one. */
+export function registerSpareChatSession(session: ChatSession): void {
+  if (spare && spare !== session) spare.close('replaced')
+  spare = session
+  ensureSweeper()
+}
+
+function takeSpareChatSession(fingerprint: string): ChatSession | undefined {
+  if (!spare || spare.closed) {
+    spare = null
+    return undefined
+  }
+  // A spare built for another configuration stays for a matching conversation or expires.
+  if (spare.fingerprint !== fingerprint) return undefined
+  const taken = spare
+  spare = null
+  return taken
 }
 
 /**
@@ -201,7 +259,13 @@ export function findReusableChatSession(
   history: ChatHistoryEntry[],
 ): ChatSession | undefined {
   const session = sessions.get(workId)
-  if (!session) return undefined
+  if (!session) {
+    const adopted = takeSpareChatSession(fingerprint)
+    if (!adopted) return undefined
+    adopted.adoptWork(workId)
+    registerChatSession(adopted)
+    return adopted
+  }
   if (session.closed) {
     sessions.delete(workId)
     stopSweeperIfEmpty()
@@ -220,16 +284,18 @@ export function findReusableChatSession(
 }
 
 export function registerChatSession(session: ChatSession): void {
-  const existing = sessions.get(session.workId)
+  const workId = session.workId
+  if (!workId) throw new Error('A pooled chat session needs a work')
+  const existing = sessions.get(workId)
   if (existing && existing !== session) existing.close('replaced')
-  sessions.set(session.workId, session)
+  sessions.set(workId, session)
   // Keep the process count bounded; only idle sessions can be evicted.
   const idle = [...sessions.values()]
     .filter((entry) => entry !== session && !entry.busy)
     .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
   while (sessions.size > CHAT_SESSION_MAX_SESSIONS && idle.length > 0) {
     const oldest = idle.shift()!
-    sessions.delete(oldest.workId)
+    if (oldest.workId) sessions.delete(oldest.workId)
     oldest.close('evicted')
   }
   ensureSweeper()
@@ -253,22 +319,40 @@ export function disposeChatSession(workId: string, reason: string, only?: ChatSe
   stopSweeperIfEmpty()
 }
 
+function idleLimit(session: ChatSession): number {
+  return session.fresh ? CHAT_SESSION_WARM_IDLE_MS : CHAT_SESSION_IDLE_MS
+}
+
 export function sweepIdleChatSessions(now = Date.now()): void {
   for (const [workId, session] of sessions) {
-    if (session.closed || (!session.busy && now - session.lastUsedAt > CHAT_SESSION_IDLE_MS)) {
+    if (session.closed || (!session.busy && now - session.lastUsedAt > idleLimit(session))) {
       sessions.delete(workId)
       session.close(session.closed ? 'process_ended' : 'idle_timeout')
     }
   }
+  if (spare && (spare.closed || now - spare.lastUsedAt > CHAT_SESSION_WARM_IDLE_MS)) {
+    const expired = spare
+    spare = null
+    expired.close(expired.closed ? 'process_ended' : 'idle_timeout')
+  }
+  stopSweeperIfEmpty()
+}
+
+export function disposeSpareChatSession(reason: string): void {
+  if (!spare) return
+  const current = spare
+  spare = null
+  current.close(reason)
   stopSweeperIfEmpty()
 }
 
 export function disposeAllChatSessions(reason = 'shutdown'): void {
   for (const workId of [...sessions.keys()]) disposeChatSession(workId, reason)
+  disposeSpareChatSession(reason)
 }
 
 /** Test and diagnostics view. */
-export function listChatSessions(): Array<{ workId: string; busy: boolean; turns: number }> {
+export function listChatSessions(): Array<{ workId: string | null; busy: boolean; turns: number }> {
   return [...sessions.values()].map((session) => ({
     workId: session.workId,
     busy: session.busy,

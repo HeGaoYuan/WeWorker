@@ -7,7 +7,7 @@ import MessageList from './MessageList.jsx'
 import ChatBottomDock from './ChatBottomDock.jsx'
 import WelcomeScreen from '../welcome/WelcomeScreen.jsx'
 import HealthCheckPanel from './HealthCheckPanel.jsx'
-import { setContextCompactionLifecycleHandler, streamChat, submitUserChoice } from '../../api/backend.js'
+import { requestChatWarmup, setContextCompactionLifecycleHandler, streamChat, submitUserChoice } from '../../api/backend.js'
 import { backendFetch } from '../../api/http.js'
 import { displayToolName } from '../../utils/tool-name.js'
 import { formatDuration } from '../../utils/format-duration.js'
@@ -661,6 +661,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
           contextSnapshot={contextSnapshot}
           onZcfRoleChange={handleZcfRoleChange}
           onZcfModeChange={handleZcfModeChange}
+          onWarmup={(thinkingEffort) => requestChatWarmup(workId, { thinkingEffort })}
         />
       )}
     </div>
