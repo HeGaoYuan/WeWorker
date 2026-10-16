@@ -171,7 +171,7 @@ export class WecomChannel implements Channel {
 
     // Persist to work
     try {
-      const { work, created } = store.getOrCreateChannelWork(this._profile.channelKey, this._lastUserId, '')
+      const { work, created } = store.getOrCreateChannelWork(this._profile.channelKey, this._lastUserId, '', this._profile.projectId?.() ?? null)
       if (created) this._profile.onWorkCreated?.(work.id)
       store.appendMessage(work.id, 'assistant', [{ type: 'text', text }])
       store.markExternalWrite()
@@ -624,7 +624,7 @@ export class WecomChannel implements Channel {
         replyOnce(interrupted ? '已停止当前任务。' : '当前没有正在执行的任务。')
         return
       }
-      const fresh = store.resetChannelWork(channelKey, userId, '')
+      const fresh = store.resetChannelWork(channelKey, userId, '', this._profile.projectId?.() ?? null)
       this._profile.onWorkCreated?.(fresh.id)
       store.markExternalWrite()
       log.info(`[${channelKey}] new conversation ${fresh.id.slice(0, 8)}${interrupted ? ' (previous task stopped)' : ''}`)
@@ -707,7 +707,7 @@ export class WecomChannel implements Channel {
   }): Promise<void> {
     const { reqId, userId, chatType, chatId, text, settings } = turn
     const channelKey = this._profile.channelKey
-    const { work, created } = store.getOrCreateChannelWork(channelKey, userId, '')
+    const { work, created } = store.getOrCreateChannelWork(channelKey, userId, '', this._profile.projectId?.() ?? null)
     if (created) this._profile.onWorkCreated?.(work.id)
     store.appendMessage(work.id, 'user', [{ type: 'text', text }])
     store.markExternalWrite()

@@ -92,6 +92,15 @@ afterEach(() => {
 })
 
 describe('WeChat channel with a dedicated agent profile', () => {
+  it('keeps new and reset conversations in the dedicated project', async () => {
+    captureFetch()
+    const channel = new WeixinChannel({ token: 'placeholder-token' }, agentProfile({ projectId: () => 'fixture-project' }))
+    await handle(channel, inbound('hello'))
+    expect(mocks.getOrCreateChannelWork).toHaveBeenCalledWith('agent:fixture', 'owner-user', '', 'fixture-project')
+    await handle(channel, inbound('/new'))
+    expect(mocks.resetChannelWork).toHaveBeenCalledWith('agent:fixture', 'owner-user', '', 'fixture-project')
+  })
+
   it('answers strangers from the profile without running the agent', async () => {
     const sent = captureFetch()
     const channel = new WeixinChannel({ token: 'placeholder-token' }, agentProfile())
@@ -106,7 +115,7 @@ describe('WeChat channel with a dedicated agent profile', () => {
     const profile = agentProfile()
     const channel = new WeixinChannel({ token: 'placeholder-token' }, profile)
     await handle(channel, inbound('check stock'))
-    expect(mocks.getOrCreateChannelWork).toHaveBeenCalledWith('agent:fixture', 'owner-user', '')
+    expect(mocks.getOrCreateChannelWork).toHaveBeenCalledWith('agent:fixture', 'owner-user', '', null)
     expect(profile.onWorkCreated).toHaveBeenCalledWith('work-1')
     expect(mocks.updateTitle).toHaveBeenCalledWith('work-1', '（Example Operations Assistant）fixture title')
     const options = mocks.runChannelChat.mock.calls[0][2]
@@ -127,7 +136,7 @@ describe('WeChat channel with a dedicated agent profile', () => {
     await handle(channel, inbound('／stop'))
     await handle(channel, inbound('新对话'))
     expect(sent.map((entry) => entry.text)).toEqual(['fixture help', '当前没有正在执行的任务。', '已开启新对话 ✓'])
-    expect(mocks.resetChannelWork).toHaveBeenCalledWith('agent:fixture', 'owner-user', '')
+    expect(mocks.resetChannelWork).toHaveBeenCalledWith('agent:fixture', 'owner-user', '', null)
     expect(profile.onWorkCreated).toHaveBeenCalledWith('work-2')
     expect(mocks.runChannelChat).not.toHaveBeenCalled()
   })

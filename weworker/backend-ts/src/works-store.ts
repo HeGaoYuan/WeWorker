@@ -342,7 +342,8 @@ export function deleteMessages(messageIds: string[]): void {
 export function getOrCreateChannelWork(
   channelType: string,
   externalUserId: string,
-  displayName: string
+  displayName: string,
+  projectId: string | null = null,
 ): { work: Work; created: boolean } {
   const row = db().prepare('SELECT work_id FROM channel_sessions WHERE channel_type = ? AND external_user_id = ?').get(
     channelType, externalUserId
@@ -353,17 +354,27 @@ export function getOrCreateChannelWork(
     if (work) return { work, created: false }
   }
 
-  const work = createWork(displayName)
+  const work = createWork(displayName, projectId)
   db().prepare('INSERT OR REPLACE INTO channel_sessions (channel_type, external_user_id, work_id) VALUES (?, ?, ?)').run(
     channelType, externalUserId, work.id
   )
   return { work, created: true }
 }
 
-export function resetChannelWork(channelType: string, externalUserId: string, displayName = ''): Work {
+export function resetChannelWork(channelType: string, externalUserId: string, displayName = '', projectId: string | null = null): Work {
   db().prepare('DELETE FROM channel_sessions WHERE channel_type = ? AND external_user_id = ?').run(channelType, externalUserId)
-  const work = createWork(displayName)
+  const work = createWork(displayName, projectId)
   db().prepare('INSERT INTO channel_sessions (channel_type, external_user_id, work_id) VALUES (?, ?, ?)').run(
+    channelType, externalUserId, work.id
+  )
+  return work
+}
+
+/** Bind an external channel user to an existing desktop-visible work. */
+export function bindChannelWork(channelType: string, externalUserId: string, workId: string): Work | null {
+  const work = getWork(workId)
+  if (!work) return null
+  db().prepare('INSERT OR REPLACE INTO channel_sessions (channel_type, external_user_id, work_id) VALUES (?, ?, ?)').run(
     channelType, externalUserId, work.id
   )
   return work

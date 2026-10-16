@@ -3276,9 +3276,10 @@ html.dark .tool-exec-group__detail {
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 0 168px;
+  padding: 0 24px 168px;
   position: relative;
   background: var(--bg-secondary);
+  box-sizing: border-box;
 }
 
 .message-list-scroll__inner {

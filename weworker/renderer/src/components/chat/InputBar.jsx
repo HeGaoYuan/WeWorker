@@ -649,12 +649,13 @@ export default function InputBar({
           flexShrink: 0,
         }
       : {
-          padding: '12px 20px 16px',
+          padding: '12px 32px 16px',
           borderTop: 'none',
           background: 'transparent',
           maxWidth: 1184,
           width: '100%',
           margin: '0 auto',
+          boxSizing: 'border-box',
           pointerEvents: 'none',
         }
 

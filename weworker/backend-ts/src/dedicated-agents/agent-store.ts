@@ -39,8 +39,10 @@ export interface DedicatedAgentRecord {
   owner_user_id: string
   /** One-time code the owner sends to the bot to pair; '' after pairing. */
   pairing_code: string
-  /** Conversations created by this agent; hidden from the main task list. */
+  /** Conversations created by this agent; also visible in the main task list. */
   work_ids: string[]
+  /** Main conversation project containing this agent's conversations. */
+  project_id?: string
   created_at: string
   updated_at: string
 }
@@ -63,6 +65,7 @@ export interface DedicatedAgentInput extends AgentBotInput {
   site_id: string
   skill_name?: string
   examples?: string[]
+  project_id?: string
 }
 
 export interface DedicatedAgentPatch {
@@ -73,6 +76,7 @@ export interface DedicatedAgentPatch {
   examples?: string[]
   enabled?: boolean
   bot?: AgentBotInput
+  project_id?: string
 }
 
 /** Bots already used outside dedicated agents (the main 设置 → 通道). */
@@ -289,6 +293,7 @@ export function createAgent(input: DedicatedAgentInput, options: ReservedBots = 
     owner_user_id: '',
     pairing_code: generatePairingCode(),
     work_ids: [],
+    project_id: String(input.project_id ?? '').trim(),
     created_at: now,
     updated_at: now,
   }
@@ -324,6 +329,7 @@ export function updateAgent(id: string, patch: DedicatedAgentPatch, options: Res
     if (patch.skill_name !== undefined) agent.skill_name = normalizeSkillName(patch.skill_name)
     if (patch.examples !== undefined) agent.examples = cleanExamples(patch.examples)
     if (patch.enabled !== undefined) agent.enabled = patch.enabled === true
+    if (patch.project_id !== undefined) agent.project_id = String(patch.project_id ?? '').trim()
     if (patch.bot) {
       const bot = validateBot(patch.bot)
       assertBotUnused(all, bot, agent.id, options)

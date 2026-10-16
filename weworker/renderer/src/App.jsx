@@ -230,6 +230,8 @@ export default function App() {
     useExplorationPageStore.getState().closePage()
     useDedicatedAgentsStore.getState().closePage()
     setActiveSidebarSection('conversation')
+    // 专属 Agent 创建的项目/会话可能刚刚由后端写入，切回主对话时刷新列表。
+    await loadWorks()
     useToolPackagePageStore.getState().closePage()
     useScheduledTasksStore.setState({ activeTaskId: null })
     useCapabilitiesPanelStore.getState().closePanel()
@@ -510,7 +512,7 @@ export default function App() {
           )}
           {showSettings
             ? <SettingsPage onClose={() => setShowSettings(false)} />
-            : <MainArea onOpenSettings={() => setShowSettings((current) => !current)} />}
+            : <MainArea sidebarWidth={sidebarWidth} onOpenSettings={() => setShowSettings((current) => !current)} />}
         </div>
       </div>
       {showExtensionGuide && <ExtensionGuide onClose={() => setShowExtensionGuide(false)} />}

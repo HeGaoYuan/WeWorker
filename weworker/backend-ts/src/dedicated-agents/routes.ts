@@ -4,6 +4,8 @@
  */
 import type express from 'express'
 import { getSettings } from '../config.js'
+import { clearStoredConversationCompaction } from '../agent.js'
+import { disposeChatSession } from '../chat-session.js'
 import { parseAllAdapters, type ParsedAdapter } from '../adapter-parser.js'
 import * as works from '../works-store.js'
 import { createLogger } from '../logger.js'
@@ -117,6 +119,42 @@ function parseScope(value: unknown, fallback: SkillScope): SkillScope {
 
 function conversationView(work: works.Work) {
   return { id: work.id, title: work.title, updated_at: work.updated_at, created_at: work.created_at }
+}
+
+function workspaceConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /already exists|UNIQUE constraint/i.test(message)
+}
+
+function createAgentWorkspace(agentName: string): { project: works.ProjectSummary; work: works.Work } {
+  const base = `专属 Agent - ${String(agentName || '未命名 Agent').trim()}`
+  for (let index = 0; index < 100; index += 1) {
+    const projectName = index === 0 ? base : `${base} (${index + 1})`
+    let project: works.ProjectSummary | null = null
+    try {
+      project = works.createProject(projectName)
+    } catch (error) {
+      if (workspaceConflict(error)) continue
+      throw error
+    }
+    try {
+      const work = works.createWork(String(agentName || '').trim(), project.id)
+      return { project, work }
+    } catch (error) {
+      try { works.deleteProject(project.id) } catch { /* preserve original error */ }
+      throw error
+    }
+  }
+  throw new DedicatedAgentError('无法创建专属 Agent 工作区，请先清理同名项目')
+}
+
+function agentProjectId(agent: DedicatedAgentRecord): string | null {
+  if (agent.project_id && works.getProject(agent.project_id)) return agent.project_id
+  for (const workId of agent.work_ids) {
+    const projectId = works.getWork(workId)?.project_id
+    if (projectId && works.getProject(projectId)) return projectId
+  }
+  return null
 }
 
 export function registerDedicatedAgentRoutes(app: express.Express, deps: DedicatedAgentRouteDeps = {}): void {
@@ -342,8 +380,9 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
   app.post('/dedicated-agents/:id/conversations', (req, res) => {
     try {
       const agent = requireAgent(req.params.id)
-      const work = works.createWork('')
+      const work = works.createWork('新对话', agentProjectId(agent))
       addAgentWork(agent.id, work.id)
+      works.markExternalWrite()
       res.json({ conversation: conversationView(work) })
     } catch (error) {
       sendError(res, error)
@@ -355,6 +394,8 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       const agent = requireAgent(req.params.id)
       if (!agent.work_ids.includes(req.params.workId)) throw new DedicatedAgentError('对话不存在', 404)
       removeAgentWork(agent.id, req.params.workId)
+      disposeChatSession(req.params.workId, 'work_deleted')
+      clearStoredConversationCompaction(req.params.workId)
       works.deleteWork(req.params.workId)
       works.markExternalWrite()
       res.json({ ok: true })
@@ -371,16 +412,28 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       assertSkillExists(skillName)
       const resolved = resolveBot(body)
       if (!resolved) throw new DedicatedAgentError('请先扫码绑定机器人')
-      const agent = createAgent({
-        name: String(body.name ?? ''),
-        description: String(body.description ?? ''),
-        site_id: adapter.id,
-        skill_name: skillName,
-        examples: Array.isArray(body.examples) ? body.examples as string[] : [],
-        ...resolved.bot,
-      }, reservedBots())
+      const workspace = createAgentWorkspace(String(body.name ?? ''))
+      let agent: DedicatedAgentRecord
+      try {
+        agent = createAgent({
+          name: String(body.name ?? ''),
+          description: String(body.description ?? ''),
+          site_id: adapter.id,
+          skill_name: skillName,
+          examples: Array.isArray(body.examples) ? body.examples as string[] : [],
+          ...resolved.bot,
+          project_id: workspace.project.id,
+        }, reservedBots())
+        addAgentWork(agent.id, workspace.work.id)
+        agent = requireAgent(agent.id)
+      } catch (error) {
+        try { works.deleteWork(workspace.work.id) } catch { /* preserve original error */ }
+        try { works.deleteProject(workspace.project.id) } catch { /* preserve original error */ }
+        throw error
+      }
       resolved.consume()
       await startAgentChannel(agent)
+      works.markExternalWrite()
       res.json({ agent: viewWithStatus(agent) })
     } catch (error) {
       sendError(res, error)
@@ -425,7 +478,11 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       deleteAgent(agent.id)
       const deleteConversations = req.query.keep_conversations !== '1'
       if (deleteConversations) {
-        for (const workId of agent.work_ids) works.deleteWork(workId)
+        for (const workId of agent.work_ids) {
+          disposeChatSession(workId, 'work_deleted')
+          clearStoredConversationCompaction(workId)
+          works.deleteWork(workId)
+        }
         works.markExternalWrite()
       }
       removeAgentRuntime(agent.id)

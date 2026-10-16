@@ -19,7 +19,7 @@ import DedicatedAgentsPage from '../dedicated-agents/DedicatedAgentsPage.jsx'
 import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
 import { requestChatWarmup } from '../../api/backend.js'
 
-export default function MainArea({ onOpenSettings }) {
+export default function MainArea({ onOpenSettings, sidebarWidth }) {
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
   const createWork = useWorksStore((s) => s.createWork)
   const activeTaskId = useScheduledTasksStore((s) => s.activeTaskId)
@@ -108,7 +108,7 @@ export default function MainArea({ onOpenSettings }) {
   if (dedicatedAgentsOpen) {
     return (
       <MainWorkspaceShell>
-        <DedicatedAgentsPage />
+        <DedicatedAgentsPage sidebarWidth={sidebarWidth} />
       </MainWorkspaceShell>
     )
   }

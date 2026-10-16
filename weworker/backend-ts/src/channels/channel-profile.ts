@@ -60,6 +60,8 @@ export interface ChannelProfile {
   chatOptions(userId: string): ChannelProfileChatOptions
   /** Reject a new turn from the same user while one is still running. */
   serializeTurns?: boolean
+  /** Project used for conversations created by this profile. */
+  projectId?(): string | null
   helpText?(): string
   onWorkCreated?(workId: string): void
 }
