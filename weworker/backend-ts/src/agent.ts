@@ -194,6 +194,21 @@ export function buildDisallowedTools(
     'CronCreate',
     'CronDelete',
     'AskUserQuestion',
+    // Hide definitions as well as denying execution in createWeWorkerToolPolicy.
+    // These SDK tools are not supported by WeWorker, even in full mode.
+    'EnterWorktree',
+    'ExitWorktree',
+    'ListAgents',
+    'ReportFindings',
+    'ScheduleWakeup',
+    'SendMessage',
+    'TaskCreate',
+    'TaskGet',
+    'TaskList',
+    'TaskStop',
+    'TaskUpdate',
+    'WebSearch',
+    'Workflow',
     alternateCommandTool,
   ]
   const restrictedBuiltInTools = [
@@ -205,7 +220,6 @@ export function buildDisallowedTools(
     'Write',
     'NotebookEdit',
     'TodoWrite',
-    'WebSearch',
   ]
   if (channelPermissionMode === 'qa_only' || restrictBuiltInTools) {
     return [...baseDisallowed, nativeCommandTool, ...restrictedBuiltInTools]
@@ -1001,6 +1015,8 @@ async function* streamChatWithBaseUrl(
     mcpServerOverride?: ReturnType<typeof _buildMcpServer>;
     restrictBuiltInTools?: boolean;
     memoryScope?: MemoryScope;
+    /** siteGate 预注入的站点工具清单（server.ts 计算；与 loadedSkills 同通道前缀进 prompt）。 */
+    siteToolkitPrompt?: string;
     memoryEnabled?: boolean;
     memoryExpectedType?: import('./memory/memory-types.js').MemoryType;
     memoryTriggerHint?: import('./memory/memory-types.js').MemoryEventTrigger | 'chat';
@@ -1175,6 +1191,10 @@ async function* streamChatWithBaseUrl(
   const skillContextCollector = createSkillContextCollector(skillRoots)
   log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
   phase.mark('loaded_skill_replay')
+  // siteGate 预注入与 loadedSkills 走同一通道（同为 prompt 前缀）：命中站点时把该站点的工具速查
+  // 放在最前，模型首轮即可直接调用，不必先「激活 Skill」。未命中时为空串，逐字节等价于今天。
+  const siteToolkitPrompt = String(opts.siteToolkitPrompt ?? '').trim()
+  const skillContextPrefix = [siteToolkitPrompt, loadedSkills].filter(Boolean).join('\n\n')
   const storedCompactedConversation = getStoredCompactedConversation(opts.workId, messages)
   const conversationMessages: Message[] = storedCompactedConversation
     ? [{
@@ -1233,7 +1253,7 @@ async function* streamChatWithBaseUrl(
       'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
     ].join('\n'),
     skillIndex,
-    loadedSkills,
+    loadedSkills: skillContextPrefix,   
     mcpDynamicTools: opts.mcpServerOverride ? '' : getMcpToolDefinitionSummary(channelPermissionMode),
     subagentDefinitions: '',
     recalledMemory: longTermMemory.recalled,
