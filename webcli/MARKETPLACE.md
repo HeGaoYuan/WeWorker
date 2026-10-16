@@ -10,14 +10,24 @@ Chrome 扩展运行在浏览器沙箱中，外部进程无法直接调用。WebC
 
 ## 使用
 
-安装后由 Agent 自动完成 webcli 命令的安装/更新和适配器 skill 生成，用户只需一次性在 Chrome 加载扩展（`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序）。之后用自然语言驱动即可，例如：
+桌面端已内置 WebCLI；单独使用命令行工具时执行：
+
+```bash
+# 只装命令行工具
+npm install -g weworker-webcli
+
+# 或者让 AI 助手连「操作指令」一起装好
+npx skills add https://unpkg.com/weworker-webcli/skills/webcli/SKILL.md
+```
+
+装完后对 AI 说一句 **「帮我完成 webcli 首次准备」**，它会把扩展目录和需要你手动做的步骤直接列出来。（也可以自己在 Chrome 加载：`chrome://extensions/` → 开发者模式 → 加载已解压的扩展程序，目录用 `webcli extension-path` 查）。之后用自然语言驱动即可，例如：
 
 - 「搜下京东上的手机」→ 自动打开京东并搜索
-- 「查我的 ITSM 待办工单」→ 搜索 ITSM 工单
-- 「看下 163 邮箱未读邮件」→ 读取邮件列表
-- 「帮我提个 ECC 单子」→ 自动填写并提交工单
+- 「看下我 163 邮箱的未读邮件」→ 读取邮件列表
+- 「看看知乎热榜」→ 打开知乎并读取热榜
+- 「帮我查下明天北京到上海的高铁」→ 打开 12306 查询
 - 「截个图」→ 截取当前页面
 
 ## 支持场景
 
-京东购物/下单/订单查询、ITSM 工单提交/审批、163 邮箱 / Gmail / QQ 邮箱、小红书、诺诺发票、ProjectDemo 产品管理、SCM 配置管理、Pace+、ExpenseDemo 费控、内部文档等。
+电商购物（京东、1688、闲鱼）、社媒与内容（B 站、知乎、微博、抖音、小红书、贴吧、豆瓣、36Kr）、新闻与参考（Hacker News、Wikipedia、arXiv）、邮箱（163、QQ、Gmail）、出行与票务（12306、携程）、招聘（51job、BOSS 直聘）、开发者（GitHub、Gitee、V2EX、掘金、有道云笔记）、点评与金融（大众点评、什么值得买、雪球）等。
