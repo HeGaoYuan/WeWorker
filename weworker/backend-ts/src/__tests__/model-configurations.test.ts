@@ -152,8 +152,12 @@ describe('multiple model configurations', () => {
     const second = createModelConfiguration(state, 'deepseek')
     state = { ...state, ...second.updates }
     expect(first.id).not.toBe(second.id)
+    // 模型名没有内置默认值：新配置的模型为空，未选定前不允许激活。
+    expect(state.model_configurations[second.id].model).toBe('')
+    expect(() => activateModelConfiguration(state, second.id)).toThrow()
+    state = { ...state, ...updateModelConfiguration(state, second.id, { model: 'second-default' }) }
     state = { ...state, ...activateModelConfiguration(state, second.id) }
-    expect(state).toMatchObject({ api_key: 'first-key', model: 'deepseek-v4-flash' })
+    expect(state).toMatchObject({ api_key: 'first-key', model: 'second-default' })
     state = { ...state, ...updateModelConfiguration(state, second.id, { api_key: 'second-key', model: 'second-model', context_limit: 400000 }) }
     state = { ...state, ...activateModelConfiguration(state, first.id) }
     expect(state).toMatchObject({ api_key: 'first-key', model: 'first-model', context_limit: 200000 })

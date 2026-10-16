@@ -1,8 +1,9 @@
-import React, { useId, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { CheckOutlined, DownOutlined } from '@ant-design/icons'
 import { dropdownMenuItemClassName } from './dropdown-menu-styles.js'
 import { DropdownMenuPortal, useDropdownDismiss } from './DropdownMenuPortal.jsx'
 import StyleKindIcon from './StyleKindIcon.jsx'
+import { buildCustomOption, filterDropdownOptions } from '../../utils/dropdown-select.js'
 
 export default function AppDropdownSelect({
   value,
@@ -21,20 +22,86 @@ export default function AppDropdownSelect({
   fallbackOption,
   menuHeader,
   required = false,
+  // 可选能力：默认关闭，不传时组件行为、DOM 结构与可访问性属性与旧版完全一致。
+  searchable = false,
+  allowCustom = false,
+  searchPlaceholder = '搜索',
+  customOptionLabel,
 }) {
   const listId = useId()
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
+  const searchInputRef = useRef(null)
 
-  const selected = options.find((item) => item.value === value) || fallbackOption || options[0]
-  const closeMenu = () => setOpen(false)
+  // allowCustom 时即使没有可选列表也允许打开菜单；默认仍受空列表限制。
+  const canOpenMenu = allowCustom || options.length > 0
+  const matchedOption = options.find((item) => item.value === value)
+  // allowCustom 下，value 不在 options 里时直接显示用户填写的值，不回退到 options[0]。
+  const customSelection = !matchedOption && allowCustom && String(value ?? '').trim()
+    ? { value, label: String(value).trim() }
+    : null
+  const selected = matchedOption || customSelection || fallbackOption || options[0]
+
+  const closeMenu = () => {
+    setOpen(false)
+    setQuery('')
+  }
 
   useDropdownDismiss(open, closeMenu, triggerRef, menuRef)
 
+  // 菜单打开时自动聚焦搜索框（菜单由 Portal 延迟一帧挂载，所以放到下一帧执行）。
+  useEffect(() => {
+    if (!open || !searchable) return undefined
+    const raf = requestAnimationFrame(() => searchInputRef.current?.focus())
+    return () => cancelAnimationFrame(raf)
+  }, [open, searchable])
+
   const toggleOpen = () => {
-    if (disabled || options.length === 0) return
+    if (disabled || !canOpenMenu) return
     setOpen((current) => !current)
+  }
+
+  const visibleOptions = searchable ? filterDropdownOptions(options, query) : options
+  // 只有 allowCustom 且输入了与已有选项不重复的值时才出现自定义行。
+  const customOption = allowCustom ? buildCustomOption(query, options) : null
+  const customOptionText = customOption
+    ? (typeof customOptionLabel === 'function' && customOptionLabel(customOption.value)) || `使用 “${customOption.value}”`
+    : ''
+
+  const commitValue = (nextValue) => {
+    onChange?.(nextValue)
+    closeMenu()
+    triggerRef.current?.focus()
+  }
+
+  const focusFirstOption = () => {
+    menuRef.current?.querySelector('[role="option"]:not(:disabled)')?.focus()
+  }
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      focusFirstOption()
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (customOption) {
+        commitValue(customOption.value)
+        return
+      }
+      const only = visibleOptions.length === 1 ? visibleOptions[0] : null
+      if (only && !disabled && !only.disabled) commitValue(only.value)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeMenu()
+      triggerRef.current?.focus()
+    }
   }
 
   return (
@@ -43,7 +110,7 @@ export default function AppDropdownSelect({
         ref={triggerRef}
         type="button"
         className="app-dropdown-select__trigger"
-        disabled={disabled || options.length === 0}
+        disabled={disabled || !canOpenMenu}
         onClick={toggleOpen}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -78,6 +145,24 @@ export default function AppDropdownSelect({
         placement={placement}
         className={menuClassName}
       >
+        {searchable ? (
+          <div className="app-dropdown-select__search">
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="app-dropdown-select__search-input"
+              value={query}
+              placeholder={searchPlaceholder}
+              role="combobox"
+              aria-label={ariaLabel ? `${ariaLabel} 搜索` : '搜索'}
+              aria-expanded={open}
+              aria-controls={listId}
+              aria-autocomplete="list"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
+            />
+          </div>
+        ) : null}
         {menuHeader}
         <div id={listId} role="listbox" aria-label={ariaLabel} onKeyDown={(event) => {
           const items = [...event.currentTarget.querySelectorAll('[role="option"]:not(:disabled)')]
@@ -94,7 +179,7 @@ export default function AppDropdownSelect({
             triggerRef.current?.focus()
           }
         }}>
-          {options.map((option) => (
+          {visibleOptions.map((option) => (
             <button
               key={option.value}
               type="button"
@@ -125,6 +210,23 @@ export default function AppDropdownSelect({
               <DropdownMenuCheck selected={value === option.value} />
             </button>
           ))}
+          {customOption ? (
+            <button
+              type="button"
+              role="option"
+              aria-selected={value === customOption.value}
+              onClick={() => commitValue(customOption.value)}
+              className={`${dropdownMenuItemClassName({ selected: value === customOption.value })} app-dropdown-select__custom-option`}
+            >
+              <span className="app-dropdown-menu-item__label">{customOptionText}</span>
+              <DropdownMenuCheck selected={value === customOption.value} />
+            </button>
+          ) : null}
+          {searchable && !customOption && visibleOptions.length === 0 ? (
+            <div className="app-dropdown-select__empty" role="presentation">
+              {String(query).trim() ? '没有匹配项' : '暂无可选内容，可直接输入'}
+            </div>
+          ) : null}
         </div>
       </DropdownMenuPortal>
     </div>

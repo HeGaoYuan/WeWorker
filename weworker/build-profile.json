@@ -74,12 +74,8 @@
     {
       "id": "anthropic",
       "name": "Anthropic",
-      "models": [
-        "claude-sonnet-4-6",
-        "claude-opus-4-6",
-        "claude-haiku-4-5-20251001"
-      ],
-      "defaultModel": "claude-sonnet-4-6",
+      "models": [],
+      "defaultModel": "",
       "weworker": {
         "protocol": "anthropic_messages",
         "baseUrl": "https://api.anthropic.com"
@@ -94,11 +90,8 @@
     {
       "id": "glm",
       "name": "智谱 coding plan",
-      "models": [
-        "glm-5.2",
-        "glm-4.7"
-      ],
-      "defaultModel": "glm-5.2",
+      "models": [],
+      "defaultModel": "",
       "weworker": {
         "protocol": "anthropic_messages",
         "baseUrl": "https://open.bigmodel.cn/api/anthropic"
@@ -113,11 +106,8 @@
     {
       "id": "deepseek",
       "name": "DeepSeek",
-      "models": [
-        "deepseek-v4-flash",
-        "deepseek-v4-pro"
-      ],
-      "defaultModel": "deepseek-v4-flash",
+      "models": [],
+      "defaultModel": "",
       "weworker": {
         "protocol": "anthropic_messages",
         "baseUrl": "https://api.deepseek.com/anthropic"

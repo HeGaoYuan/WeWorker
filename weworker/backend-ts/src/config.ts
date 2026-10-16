@@ -337,25 +337,27 @@ const DEFAULTS: Settings = {
 
   base_url: 'https://api.anthropic.com',
 
-  model: 'claude-sonnet-4-6',
+  // 模型名是供应商侧的数据（随时会改名或上下架），构建期不写死默认值；
+  // 激活供应商时以模型列表接口返回为准，取不到则由用户在模型下拉中手填。
+  model: '',
 
   context_limit: DEFAULT_CONTEXT_LIMIT,
 
   api_key_anthropic: '',
 
-  model_anthropic: 'claude-sonnet-4-6',
+  model_anthropic: '',
 
   context_limit_anthropic: DEFAULT_CONTEXT_LIMIT,
 
   api_key_glm: '',
 
-  model_glm: 'glm-5.2',
+  model_glm: '',
 
   context_limit_glm: DEFAULT_CONTEXT_LIMIT,
 
   api_key_deepseek: '',
 
-  model_deepseek: 'deepseek-v4-flash',
+  model_deepseek: '',
 
   context_limit_deepseek: DEFAULT_CONTEXT_LIMIT,
 
