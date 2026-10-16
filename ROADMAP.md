@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-16：修复 Windows 卸载残留：托盘后台和网站探索agent子进程可能在 NSIS 删除安装目录前仍占用 Electron DLL 与 `resources`，导致卸载后留下文件。新增 `customRemoveFiles`，卸载时结束 WeWorker/Webwright 进程树、等待句柄释放后递归删除安装目录；用户数据目录仍保留。补充打包配置测试；未构建完整安装器或在真实安装/卸载流程中验收。
+- 2026-10-16：为网站探索agent的 Windows PyInstaller 可执行文件补充 WeWorker 版本资源。构建时动态生成 VERSIONINFO，文件属性包含 ProductName/CompanyName「WeWorker」、描述、产品版本、原始文件名等关键字，保留现有 Webwright.exe 文件名和 embedded onedir 结构；补充分发契约测试。验证：distribution 契约测试 10 项通过、Python 语法检查通过；未在本次变更中构建完整 Windows 安装包或进行安全软件白名单实机验收。
 - 2026-10-16：整合本地专属 Agent 工作区改动：创建草稿立即入列表，向导支持名称编辑、必填提示及步骤保留；列表尺寸与对话侧栏对齐。创建成功生成专属项目和首个同名对话，主对话页与 Agent 页共用 work_id，企业微信/微信配对与后续新对话沿用该项目；旧会话取消主列表过滤。合入 #90、#94 后保留两边更新记录，Backend 8 文件 77 项、Renderer 全量 275 项测试及两端构建通过；未验证真实扫码和打包界面。
 - 2026-10-16：将本地思考关闭功能整合到最新 dev-1.1.0 会话预启动实现。菜单新增「关」并默认关闭；未知模型通过 extra body 显式发送 disabled，开关变化触发会话重建，预启动与正式请求保持一致；模型总耗时和工具等待不再标作思考。合入 #90 后解决 agent 导入冲突，同时保留即时输出过滤器；公开 profile 准备后 Backend 53 项、Renderer 7 项聚焦测试及两端构建通过。未验证第三方线上服务是否遵循参数或承诺提速。
 - 2026-10-15：桌面端新对话首轮预启动。用户在输入框开始输入时（每个对话目标 60 秒内最多一次，`!` 命令不触发），Renderer 调用 `POST /works/:id/warmup`（已有对话、专属 Agent 对话）或 `POST /chat/warmup`（欢迎页，尚无 work）；Backend 按与 `/works/:id/chat` 相同的选项完成准备并提前启动 Claude Code CLI，欢迎页的备用会话在首条消息创建 work 后按配置指纹绑定，MCP 工具改为调用时解析 work。预启动会话首轮发送完整提示；配置不一致时不使用；未使用的预启动会话 3 分钟关闭，同一目标的并发预启动只执行一次。验证：Backend 类型检查、全量 106 文件 859 项（新增预启动 4 项）、public bundle；Renderer 全量 268 项（新增 4 项）与生产构建通过。本机真实 CLI + 本地假模型端点、模拟输入 8 秒：新对话首字由约 10.5 s 降到约 0.8–1.8 s。未验证：真实模型与打包版 Electron 下的效果、macOS；输入时间短于 CLI 启动时间时只能省掉一部分等待。未提交。

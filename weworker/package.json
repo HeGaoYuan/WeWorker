@@ -172,7 +172,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "license": "asset/LICENSE_AGREEMENT.html"
+      "license": "asset/LICENSE_AGREEMENT.html",
+      "include": "installer.nsh"
     },
     "linux": {
       "target": "AppImage"
