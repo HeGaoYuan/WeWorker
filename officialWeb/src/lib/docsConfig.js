@@ -30,7 +30,7 @@ export const DOCS_SIDEBAR = [
     group: '源码',
     items: [
       { title: 'WeWorker 仓库', href: GITHUB_REPO },
-      { title: 'WebMCP Adapter', href: ADAPTER_REPO },
+      { title: 'Adapter 目录', href: ADAPTER_REPO },
     ],
   },
 ]

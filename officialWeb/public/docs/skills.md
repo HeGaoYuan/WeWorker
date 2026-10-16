@@ -61,12 +61,12 @@ webcli adapter skill jd.com --generated   # 查看自动生成草稿 SKILL.gener
 webcli adapter skills-path
 ```
 
-### 方式三：从 Adapter 仓库阅读或复制
+### 方式三：从主仓库 Adapter 目录阅读
 
-社区 Adapter 源码与 `SKILL.md` 在 [WebMCP Adapter 仓库](https://github.com/HeGaoYuan/webmcp-adapter)（路径形如 `extension/adapters/<站点 id>/SKILL.md`）。你可以：
+社区 Adapter 源码与站点调用说明在 [WeWorker 主仓库 adapters 目录](https://github.com/WeWorker/WeWorker/tree/main/adapters)（路径形如 `adapters/<站点 id>/guidance.md`）。你可以：
 
-1. 在仓库中直接阅读工具说明与示例命令；
-2. 将对应目录下的 `SKILL.md`（及可选的 `WEBCLI_KNOWLEDGE.md`）复制到自己的 Agent Skill 目录；
+1. 在仓库中直接阅读 `manifest.json`、`guidance.md` 和命令实现；
+2. 参考 `guidance.md` 理解工具说明、参数和调用顺序；
 3. 在本地改 Adapter 后，用 `webcli install --skills <id>` 重新安装，避免手工合并遗漏。
 
 ## 在 WeWorker 里怎么用 Skill

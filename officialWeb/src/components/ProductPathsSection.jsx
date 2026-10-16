@@ -122,7 +122,7 @@ export default function ProductPathsSection() {
                 </li>
                 <li className="flex gap-2">
                   <span className="text-accent shrink-0">·</span>
-                  <span>终端执行下方命令，或从 Adapter 仓库复制 SKILL.md</span>
+                  <span>终端执行下方命令，或从主仓库 adapters 目录查看站点说明</span>
                 </li>
               </ul>
               <CopyChip text={SKILL_INSTALL_CMD} />
@@ -136,7 +136,7 @@ export default function ProductPathsSection() {
                   rel="noreferrer"
                   className="hero-cta-secondary justify-center text-center"
                 >
-                  Adapter 仓库
+                  Adapter 目录
                 </a>
               </div>
             </article>

@@ -10,7 +10,7 @@ export const DOWNLOAD_REPORT_URL = ''
 
 export const DOWNLOAD_SUMMARY_URL = ''
 
-const RELEASES = GITHUB_RELEASES
+const releaseAssetUrl = (filename) => `${GITHUB_RELEASES}/latest/download/${filename}`
 
 export const DOWNLOADS = [
   {
@@ -18,7 +18,7 @@ export const DOWNLOADS = [
     title: 'Windows 下载',
     subtitle: 'Windows 10 / 11（x64）',
     filename: `WeWorker-${APP_VERSION}-win-x64.exe`,
-    href: RELEASES,
+    href: releaseAssetUrl(`WeWorker-${APP_VERSION}-win-x64.exe`),
     icon: 'windows',
     platform: 'win-x64',
   },
@@ -27,7 +27,7 @@ export const DOWNLOADS = [
     title: 'Mac Intel 下载',
     subtitle: 'Intel 芯片（x64）',
     filename: `WeWorker-${APP_VERSION}-mac-x64.dmg`,
-    href: RELEASES,
+    href: releaseAssetUrl(`WeWorker-${APP_VERSION}-mac-x64.dmg`),
     icon: 'mac',
     platform: 'mac-x64',
   },
@@ -36,7 +36,7 @@ export const DOWNLOADS = [
     title: 'Mac Apple 下载',
     subtitle: 'Apple 芯片（M 系列）',
     filename: `WeWorker-${APP_VERSION}-mac-arm64.dmg`,
-    href: RELEASES,
+    href: releaseAssetUrl(`WeWorker-${APP_VERSION}-mac-arm64.dmg`),
     icon: 'mac',
     platform: 'mac-arm64',
   },
