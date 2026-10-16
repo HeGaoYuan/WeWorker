@@ -1,32 +1,37 @@
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import ScrollReveal from './ScrollReveal.jsx'
-import { copyToClipboard } from '../lib/copyToClipboard.js'
+import CopyToast from './CopyToast.jsx'
+import { useCopyToast } from '../lib/useCopyToast.js'
 import { ADAPTER_REPO, GITHUB_RELEASES } from '../lib/siteConfig.js'
 
 const SKILL_INSTALL_CMD = 'webcli install --skills'
 
 function CopyChip({ text, label = '复制' }) {
   const [copied, setCopied] = useState(false)
+  const { copy, toastVisible } = useCopyToast()
   const onCopy = async () => {
-    const ok = await copyToClipboard(text)
+    const ok = await copy(text)
     if (!ok) return
     setCopied(true)
     window.setTimeout(() => setCopied(false), 2000)
   }
   return (
-    <div className="mt-4 rounded-xl border border-border bg-[rgb(var(--color-bg))]/80 px-3 py-2.5 flex items-start gap-2 text-left">
-      <code className="flex-1 min-w-0 text-xs sm:text-sm font-mono text-[rgb(var(--color-text))] break-all leading-relaxed">
-        {text}
-      </code>
-      <button
-        type="button"
-        onClick={onCopy}
-        className="shrink-0 text-xs font-medium text-accent hover:text-accent-hover transition-colors px-2 py-1 rounded-lg hover:bg-accent/10"
-      >
-        {copied ? '已复制' : label}
-      </button>
-    </div>
+    <>
+      <CopyToast visible={toastVisible} />
+      <div className="mt-4 rounded-xl border border-border bg-[rgb(var(--color-bg))]/80 px-3 py-2.5 flex items-start gap-2 text-left">
+        <code className="flex-1 min-w-0 text-xs sm:text-sm font-mono text-[rgb(var(--color-text))] break-all leading-relaxed">
+          {text}
+        </code>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="shrink-0 text-xs font-medium text-accent hover:text-accent-hover transition-colors px-2 py-1 rounded-lg hover:bg-accent/10"
+        >
+          {copied ? '已复制' : label}
+        </button>
+      </div>
+    </>
   )
 }
 
