@@ -174,6 +174,51 @@ export interface ChannelsConfig {
 
 
 
+/** 长期记忆按档位的 token 预算；`extension` 覆盖所有 `extension:*` 记录。 */
+export interface MemoryBudgets {
+  user_usage: number
+  task_execution: number
+  other: number
+  extension: number
+}
+
+export const DEFAULT_MEMORY_BUDGETS: MemoryBudgets = {
+  user_usage: 800,
+  task_execution: 1600,
+  other: 1200,
+  extension: 800,
+}
+
+/** 单档位预算上限；超过上限的输入回退默认值而不是截断。 */
+export const MAX_MEMORY_BUDGET = 20_000
+
+/**
+ * 规范化记忆预算：缺失、非数字、负数或超过上限的档位回退默认值。
+ * 0 是合法值（表示该档位压缩到最少保留 1 条）。
+ */
+export function normalizeMemoryBudgets(value: unknown): MemoryBudgets {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+  const normalize = (raw: unknown, fallback: number): number => {
+    const numeric = typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.trim()
+        ? Number(raw)
+        : Number.NaN
+    if (!Number.isFinite(numeric)) return fallback
+    const budget = Math.floor(numeric)
+    if (budget < 0 || budget > MAX_MEMORY_BUDGET) return fallback
+    return budget
+  }
+  return {
+    user_usage: normalize(record.user_usage, DEFAULT_MEMORY_BUDGETS.user_usage),
+    task_execution: normalize(record.task_execution, DEFAULT_MEMORY_BUDGETS.task_execution),
+    other: normalize(record.other, DEFAULT_MEMORY_BUDGETS.other),
+    extension: normalize(record.extension, DEFAULT_MEMORY_BUDGETS.extension),
+  }
+}
+
 export interface Settings {
 
   // Whether the first-run model/API key setup has been completed.
@@ -301,6 +346,9 @@ export interface Settings {
 
   /** User-defined ZCF roles (id, label, prompt) */
   zcf_custom_roles: ZcfCustomRole[]
+
+  /** 长期记忆按档位的估算 token 预算（extension 覆盖所有 extension:*）。 */
+  memory_budgets: MemoryBudgets
 }
 
 
@@ -428,6 +476,7 @@ const DEFAULTS: Settings = {
   zcf_enabled_roles: [CORE_STYLE_ID],
 
   zcf_custom_roles: [],
+  memory_budgets: { ...DEFAULT_MEMORY_BUDGETS },
 }
 
 
@@ -463,6 +512,7 @@ function cloneDefaults(): Settings {
     label_names: { ...DEFAULTS.label_names },
     open_browser_allowed_origins: [...DEFAULTS.open_browser_allowed_origins],
     added_providers: [...DEFAULTS.added_providers],
+    memory_budgets: { ...DEFAULTS.memory_budgets },
 
   }
 
@@ -575,6 +625,7 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
   merged.user_directory_blacklist = normalizeUserDirectoryBlacklist(merged.user_directory_blacklist)
   merged.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(merged.open_browser_allowed_origins)
   merged.zcf_custom_roles = normalizeZcfCustomRoles(merged.zcf_custom_roles)
+  merged.memory_budgets = normalizeMemoryBudgets(merged.memory_budgets)
   merged.zcf_default_role = migrateLegacyDefaultRole(merged.zcf_default_role)
   merged.zcf_enabled_roles = normalizeZcfEnabledRoles(
     merged.zcf_enabled_roles,
@@ -763,6 +814,7 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings.user_directory_blacklist = normalizeUserDirectoryBlacklist(_settings.user_directory_blacklist)
   _settings.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(_settings.open_browser_allowed_origins)
   _settings.zcf_custom_roles = normalizeZcfCustomRoles(_settings.zcf_custom_roles)
+  _settings.memory_budgets = normalizeMemoryBudgets(_settings.memory_budgets)
   if (updates.zcf_default_role !== undefined) {
     _settings.zcf_default_role = migrateLegacyDefaultRole(_settings.zcf_default_role)
   }
