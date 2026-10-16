@@ -21,7 +21,7 @@ import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeI
 import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
 import ContextPanel from './ContextPanel.jsx'
 import ModelSelector from './ModelSelector.jsx'
-import { normalizeThinkingEffort } from '../../utils/thinking-effort.js'
+import { normalizeThinkingEffort, THINKING_EFFORT_STORAGE_KEY } from '../../utils/thinking-effort.js'
 import { shouldWarmupOnTextChange } from '../../utils/chat-warmup.js'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
@@ -101,12 +101,12 @@ export default function InputBar({
   const overAttachmentLimit = attachments.length > attachmentLimit
   const [modelSelectionPending, setModelSelectionPending] = useState(false)
   const [thinkingEffort, setThinkingEffort] = useState(() => {
-    try { return normalizeThinkingEffort(window.localStorage.getItem('weworker-thinking-effort')) } catch { return 'medium' }
+    try { return normalizeThinkingEffort(window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY)) } catch { return 'off' }
   })
   const handleThinkingEffortChange = useCallback((value) => {
     const next = normalizeThinkingEffort(value)
     setThinkingEffort(next)
-    try { window.localStorage.setItem('weworker-thinking-effort', next) } catch {}
+    try { window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, next) } catch {}
   }, [])
   const inputDisabled = !!disabled || !!streaming || modelSelectionPending
   const isCommandMode = String(text || '').trimStart().startsWith('!')

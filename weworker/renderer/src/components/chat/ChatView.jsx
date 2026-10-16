@@ -139,7 +139,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
     }
   }
 
-  const handleSend = async (text, files = [], thinkingEffort = 'medium') => {
+  const handleSend = async (text, files = [], thinkingEffort = 'off') => {
     if ((!text.trim() && !files.length) || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
     if (files.length > maxChatAttachments) {
       setError(`已选 ${files.length}/${maxChatAttachments} 个文件，请删减后再发送`)
@@ -515,10 +515,10 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       await selectWork(workId)
       const pending = useWorksStore.getState().pendingMessage
       const pendingAttachments = useWorksStore.getState().pendingAttachments || []
-      const pendingThinkingEffort = useWorksStore.getState().pendingThinkingEffort || 'medium'
+      const pendingThinkingEffort = useWorksStore.getState().pendingThinkingEffort || 'off'
       const pendingShellCommand = useWorksStore.getState().pendingShellCommand
       if (pending || pendingAttachments.length) {
-        useWorksStore.setState({ pendingMessage: null, pendingAttachments: [], pendingThinkingEffort: 'medium' })
+        useWorksStore.setState({ pendingMessage: null, pendingAttachments: [], pendingThinkingEffort: 'off' })
         handleSendRef.current(pending || '', pendingAttachments, pendingThinkingEffort)
         return
       }

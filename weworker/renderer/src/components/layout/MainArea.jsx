@@ -54,7 +54,7 @@ export default function MainArea({ onOpenSettings }) {
     }
   }, [activeTaskId, activeWorkId, fillSeq, fillText])
 
-  const handleSendFromWelcome = async (text, files = [], thinkingEffort = 'medium') => {
+  const handleSendFromWelcome = async (text, files = [], thinkingEffort = 'off') => {
     setInputText('')
     setAttachments([])
     closeToolPackagePage()
