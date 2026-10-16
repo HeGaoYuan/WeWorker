@@ -137,6 +137,7 @@ import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
 import { inferTerminalShell, onTerminalEvent, runWeWorkerPowerShell, stopTerminalSession } from './powershell-runner.js'
+import { createTurnTimingLedger } from './turn-timing.js'
 import { channelManager } from './channels/channel-manager.js'
 import { QqQrService, FeishuQrService } from './channels/app-bot-qr.js'
 import { syncAppBotChannel } from './channels/sync-app-bot-channel.js'
@@ -3034,12 +3035,14 @@ app.post('/works/:id/chat', async (req, res) => {
   const chatStartTime = Date.now()
   const turnId = Math.random().toString(36).slice(2, 8)
   let stepIndex = 0
-  let lastToolStartTime = 0
   let lastToolName = ''
-  let lastStepEndTime = chatStartTime
-  // Per-turn timing accumulators: llmMsTotal = all LLM generation segments, execMsTotal = all tool execution
-  let llmMsTotal = 0
-  let execMsTotal = 0
+  // Per-turn timing accumulators. `llmMs` (all LLM generation segments) and
+  // `execMs` (tool execution) are disjoint by construction, so
+  // llmMs + execMs === totalMs — including tools that never emit a
+  // `tool_call_result` event (see turn-timing.ts).
+  const turnTiming = createTurnTimingLedger({ startedAt: chatStartTime })
+  /** 回合结束时的冻结快照（turn_end 与持久化 timing 共用同一口径）。 */
+  let turnTimingResult: ReturnType<typeof turnTiming.finish> | null = null
 
   const tag = `[${workId}][${turnId}]`
 
@@ -3191,9 +3194,7 @@ app.post('/works/:id/chat', async (req, res) => {
         let thinkMs: number | undefined
         if (!isUpdate) {
           stepIndex++
-          lastToolStartTime = Date.now()
-          thinkMs = lastToolStartTime - lastStepEndTime
-          llmMsTotal += thinkMs
+          thinkMs = turnTiming.toolStarted(ev.id)
         }
         // Resolve SDK tool name back to original adapter name
         const cleanName = resolveToolDisplayName(ev.name ?? '')
@@ -3220,10 +3221,8 @@ app.post('/works/:id/chat', async (req, res) => {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: cleanName, args: ev.args, status: 'running', ...(thinkMs !== undefined ? { thinkMs } : {}) })
         }
       } else if (ev.type === 'tool_call_result' && ev.id) {
-        const toolDuration = lastToolStartTime ? Date.now() - lastToolStartTime : 0
-        execMsTotal += toolDuration
+        const toolDuration = turnTiming.toolSettled(ev.id) ?? 0
         chatLog.info(`${tag} ✅ step ${stepIndex}: ${lastToolName} done (exec=${(toolDuration / 1000).toFixed(2)}s)`)
-        lastStepEndTime = Date.now()
         send({ ...ev, execMs: toolDuration })
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
@@ -3232,13 +3231,21 @@ app.post('/works/:id/chat', async (req, res) => {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration })
         }
       } else if (ev.type === 'tool_call_image' && ev.id) {
+        // 只回图片的工具（例如读图片的 Read）没有 tool_call_result 事件：
+        // 按同一口径在这里结算它的执行时间，避免这段时间被算进 llmMs。
+        const imageToolDuration = turnTiming.toolObserved(ev.id)
         send(ev)
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
           const currentStatus = (assistantContent[idx] as Extract<store.ContentBlock, { type: 'tool_use' }>).status
-          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: currentStatus === 'failed' ? 'failed' : 'done' } as store.ContentBlock
+          assistantContent[idx] = {
+            ...(assistantContent[idx] as object),
+            image: ev.data,
+            status: currentStatus === 'failed' ? 'failed' : 'done',
+            ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}),
+          } as store.ContentBlock
         } else {
-          assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done' })
+          assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done', ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}) })
         }
       } else {
         if (ev.type === 'error') streamFailed = true
@@ -3285,14 +3292,18 @@ app.post('/works/:id/chat', async (req, res) => {
     }
   } finally {
     unsubscribeTerminalEvents()
-    // Account for trailing LLM text generation after the last tool
-    // (or the entire turn when no tools ran — lastStepEndTime stays at chatStartTime)
-    const trailingLlmMs = Date.now() - lastStepEndTime
-    llmMsTotal += trailingLlmMs
+    // Close the turn: trailing LLM text generation is whatever is left after
+    // every tool interval; tools without a result event are settled here so
+    // their time is never charged to llmMs.
+    turnTimingResult = turnTiming.finish()
     // Mark as finished so that the subsequent res.end() → close event
     // does not trigger abort on the already-completed query.
-    chatLog.info(`${tag} ◼ turn end — total=${((Date.now() - chatStartTime) / 1000).toFixed(2)}s, steps=${stepIndex}`)
-    send({ type: 'turn_end', turnId, workId, totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+    chatLog.info(
+      `${tag} ◼ turn end — total=${(turnTimingResult.totalMs / 1000).toFixed(2)}s` +
+        `, llm=${(turnTimingResult.llmMs / 1000).toFixed(2)}s` +
+        `, exec=${(turnTimingResult.execMs / 1000).toFixed(2)}s, steps=${stepIndex}`,
+    )
+    send({ type: 'turn_end', turnId, workId, totalMs: turnTimingResult.totalMs, llmMs: turnTimingResult.llmMs, execMs: turnTimingResult.execMs, steps: stepIndex })
     finished = true
     res.off('close', onClose)
   }
@@ -3302,7 +3313,8 @@ app.post('/works/:id/chat', async (req, res) => {
 
   // Persist assistant message
   if (assistantContent.length > 0) {
-    assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+    const timing = turnTimingResult ?? turnTiming.finish()
+    assistantContent.push({ type: 'timing', totalMs: timing.totalMs, llmMs: timing.llmMs, execMs: timing.execMs, steps: stepIndex })
     store.appendMessage(workId, 'assistant', assistantContent)
   }
 
