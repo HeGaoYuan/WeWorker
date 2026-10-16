@@ -126,6 +126,28 @@ afterEach(() => {
 })
 
 describe('desktop chat session reuse', () => {
+  it('defaults cold and prewarmed sessions to explicit thinking off and rebuilds when enabled', async () => {
+    const sessions = installFakeCli()
+    await collect([], { warmupOnly: true })
+    const first = [message('u1', 'First question')]
+    await collect(first)
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].request.options.thinking).toEqual({ type: 'disabled' })
+    expect(sessions[0].request.options).not.toHaveProperty('effort')
+    expect(JSON.parse(sessions[0].request.options.env.CLAUDE_CODE_EXTRA_BODY).thinking).toEqual({ type: 'disabled' })
+    const second = [...first, message('a1', 'reply 1', 'assistant'), message('u2', 'Second question')]
+    await collect(second, { thinkingEffort: 'high' })
+    expect(mocks.query).toHaveBeenCalledTimes(2)
+    expect(sessions[0].closed).toBe(true)
+    expect(sessions[1].request.options.effort).toBe('high')
+    expect(sessions[1].request.options).not.toHaveProperty('thinking')
+    expect(JSON.parse(sessions[1].request.options.env.CLAUDE_CODE_EXTRA_BODY)).not.toHaveProperty('thinking')
+    await collect([...second, message('a2', 'reply 1', 'assistant'), message('u3', 'Third question')], { thinkingEffort: 'off' })
+    expect(mocks.query).toHaveBeenCalledTimes(3)
+    expect(sessions[1].closed).toBe(true)
+    expect(sessions[2].request.options.thinking).toEqual({ type: 'disabled' })
+  })
+
   it('replays history with a readable header', () => {
     const prompt = buildPromptString([message('u1', '第一问'), message('a1', '第一答', 'assistant'), message('u2', '第二问')])
     expect(prompt.startsWith(`${HISTORY_REPLAY_HEADER}\n`)).toBe(true)

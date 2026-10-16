@@ -633,7 +633,7 @@ function ZoomableImage({ src }) {
 function TurnTimingFooter({ block }) {
   const segs = [
     `⏱ 本轮 ${formatDuration(block.totalMs)}`,
-    `思考 ${formatDuration(block.llmMs)}`,
+    `模型 ${formatDuration(block.llmMs)}`,
     `执行 ${formatDuration(block.execMs)}`,
     `${block.steps ?? 0} 步`,
   ]

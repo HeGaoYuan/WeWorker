@@ -74,7 +74,7 @@ import {
 import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic-auth.js'
 import { renderPrompt } from './prompt-loader.js'
 import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
-import { resolveThinkingEffort } from './thinking-effort.js'
+import { buildThinkingExtraBody, resolveThinkingEffort, type ThinkingEffort } from './thinking-effort.js'
 
 const log = createLogger('agent')
 
@@ -1023,7 +1023,7 @@ async function* streamChatWithBaseUrl(
     previousTaskFailed?: boolean;
     forceCompaction?: boolean;
     compactionOnly?: boolean;
-    thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    thinkingEffort?: ThinkingEffort;
     /**
      * Run against a dedicated CLAUDE_CONFIG_DIR whose skills/ directory the caller
      * has already populated. Project skills under the user directory and the global
@@ -1137,6 +1137,7 @@ async function* streamChatWithBaseUrl(
   const pathPrefix = [webcliDir, path.dirname(process.execPath)].join(path.delimiter)
   const envWithWebcli = {
     ...queryEnv,
+    CLAUDE_CODE_EXTRA_BODY: buildThinkingExtraBody(thinkingEffort, queryEnv.CLAUDE_CODE_EXTRA_BODY),
     PATH: `${pathPrefix}${path.delimiter}${queryEnv.PATH || process.env.PATH || ''}`,
     WEWORKER_ALLOWED_OPEN_BROWSER_ORIGINS: getOpenBrowserAllowedOrigins().join(','),
     WEWORKER_ADAPTERS_DIR: path.join(getUserDirectory(), '.claude', 'skills'),
@@ -1456,7 +1457,7 @@ async function* streamChatWithBaseUrl(
       includePartialMessages,
       cwd: agentCwd,
       settingSources,
-      effort: thinkingEffort,
+      ...(thinkingEffort === 'off' ? { thinking: { type: 'disabled' as const } } : { effort: thinkingEffort }),
       pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
       spawnClaudeCodeProcess,
       env: envWithWebcli,

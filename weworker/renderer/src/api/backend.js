@@ -67,7 +67,7 @@ export async function compactConversation(workId) {
   }
 }
 
-export async function streamChat(workId, message, onEvent, signal, attachments = [], maxChatAttachments = 60, modelMessage = message, retryCompaction = false, thinkingEffort = 'medium') {
+export async function streamChat(workId, message, onEvent, signal, attachments = [], maxChatAttachments = 60, modelMessage = message, retryCompaction = false, thinkingEffort = 'off') {
   console.log(`[frontend] streamChat called, workId=${workId}, signal.aborted=${signal?.aborted}`)
   let res
   try {

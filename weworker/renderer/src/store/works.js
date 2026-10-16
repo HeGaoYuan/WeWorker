@@ -29,7 +29,7 @@ export const useWorksStore = create((set, get) => ({
   healthCheckMeta: null, // { siteId, siteName, toolNames } | null
   streamingWorkIds: new Set(), // workIds currently streaming — don't overwrite their messages
   abortControllers: {}, // workId -> AbortController — for stopping streaming from any view
-  pendingThinkingEffort: 'medium',
+  pendingThinkingEffort: 'off',
   labelFilter: null, // null = show all, string = filter by label color
   labelNames: {}, // color -> custom name, e.g. { red: '紧急', blue: '参考' }
 
