@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Input, Result, Space, Steps } from 'antd'
-import { LoadingOutlined } from '@ant-design/icons'
+import { EditOutlined, LoadingOutlined } from '@ant-design/icons'
 import SiteIcon from '../icons/SiteIcon.jsx'
 import { useSitesStore } from '../../store/sites.js'
 import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
+import { useWorksStore } from '../../store/works.js'
 import { createAgent, createSkill, fetchAgentDetail, saveSkill, setSkillScope } from '../../api/dedicated-agents-api.js'
 import {
   SKILL_MODES,
@@ -84,7 +85,7 @@ function SitePicker({ sites, selectedId, onSelect }) {
 
 function PairingStep({ agent, onDone }) {
   const [current, setCurrent] = useState(agent)
-  const upsertAgent = useDedicatedAgentsStore((s) => s.upsertAgent)
+  const updateDraftAgent = useDedicatedAgentsStore((s) => s.updateDraftAgent)
 
   useEffect(() => {
     if (current?.paired) return undefined
@@ -92,13 +93,13 @@ function PairingStep({ agent, onDone }) {
       try {
         const detail = await fetchAgentDetail(agent.id)
         setCurrent(detail.agent)
-        upsertAgent(detail.agent)
+        updateDraftAgent(detail.agent)
       } catch {
         // Keep polling.
       }
     }, PAIR_POLL_MS)
     return () => clearInterval(timer)
-  }, [agent.id, current?.paired, upsertAgent])
+  }, [agent.id, current?.paired, updateDraftAgent])
 
   const channel = agentChannelOf(current)
   const im = channelLabel(channel)
@@ -109,7 +110,7 @@ function PairingStep({ agent, onDone }) {
         title={`「${current.name}」已就绪`}
         subTitle={`现在直接在${im}里和这个机器人对话就可以了。`}
         extra={[
-          <Button type="primary" key="open" onClick={() => onDone(current.id)}>查看 Agent</Button>,
+          <Button type="primary" key="open" onClick={() => onDone(current)}>查看 Agent</Button>,
         ]}
       >
         {current.examples?.length > 0 && (
@@ -154,15 +155,19 @@ function PairingStep({ agent, onDone }) {
 export default function AgentCreateWizard() {
   const sites = useSitesStore((s) => s.sites)
   const loadSites = useSitesStore((s) => s.load)
-  const upsertAgent = useDedicatedAgentsStore((s) => s.upsertAgent)
-  const selectAgent = useDedicatedAgentsStore((s) => s.selectAgent)
-  const [step, setStep] = useState(0)
-  const [draft, setDraft] = useState(INITIAL_DRAFT)
+  const existingDraft = useDedicatedAgentsStore((s) => s.agents.find((agent) => agent.draft))
+  const updateDraftAgent = useDedicatedAgentsStore((s) => s.updateDraftAgent)
+  const cancelCreate = useDedicatedAgentsStore((s) => s.cancelCreate)
+  const completeCreate = useDedicatedAgentsStore((s) => s.completeCreate)
+  const loadWorks = useWorksStore((s) => s.loadWorks)
+  const [step, setStep] = useState(() => existingDraft?.pairing_code ? 3 : (existingDraft?.wizardStep || 0))
+  const [draft, setDraft] = useState(() => ({ ...INITIAL_DRAFT, ...(existingDraft || {}) }))
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [createdAgent, setCreatedAgent] = useState(null)
+  const [createdAgent, setCreatedAgent] = useState(() => existingDraft?.pairing_code ? existingDraft : null)
   const [bindKey, setBindKey] = useState(0)
-  const [botChannel, setBotChannel] = useState('wecom')
+  const [botChannel, setBotChannel] = useState(existingDraft?.channel || 'wecom')
+  const nameInputRef = useRef(null)
 
   useEffect(() => {
     if (!sites.length) loadSites()
@@ -171,10 +176,13 @@ export default function AgentCreateWizard() {
   const available = useMemo(() => enabledSites(sites), [sites])
   const site = available.find((entry) => entry.id === draft.siteId) || null
   const stepKey = WIZARD_STEPS[step].key
-  const update = (patch) => setDraft((current) => ({ ...current, ...patch }))
+  const update = (patch) => {
+    setDraft((current) => ({ ...current, ...patch }))
+    updateDraftAgent(patch)
+  }
 
   const selectSite = (next) => {
-    setDraft((current) => {
+    const patch = ((current) => {
       const autoName = !current.name || current.name === defaultAgentName(site)
       return {
         ...current,
@@ -183,23 +191,30 @@ export default function AgentCreateWizard() {
         // A different site has different tools: drop an AI draft and its suggested name.
         ...(current.siteId && current.siteId !== next.id ? { skillMarkdown: '', skillName: '', savedSkillName: '' } : {}),
       }
-    })
+    })(draft)
+    update(patch)
   }
 
   const next = () => {
     const message = validateWizardStep(stepKey, draft)
     setError(message)
-    if (!message) setStep((value) => Math.min(value + 1, WIZARD_STEPS.length - 1))
+    if (!message) {
+      const nextStep = Math.min(step + 1, WIZARD_STEPS.length - 1)
+      setStep(nextStep)
+      updateDraftAgent({ wizardStep: nextStep })
+    }
   }
 
   const back = () => {
     setError('')
-    setStep((value) => Math.max(value - 1, 0))
+    const previousStep = Math.max(step - 1, 0)
+    setStep(previousStep)
+    updateDraftAgent({ wizardStep: previousStep })
   }
 
   const cancel = async () => {
     if ((draft.siteId || draft.goal || draft.knowledge) && !await showConfirm('放弃创建这个专属 Agent？已填写的内容不会保存。')) return
-    selectAgent(null)
+    cancelCreate()
   }
 
   /** Save the AI-written skill (once), then create the agent with the bound bot. */
@@ -227,7 +242,8 @@ export default function AgentCreateWizard() {
         ...boundBotPayload(bot),
       }
       const result = await createAgent(body)
-      upsertAgent(result.agent)
+      await loadWorks()
+      updateDraftAgent(result.agent)
       setCreatedAgent(result.agent)
       setStep(3)
     } catch (err) {
@@ -240,7 +256,23 @@ export default function AgentCreateWizard() {
   return (
     <div style={{ maxWidth: 860 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <h2 style={titleStyle}>新建专属 Agent</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+          <h2 style={titleStyle}>{draft.name.trim() || '新建专属 Agent'}</h2>
+          {!createdAgent && (
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              aria-label="编辑 Agent 名称"
+              title="编辑 Agent 名称"
+              onClick={() => {
+                nameInputRef.current?.focus?.()
+                nameInputRef.current?.select?.()
+              }}
+              style={{ color: 'var(--text-muted)', padding: '2px 4px' }}
+            />
+          )}
+        </div>
         {!createdAgent && <Button onClick={cancel}>取消</Button>}
       </div>
       <div style={{ ...hintStyle, marginBottom: 18 }}>一个专属 Agent = 一个网站的能力 + 你的专属知识 + 一个企业微信或微信机器人。大约 5 分钟完成。</div>
@@ -249,13 +281,13 @@ export default function AgentCreateWizard() {
       <div style={sectionStyle}>
         {stepKey === 'site' && (
           <div>
-            <div style={{ ...labelStyle, marginBottom: 10 }}>这个 Agent 主要操作哪个网站？</div>
+            <div style={{ ...labelStyle, marginBottom: 10 }}><span aria-hidden="true" style={{ color: 'var(--error, #ef4444)', marginRight: 4 }}>*</span>这个 Agent 主要操作哪个网站？</div>
             <SitePicker sites={available} selectedId={draft.siteId} onSelect={selectSite} />
             {site && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginTop: 18 }}>
                 <div style={fieldStyle}>
-                  <label style={labelStyle} htmlFor="agent-name">Agent 名称</label>
-                  <Input id="agent-name" value={draft.name} maxLength={40} onChange={(event) => update({ name: event.target.value })} placeholder="例如：采购助手" />
+                  <label style={labelStyle} htmlFor="agent-name"><span aria-hidden="true" style={{ color: 'var(--error, #ef4444)', marginRight: 4 }}>*</span>Agent 名称</label>
+                  <Input ref={nameInputRef} id="agent-name" value={draft.name} maxLength={40} onChange={(event) => update({ name: event.target.value })} placeholder="例如：采购助手" />
                 </div>
                 <div style={fieldStyle}>
                   <label style={labelStyle} htmlFor="agent-description">一句话说明（可选）</label>
@@ -270,11 +302,11 @@ export default function AgentCreateWizard() {
 
         {stepKey === 'bind' && (
           <div>
-            <div style={{ ...labelStyle, marginBottom: 12 }}>给「{draft.name}」绑定一个机器人，之后在{channelLabel(botChannel)}里和它对话</div>
+            <div style={{ ...labelStyle, marginBottom: 12 }}><span aria-hidden="true" style={{ color: 'var(--error, #ef4444)', marginRight: 4 }}>*</span>给「{draft.name}」绑定一个机器人，之后在{channelLabel(botChannel)}里和它对话</div>
             <BotChannelPicker
               value={botChannel}
               disabled={saving}
-              onChange={(next) => { setError(''); setBotChannel(next); setBindKey((value) => value + 1) }}
+              onChange={(next) => { setError(''); setBotChannel(next); updateDraftAgent({ channel: next }); setBindKey((value) => value + 1) }}
             />
             <WecomQrBind key={`${botChannel}-${bindKey}`} channel={botChannel} onBound={handleBound} busy={saving} />
             {error && (
@@ -290,7 +322,7 @@ export default function AgentCreateWizard() {
         )}
 
         {stepKey === 'pair' && createdAgent && (
-          <PairingStep agent={createdAgent} onDone={(id) => selectAgent(id)} />
+          <PairingStep agent={createdAgent} onDone={(agent) => completeCreate(agent)} />
         )}
       </div>
 

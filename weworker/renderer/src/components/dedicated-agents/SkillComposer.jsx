@@ -24,6 +24,8 @@ import {
 } from '../../utils/dedicated-agents.js'
 import { fieldStyle, hintStyle, labelStyle, markdownEditorStyle } from './styles.js'
 
+const requiredMark = <span aria-hidden="true" style={{ color: 'var(--error, #ef4444)', marginRight: 4 }}>*</span>
+
 function shortToolName(name) {
   const parts = String(name || '').split('.')
   return parts[parts.length - 1] || name
@@ -225,7 +227,7 @@ export default function SkillComposer({ draft, onChange, site }) {
             Skill 是 Agent 的“专属知识手册”。AI 会结合上方展示的「{site?.name}」实际能力，把你的目标和业务规则整理成可执行步骤。不要填写密码、Token、Cookie 或个人账号。
           </div>
           <div style={fieldStyle}>
-            <label style={labelStyle} htmlFor="agent-goal">这个 Agent 要帮你做什么</label>
+            <label style={labelStyle} htmlFor="agent-goal">{requiredMark}这个 Agent 要帮你做什么</label>
             <Input.TextArea id="agent-goal" value={draft.goal} onChange={(event) => onChange({ goal: event.target.value })} placeholder={genericSkillGoalPlaceholder(site)} autoSize={{ minRows: 2, maxRows: 5 }} />
           </div>
           <div style={fieldStyle}>
@@ -234,7 +236,7 @@ export default function SkillComposer({ draft, onChange, site }) {
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
             <div style={{ width: 240 }}>
-              <label style={labelStyle} htmlFor="agent-skill-name">Skill 名称</label>
+              <label style={labelStyle} htmlFor="agent-skill-name">{requiredMark}Skill 名称</label>
               <Input id="agent-skill-name" value={draft.skillName} onChange={(event) => onChange({ skillName: event.target.value.trim() })} placeholder="例如 invoice-review-helper" />
             </div>
             <Button type="primary" onClick={generate} disabled={generating || (!draft.goal?.trim() && !draft.knowledge?.trim())} icon={generating ? <LoadingOutlined /> : null}>
@@ -264,7 +266,7 @@ export default function SkillComposer({ draft, onChange, site }) {
         <div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
             <div style={{ ...fieldStyle, marginBottom: 0, minWidth: 280, flex: 1 }}>
-              <span style={labelStyle} id="agent-existing-skill-label">选择 Skill</span>
+              <span style={labelStyle} id="agent-existing-skill-label">{requiredMark}选择 Skill</span>
               <div style={{ maxWidth: 520 }}>
                 <AppDropdownSelect
                   value={draft.existingSkill || ''}

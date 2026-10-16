@@ -145,7 +145,7 @@ import { syncWecomChannel } from './channels/sync-wecom-channel.js'
 import { FeishuChannel } from './channels/feishu-channel.js'
 import { registerDedicatedAgentRoutes } from './dedicated-agents/routes.js'
 import { buildDesktopAgentTurnOptions, startAllDedicatedAgents } from './dedicated-agents/agent-channel.js'
-import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId, listAgentWorkIds } from './dedicated-agents/agent-store.js'
+import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId } from './dedicated-agents/agent-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -2111,9 +2111,8 @@ app.post('/explore/scaffold', async (req, res) => {
 // 鈹€鈹€ Works 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 app.get('/works', (_req, res) => {
-  // Dedicated agent conversations live on the agent page, not in the main task list.
-  const agentWorkIds = listAgentWorkIds()
-  res.json(agentWorkIds.size ? store.listWorks().filter((work) => !agentWorkIds.has(work.id)) : store.listWorks())
+  // Dedicated agent conversations share the same work records and are visible in the main list.
+  res.json(store.listWorks())
 })
 
 app.get('/projects', (_req, res) => {

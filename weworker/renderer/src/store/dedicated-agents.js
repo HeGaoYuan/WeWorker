@@ -12,18 +12,76 @@ export const useDedicatedAgentsStore = create((set) => ({
   view: 'list',
   selectedId: null,
   agents: [],
+  draftAgentId: null,
   loaded: false,
   loadError: '',
 
   openPage: () => set({ open: true }),
   closePage: () => set({ open: false }),
-  startCreate: () => set({ view: 'create', selectedId: null }),
-  selectAgent: (id) => set({ view: id ? 'detail' : 'list', selectedId: id || null }),
+  startCreate: () => set((state) => {
+    const existing = state.agents.find((agent) => agent.draft)
+    if (existing) return { view: 'create', selectedId: existing.id, draftAgentId: existing.id }
+    const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const draft = {
+      id,
+      draft: true,
+      name: '新建专属 Agent',
+      description: '',
+      site_id: '',
+      skill_name: '',
+      examples: [],
+      enabled: true,
+      paired: false,
+      connection: { status: 'stopped' },
+      wecom: { bot_id: '', has_secret: false },
+    }
+    return { agents: [...state.agents, draft], view: 'create', selectedId: id, draftAgentId: id }
+  }),
+  selectAgent: (id) => set((state) => {
+    const selected = id ? state.agents.find((agent) => agent.id === id) : null
+    return { view: selected?.draft ? 'create' : (id ? 'detail' : 'list'), selectedId: id || null }
+  }),
+
+  /** Keep the in-progress wizard visible without persisting a partial backend record. */
+  updateDraftAgent: (patch) => set((state) => {
+    const draft = state.agents.find((agent) => agent.draft)
+    if (!draft) return {}
+    const nextId = patch?.id || draft.id
+    return {
+      agents: state.agents.map((entry) => entry.id === draft.id
+        ? { ...entry, ...patch, id: nextId, draft: true }
+        : entry),
+      draftAgentId: nextId,
+      selectedId: state.selectedId === draft.id ? nextId : state.selectedId,
+    }
+  }),
+
+  cancelCreate: () => set((state) => ({
+    agents: state.agents.filter((agent) => !agent.draft),
+    draftAgentId: null,
+    view: 'list',
+    selectedId: null,
+  })),
+
+  /** Replace the temporary row once the wizard has completed pairing. */
+  completeCreate: (agent) => set((state) => ({
+    agents: [
+      ...state.agents.filter((entry) => !entry.draft && entry.id !== agent?.id),
+      ...(agent?.id ? [{ ...agent, draft: false }] : []),
+    ],
+    draftAgentId: null,
+    view: agent?.id ? 'detail' : 'list',
+    selectedId: agent?.id || null,
+  })),
 
   loadAgents: async () => {
     try {
       const agents = await fetchAgents()
-      set({ agents, loaded: true, loadError: '' })
+      set((state) => {
+        const drafts = state.agents.filter((agent) => agent.draft)
+        const draftIds = new Set(drafts.map((agent) => agent.id))
+        return { agents: [...agents.filter((agent) => !draftIds.has(agent.id)), ...drafts], loaded: true, loadError: '' }
+      })
       return agents
     } catch (error) {
       set({ loaded: true, loadError: error.message || '加载失败' })
@@ -36,7 +94,7 @@ export const useDedicatedAgentsStore = create((set) => ({
     const exists = state.agents.some((entry) => entry.id === agent.id)
     return {
       agents: exists
-        ? state.agents.map((entry) => (entry.id === agent.id ? { ...entry, ...agent } : entry))
+        ? state.agents.map((entry) => (entry.id === agent.id ? { ...entry, ...agent, draft: entry.draft || agent.draft } : entry))
         : [...state.agents, agent],
     }
   }),

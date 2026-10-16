@@ -12,6 +12,22 @@ vi.mock('../config.js', () => ({
 const store = await import('../works-store.js')
 
 describe('project persistence', () => {
+  it('shares desktop and channel messages through the same work and keeps resets in the project', () => {
+    store._initTestDb()
+    const project = store.createProject('Agent Project')
+    const work = store.createWork('Example Agent', project.id)
+    store.bindChannelWork('agent:fixture', 'fixture-user', work.id)
+    const channel = store.getOrCreateChannelWork('agent:fixture', 'fixture-user', '', project.id)
+    expect(channel.created).toBe(false)
+    expect(channel.work.id).toBe(work.id)
+    store.appendMessage(channel.work.id, 'user', [{ type: 'text', text: 'Fixture question' }])
+    expect(store.getWorkWithMessages(work.id)?.messages[0].content).toEqual([{ type: 'text', text: 'Fixture question' }])
+    const reset = store.resetChannelWork('agent:fixture', 'fixture-user', '', project.id)
+    expect(reset.id).not.toBe(work.id)
+    expect(reset.project_id).toBe(project.id)
+    expect(store.listWorks()).toHaveLength(2)
+  })
+
   beforeEach(() => {
     store._initTestDb()
   })

@@ -9,6 +9,7 @@ import { channelManager, type ChannelStatus } from '../channels/channel-manager.
 import type { ChannelAccessDecision, ChannelProfile } from '../channels/channel-profile.js'
 import { WecomChannel } from '../channels/wecom-channel.js'
 import { WeixinChannel } from '../channels/weixin-channel.js'
+import * as works from '../works-store.js'
 import { parseAllAdapters } from '../adapter-parser.js'
 import { getSiteEnabled } from '../config.js'
 import { createLogger } from '../logger.js'
@@ -61,6 +62,17 @@ function resolveSite(siteId: string): SiteInfo {
 function examplesText(agent: DedicatedAgentRecord): string {
   if (!agent.examples.length) return ''
   return `\n\n可以这样问我：\n${agent.examples.map((example) => `· ${example}`).join('\n')}`
+}
+
+function resolveAgentProjectId(agentId: string): string | null {
+  const agent = getAgent(agentId)
+  if (!agent) return null
+  if (agent.project_id && works.getProject(agent.project_id)) return agent.project_id
+  for (const workId of agent.work_ids) {
+    const projectId = works.getWork(workId)?.project_id
+    if (projectId && works.getProject(projectId)) return projectId
+  }
+  return null
 }
 
 export type PairingAttempts = Map<string, { failures: number; lockedUntil: number }>
@@ -132,6 +144,7 @@ export function createAgentProfile(agentId: string, options: { attempts?: Pairin
   return {
     channelKey: agentChannelKey(agentId),
     serializeTurns: true,
+    projectId: () => resolveAgentProjectId(agentId),
     titleLabel: () => current().name,
     welcomeText: () => {
       const agent = getAgent(agentId)
@@ -167,6 +180,8 @@ export function createAgentProfile(agentId: string, options: { attempts?: Pairin
         now: now(),
         onPair: (owner) => {
           const paired = completePairing(agentId, owner)
+          const primaryWorkId = paired.work_ids.find((workId) => !!works.getWork(workId))
+          if (primaryWorkId) works.bindChannelWork(agentChannelKey(agentId), owner, primaryWorkId)
           log.info(`agent ${agentId} paired`)
           return paired
         },

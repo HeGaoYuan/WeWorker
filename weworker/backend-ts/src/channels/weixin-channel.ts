@@ -499,7 +499,7 @@ export class WeixinChannel implements Channel {
 
     // 把通知内容记录到该用户对应的 work 中，桌面端可查看
     try {
-      const { work, created } = store.getOrCreateChannelWork(this._profile.channelKey, userId, '')
+      const { work, created } = store.getOrCreateChannelWork(this._profile.channelKey, userId, '', this._profile.projectId?.() ?? null)
       if (created) this._profile.onWorkCreated?.(work.id)
       store.appendMessage(work.id, 'assistant', [{ type: 'text', text }])
       store.markExternalWrite()
@@ -670,7 +670,7 @@ export class WeixinChannel implements Channel {
         await this._reply(fromUserId, interrupted ? '已停止当前任务。' : '当前没有正在执行的任务。')
         return
       }
-      const fresh = store.resetChannelWork(channelKey, fromUserId, '')
+      const fresh = store.resetChannelWork(channelKey, fromUserId, '', this._profile.projectId?.() ?? null)
       this._profile.onWorkCreated?.(fresh.id)
       store.markExternalWrite()
       await this._reply(fromUserId, interrupted ? '已停止上一个任务，并开启新对话 ✓' : '已开启新对话 ✓')
@@ -687,7 +687,7 @@ export class WeixinChannel implements Channel {
 
     // /id command — reply with current work short ID
     if (command === '/id') {
-      const existing = store.getOrCreateChannelWork(channelKey, fromUserId, '')
+      const existing = store.getOrCreateChannelWork(channelKey, fromUserId, '', this._profile.projectId?.() ?? null)
       if (existing.created) this._profile.onWorkCreated?.(existing.work.id)
       await this._reply(fromUserId, `当前对话 ID: ${existing.work.id.slice(0, 8)}`)
       return
@@ -728,7 +728,7 @@ export class WeixinChannel implements Channel {
     const channelKey = this._profile.channelKey
     const replyFn = (content: string) => this._reply(fromUserId, content)
 
-    const { work, created } = store.getOrCreateChannelWork(channelKey, fromUserId, '')
+    const { work, created } = store.getOrCreateChannelWork(channelKey, fromUserId, '', this._profile.projectId?.() ?? null)
     if (created) this._profile.onWorkCreated?.(work.id)
     store.appendMessage(work.id, 'user', [{ type: 'text', text }])
     store.markExternalWrite()
