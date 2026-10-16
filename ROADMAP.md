@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-16：为网站探索agent的 Windows PyInstaller 可执行文件补充 WeWorker 版本资源。构建时动态生成 VERSIONINFO，文件属性包含 ProductName/CompanyName「WeWorker」、描述、产品版本、原始文件名等关键字，保留现有 Webwright.exe 文件名和 embedded onedir 结构；补充分发契约测试。验证：distribution 契约测试 10 项通过、Python 语法检查通过；未在本次变更中构建完整 Windows 安装包或进行安全软件白名单实机验收。
+
 - 2026-10-15（API 探索优化 PR 整理）：从最新 develop（783e6dbc）建立 codex/api-exploration-optimization，仅迁入探索候选来源/结束条件、输出包装层与业务错误判定、补采回放保留、已有站点包增量生成及默认 auto 优化；未带入演示分支的模型、机器人、导航或版本变更。默认先生成并验证，具体草稿错误最多一次限时 60 秒模型修复；探索预装证据/指引、显式确认目标并结束分析，分析限时 180 秒。独立锁定依赖和 public 33 包准备后，WebCLI 33 文件/241 项、Backend 5 文件/46 项、Renderer 7 项、扩展 35 项共 329 项通过；Backend 类型检查、Renderer 与 Backend/Bridge/WebCLI 构建、34 个 JavaScript 文件语法及差异检查通过。新工作区首轮漏准备资源导致测试失败；构建与测试并行阶段还出现计划缺失和 Windows 临时目录清理失败，二文件独立复查与构建完成后完整聚焦重跑均通过。集成分支真实两轮约 71.439/85.731 秒及 7 次新工具查询只作为迁入前证据，本 PR 尚未重跑完整客户端、真实网站、macOS 或安装包；无 99.999% 结论。操作与边界见 docs/api_exploration_local_acceptance.md、docs/api_exploration_reliability_plan.md。
 
 - 2026-10-14：侧栏告警改为扩展状态旁的固定感叹号入口，移除占用侧栏高度的版本/端口长提示；点击入口显示告警列表，点击条目打开详情弹窗，保留扩展指引、按系统区分的端口查询命令和通道错误详情。入口在无告警时隐藏但保留位置，列表及详情通过浮层展示。聚焦单测 7 项、Renderer 构建及差异检查通过；Chrome/Playwright 模拟状态验证告警出现/消失与开列表不改变侧栏几何位置、版本与通道详情、窄窗口防越界和 Escape 关闭，无运行时错误。

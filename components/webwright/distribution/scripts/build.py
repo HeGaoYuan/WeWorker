@@ -243,6 +243,51 @@ def _create_windows_installer(*, onedir_path: Path, dist: Path) -> Path:
     return installer_path
 
 
+def _windows_version_file(spec: Path) -> Path:
+    """Create the Windows VERSIONINFO resource used by the embedded runtime."""
+    raw_version = version("webwright")
+    parts = [int(part) for part in raw_version.split(".")[:3] if part.isdigit()]
+    while len(parts) < 3:
+        parts.append(0)
+    version_tuple = (*parts[:3], 0)
+    version_file = spec / "WeWorker-version.txt"
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(
+        f'''# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={version_tuple},
+    prodvers={version_tuple},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x4,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [StringStruct('CompanyName', 'WeWorker'),
+         StringStruct('FileDescription', 'WeWorker 网站探索agent Runtime'),
+         StringStruct('FileVersion', '{raw_version}'),
+         StringStruct('InternalName', 'WeWorker Runtime'),
+         StringStruct('OriginalFilename', 'Webwright.exe'),
+         StringStruct('ProductName', 'WeWorker'),
+         StringStruct('ProductVersion', '{raw_version}'),
+         StringStruct('Comments', 'WeWorker 网站探索agent')]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+''',
+        encoding="utf-8",
+    )
+    return version_file
+
+
 def _pyinstaller_arguments(
     *, mode: str, work: Path, dist: Path, spec: Path
 ) -> list[str]:
@@ -284,6 +329,8 @@ def _pyinstaller_arguments(
         "--hidden-import=webwright.run.tool_development",
         "--hidden-import=webwright.run.tool_debug",
     ]
+    if sys.platform == "win32":
+        arguments.append(f"--version-file={_windows_version_file(spec)}")
     if mode == "standalone" and sys.platform == "darwin":
         arguments.extend(
             ("--windowed", "--osx-bundle-identifier=ai.webwright.app")
