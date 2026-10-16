@@ -126,10 +126,23 @@ function workspaceConflict(error: unknown): boolean {
   return /already exists|UNIQUE constraint/i.test(message)
 }
 
+/**
+ * Folder name generated for a dedicated Agent. The project folder belongs to
+ * the Agent: it is created from the Agent name and can only change through it.
+ */
+export function agentProjectName(agentName: string): string {
+  return `专属 Agent - ${String(agentName || '未命名 Agent').trim()}`
+}
+
+/** `base`, then `base (2)`, `base (3)` … so two Agents never share one folder. */
+function agentProjectNameCandidate(base: string, index: number): string {
+  return index === 0 ? base : `${base} (${index + 1})`
+}
+
 function createAgentWorkspace(agentName: string): { project: works.ProjectSummary; work: works.Work } {
-  const base = `专属 Agent - ${String(agentName || '未命名 Agent').trim()}`
+  const base = agentProjectName(agentName)
   for (let index = 0; index < 100; index += 1) {
-    const projectName = index === 0 ? base : `${base} (${index + 1})`
+    const projectName = agentProjectNameCandidate(base, index)
     let project: works.ProjectSummary | null = null
     try {
       project = works.createProject(projectName)
@@ -155,6 +168,25 @@ function agentProjectId(agent: DedicatedAgentRecord): string | null {
     if (projectId && works.getProject(projectId)) return projectId
   }
   return null
+}
+
+/**
+ * Keep the generated project folder name in sync with the Agent name. Folder
+ * renames stay best-effort so a name collision cannot fail the Agent rename.
+ */
+function syncAgentProjectName(agent: DedicatedAgentRecord): void {
+  const projectId = agentProjectId(agent)
+  if (!projectId) return
+  const base = agentProjectName(agent.name)
+  for (let index = 0; index < 100; index += 1) {
+    try {
+      works.renameProject(projectId, agentProjectNameCandidate(base, index))
+      return
+    } catch (error) {
+      if (workspaceConflict(error)) continue
+      return
+    }
+  }
 }
 
 export function registerDedicatedAgentRoutes(app: express.Express, deps: DedicatedAgentRouteDeps = {}): void {
@@ -456,6 +488,8 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
         bot: resolved?.bot,
       }, reservedBots())
       resolved?.consume()
+      // The project folder name is generated from the Agent name: keep it in sync.
+      if (body.name !== undefined) syncAgentProjectName(agent)
       if (resolved || typeof body.enabled === 'boolean') await restartAgentChannel(agent.id)
       res.json({ agent: viewWithStatus(agent) })
     } catch (error) {

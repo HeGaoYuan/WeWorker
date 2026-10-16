@@ -45,12 +45,12 @@ function groupWorksByFolder(works, projects = []) {
     const project = projectId ? projects.find((item) => item.id === projectId) : null
     const legacyName = getWorkFolderName(work)
     const key = project ? `project:${project.id}` : (legacyName === '默认工作区' ? 'default' : `legacy:${legacyName}`)
-    if (!groups.has(key)) groups.set(key, { key, id: project?.id || null, name: project?.name || legacyName, items: [] })
+    if (!groups.has(key)) groups.set(key, { key, id: project?.id || null, name: project?.name || legacyName, dedicatedAgent: Boolean(project?.dedicated_agent), items: [] })
     groups.get(key).items.push(work)
   }
   for (const project of projects) {
     const key = `project:${project.id}`
-    if (!groups.has(key)) groups.set(key, { key, id: project.id, name: project.name, items: [] })
+    if (!groups.has(key)) groups.set(key, { key, id: project.id, name: project.name, dedicatedAgent: Boolean(project.dedicated_agent), items: [] })
   }
   const defaultGroup = groups.get('default')
   const projectGroups = [...groups.values()].filter((group) => group.id)
@@ -216,21 +216,27 @@ export default function WorksList({ searchQuery = '' }) {
                     aria-label="项目名称"
                   />
                 ) : (
-                  <span className="work-folder-heading__name">{group.name}</span>
+                  <span className="work-folder-heading__name" title={group.dedicatedAgent ? '由专属 Agent 自动维护，改名请直接修改 Agent 名称' : undefined}>{group.name}</span>
                 )}
                 <span className="work-folder-heading__count">{group.items.length}</span>
               </button>
               {group.id && !renaming && (hoveredFolderId === group.id || group.items.length === 0) && (
                 <span className="work-folder-heading__actions">
-                  <button type="button" title="项目中创建新对话" aria-label={`在${group.name}中创建新对话`} onClick={() => createProjectWork(group.id)}>
-                    <ProjectPlusIcon />
-                  </button>
+                  {/* 专属 Agent 的对话只在 Agent 页里创建，侧栏不提供入口。 */}
+                  {!group.dedicatedAgent && (
+                    <button type="button" title="项目中创建新对话" aria-label={`在${group.name}中创建新对话`} onClick={() => createProjectWork(group.id)}>
+                      <ProjectPlusIcon />
+                    </button>
+                  )}
                   <button type="button" title={group.items.length ? '请先删除项目中的对话' : '删除项目'} aria-label={`删除项目${group.name}`} disabled={group.items.length > 0} onClick={() => handleDeleteProject(group)}>
                     <ProjectTrashIcon />
                   </button>
-                  <button type="button" title="重命名项目" aria-label={`重命名项目${group.name}`} onClick={() => startProjectRename(group)}>
-                    <RenameIcon size={12} />
-                  </button>
+                  {/* 专属 Agent 文件夹名由 Agent 名称生成，只能改名 Agent 来同步。 */}
+                  {!group.dedicatedAgent && (
+                    <button type="button" title="重命名项目" aria-label={`重命名项目${group.name}`} onClick={() => startProjectRename(group)}>
+                      <RenameIcon size={12} />
+                    </button>
+                  )}
                 </span>
               )}
             </div>

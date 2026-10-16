@@ -1,5 +1,9 @@
 # WeWorker Roadmap
 
+- 2026-10-16：专属 Agent 生成的「项目文件夹」改为只读：文件夹名固定为 `专属 Agent - Agent 名字`，用户不能再手动重命名，只能通过修改 Agent 名称同步更新。Backend：Agent 改名（`PATCH /dedicated-agents/:id`）后按同一命名规则同步重命名项目文件夹（同名冲突时回退 `名字 (2)`、`名字 (3)`…，且不会因文件夹冲突导致 Agent 改名失败）；`GET /projects` 给 Agent 项目附加 `dedicated_agent: true`；`PATCH /projects/:id` 对 Agent 项目返回 400，提示改用 Agent 名称。Renderer：侧栏对这类项目隐藏「重命名项目」与「在项目中创建新对话」入口（对话只能在专属 Agent 页里新建），并在文件夹名上悬停说明原因。验证：dedicated-agent 工作区测试 6 项（新增 2 项）、Backend 类型检查、Renderer 生产构建与单测 9 项通过；未在真实窗口内逐项点击验收。
+
+- 2026-10-16：专属 Agent 名称支持就地修改：左侧列表项与详情页头部的名称旁新增小铅笔图标，点击后名称切换为输入框，Enter／失焦经 `PATCH /dedicated-agents/:id` 保存并同步列表与详情，Esc 取消；名称做 trim、非空与 40 字符上限校验。列表项由 `<button>` 改为 `role="button"` 的 `div`，避免「按钮嵌套按钮」并容纳行内输入。新增 `normalizeAgentName` 纯函数及单测（dedicated-agents 单测 9 项通过）、Renderer 生产构建通过；已通过 Vite HMR 应用到运行中的应用，未在真实窗口内逐项点击验收。
+
 - 2026-10-16：修复上下文面板把一次查询内部多轮模型／工具调用的累计 usage 当成单次上下文大小的问题。普通模型 usage 仅用于用量指标，不再校准全局规则等上下文分类；turn-end 快照继续显示当前请求的本地估算，只有上下文探针才执行 provider 校准。Backend 上下文聚焦测试与 Renderer 上下文测试通过。
 
 - 2026-10-16：自动规划模式的工作流选择改为内部判断，不再要求首条回复展示“选用直接执行”等模式标签与理由；要求直接回应用户并保持简洁。Backend ZCF 同步测试 19 项、类型检查通过。
