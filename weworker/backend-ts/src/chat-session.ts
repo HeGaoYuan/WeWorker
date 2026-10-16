@@ -26,6 +26,7 @@
  */
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createLogger } from './logger.js'
+import { createApiDurationTracker, type ApiDurationTracker } from './usage-metrics.js'
 
 const log = createLogger('chat-session')
 
@@ -98,6 +99,12 @@ export class ChatSession {
   closed = false
   lastUsedAt = Date.now()
   completedTurns = 0
+  /**
+   * One CLI process = one cost ledger: the result field `duration_api_ms` is a
+   * session-cumulative API duration, so the per-turn value is a delta against
+   * the previous turn of this same session. A new session gets a fresh tracker.
+   */
+  readonly apiDuration: ApiDurationTracker = createApiDurationTracker()
   private consumedIds: string[] = []
   private started = false
   private closeStarted = false

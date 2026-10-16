@@ -116,17 +116,10 @@ import {
   scheduleAdapterRuntimeReload,
 } from './adapter-runtime-reload.js'
 import {
-  ensureBundledZcfInstalled,
-  buildZcfCatalogResponse,
-  getZcfPackageVersion,
-  readZcfSyncMeta,
-  resolveZcfPrefs,
-  sanitizeZcfRoleSettingsPatch,
-  sanitizeWorkZcfPrefsPatch,
-  sanitizeZcfDefaultSettings,
-  syncZcfTemplates,
-  type ZcfLang,
-} from './zcf-sync.js'
+  resolveStyleId,
+  sanitizeStyleSettingsPatch,
+  sanitizeWorkStylePatch,
+} from './style-settings.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext } from './memory/memory-event-context.js'
 import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
@@ -406,12 +399,8 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
       ...publicModelConfigurations(s),
     }).map(([id, configuration]) => [id, { ...configuration, name: names[id] }])),
     zcf_default_role: s.zcf_default_role,
-    zcf_default_mode: s.zcf_default_mode,
-    zcf_lang: s.zcf_lang,
     zcf_enabled_roles: s.zcf_enabled_roles,
     zcf_custom_roles: s.zcf_custom_roles,
-    zcf_package_version: getZcfPackageVersion(),
-    zcf_sync: readZcfSyncMeta(),
     // 长期记忆按档位预算（估算 token）；Renderer 设置页读取。
     memory_budgets: normalizeMemoryBudgets(s.memory_budgets),
   }
@@ -564,44 +553,14 @@ app.post('/settings/permissions', (req, res) => {
   })))
 })
 
-app.get('/zcf/catalog', (_req, res) => {
-  const settings = getSettings()
-  res.json(buildZcfCatalogResponse(settings))
-})
-
-app.post('/zcf/sync', async (req, res) => {
-  const settings = getSettings()
-  const lang = (req.body as { lang?: ZcfLang })?.lang ?? settings.zcf_lang ?? 'zh-CN'
-  try {
-    const meta = await syncZcfTemplates(lang)
-    updateSettings({ zcf_lang: lang })
-    res.json({ ok: true, ...meta, package_version: getZcfPackageVersion() })
-  } catch (e) {
-    res.status(500).json({ detail: e instanceof Error ? e.message : 'zcf sync failed' })
-  }
-})
-
-app.post('/settings/zcf-defaults', (req, res) => {
-  const { zcf_default_role, zcf_default_mode, zcf_lang } = req.body as {
-    zcf_default_role?: string
-    zcf_default_mode?: string
-    zcf_lang?: ZcfLang
-  }
-  const settings = getSettings()
-  const updates: Partial<Settings> = {
-    ...sanitizeZcfDefaultSettings({ zcf_default_role, zcf_default_mode }, settings),
-  }
-  if (zcf_lang === 'zh-CN' || zcf_lang === 'en') updates.zcf_lang = zcf_lang
-  res.json(buildSettingsResponse(updateSettings(updates)))
-})
-
-app.post('/settings/zcf-roles', (req, res) => {
+// 风格设置（默认 / 预定义内置 / 自定义）。沿用既有 zcf_* 键名以避免数据迁移。
+app.post('/settings/styles', (req, res) => {
   const { zcf_enabled_roles, zcf_custom_roles, zcf_default_role } = req.body as {
     zcf_enabled_roles?: string[]
     zcf_custom_roles?: Array<{ id?: string; label: string; prompt: string }>
     zcf_default_role?: string
   }
-  const updates: Partial<Settings> = sanitizeZcfRoleSettingsPatch({
+  const updates: Partial<Settings> = sanitizeStyleSettingsPatch({
     ...(typeof zcf_default_role === 'string' ? { zcf_default_role } : {}),
     ...(Array.isArray(zcf_enabled_roles) ? { zcf_enabled_roles } : {}),
     ...(Array.isArray(zcf_custom_roles) ? { zcf_custom_roles: zcf_custom_roles as Settings['zcf_custom_roles'] } : {}),
@@ -2222,11 +2181,11 @@ app.delete('/projects/:id', (req, res) => {
 })
 
 app.post('/works', (req, res) => {
-  const { project_id, zcf_role, zcf_mode } = req.body as { project_id?: string | null; zcf_role?: string | null; zcf_mode?: string | null }
+  const { project_id, zcf_role } = req.body as { project_id?: string | null; zcf_role?: string | null }
   const work = store.createWork('', project_id ?? null)
-  if (zcf_role !== undefined || zcf_mode !== undefined) {
-    const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
-    const updated = store.updateWorkZcfPrefs(work.id, prefs)
+  if (zcf_role !== undefined) {
+    const prefs = sanitizeWorkStylePatch({ zcf_role }, getSettings())
+    const updated = store.updateWorkStyle(work.id, prefs)
     broadcastSSE({ type: 'works_changed', workId: work.id })
     res.json(updated ?? work)
     return
@@ -2235,10 +2194,10 @@ app.post('/works', (req, res) => {
   res.json(work)
 })
 
-app.patch('/works/:id/zcf', (req, res) => {
-  const { zcf_role, zcf_mode } = req.body as { zcf_role?: string | null; zcf_mode?: string | null }
-  const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
-  const updated = store.updateWorkZcfPrefs(req.params.id, prefs)
+app.patch('/works/:id/style', (req, res) => {
+  const { zcf_role } = req.body as { zcf_role?: string | null }
+  const prefs = sanitizeWorkStylePatch({ zcf_role }, getSettings())
+  const updated = store.updateWorkStyle(req.params.id, prefs)
   if (!updated) { res.status(404).json({ detail: 'Not found' }); return }
   res.json(updated)
 })
@@ -2851,7 +2810,7 @@ type ThinkingEffortInput = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' |
 async function prewarmChatSession(input: {
   key: string
   workId: string | null
-  zcf: { zcf_role?: string | null; zcf_mode?: string | null }
+  zcf: { zcf_role?: string | null }
   messages: store.Message[]
   thinkingEffort: ThinkingEffortInput
   dedicatedAgentOptions?: ReturnType<typeof buildDesktopAgentTurnOptions>
@@ -2860,11 +2819,10 @@ async function prewarmChatSession(input: {
   chatWarmupsInFlight.add(input.key)
   try {
     const settings = getSettings()
-    const zcfPrefs = resolveZcfPrefs(input.zcf, settings)
+    const styleId = resolveStyleId(input.zcf, settings)
     for await (const event of streamChat(input.messages, settings, undefined, {
       ...(input.workId ? { workId: input.workId } : {}),
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
       thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, input.thinkingEffort),
       reuseSession: true,
       warmupOnly: true,
@@ -2908,10 +2866,9 @@ app.post('/works/:id/warmup', (req, res) => {
 
 // Welcome screen: no work exists until the first send; keep one spare session.
 app.post('/chat/warmup', (req, res) => {
-  const { thinkingEffort, zcfRole, zcfMode } = (req.body ?? {}) as {
+  const { thinkingEffort, zcfRole } = (req.body ?? {}) as {
     thinkingEffort?: ThinkingEffortInput
     zcfRole?: string | null
-    zcfMode?: string | null
   }
   if (hasSpareChatSession() || chatWarmupsInFlight.has(SPARE_WARMUP_KEY)) {
     res.json({ status: 'ready' })
@@ -2921,7 +2878,7 @@ app.post('/chat/warmup', (req, res) => {
   void prewarmChatSession({
     key: SPARE_WARMUP_KEY,
     workId: null,
-    zcf: { zcf_role: zcfRole ?? null, zcf_mode: zcfMode ?? null },
+    zcf: { zcf_role: zcfRole ?? null },
     messages: [],
     thinkingEffort,
   })
@@ -3013,7 +2970,7 @@ app.post('/works/:id/chat', async (req, res) => {
           : msg
       ))
   const settings = getSettings()
-  const zcfPrefs = resolveZcfPrefs(work, settings)
+  const styleId = resolveStyleId(work, settings)
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream')
@@ -3208,8 +3165,7 @@ app.post('/works/:id/chat', async (req, res) => {
     for await (const ev of tier4Source ?? streamChat(modelMessages, settings, abortController, {
       enabledAdapterIds,
       workId,
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
       thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, thinkingEffort),
       memoryScope: initialMemoryScope,
       ...(siteToolkit ? { siteToolkitPrompt: siteToolkit.prompt } : {}),
@@ -3684,11 +3640,6 @@ async function startConfiguredChannels(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   await initSettings()
-  try {
-    ensureBundledZcfInstalled(getSettings().zcf_lang)
-  } catch (e) {
-    log.warn('ZCF template sync skipped on startup:', e instanceof Error ? e.message : String(e))
-  }
   await startConfiguredChannels()
   app.listen(PORT, '127.0.0.1', () => {
     log.info(`WeWorker backend running on http://127.0.0.1:${PORT}`)

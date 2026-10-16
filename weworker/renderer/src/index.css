@@ -521,19 +521,19 @@ html.theme-instant-switch *::after {
   line-height: 1.35;
 }
 
-.zcf-picker .app-dropdown-select__trigger {
+.style-picker .app-dropdown-select__trigger {
   max-width: 156px;
 }
 
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger {
-  height: 28px;
-  border-radius: 7px;
-  font-size: 12px;
-  padding: 0 9px;
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger {
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 0 8px;
   gap: 6px;
 }
 
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__prefix {
+.workspace-toolbar__context .style-picker .app-dropdown-select__prefix {
   font-size: 10px;
 }
 
@@ -1626,9 +1626,9 @@ html.dark {
     opacity 0.15s ease;
 }
 
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger:hover:not(:disabled),
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger:focus-visible,
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger[aria-expanded='true'] {
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger:hover:not(:disabled),
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger:focus-visible,
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger[aria-expanded='true'] {
   background: transparent;
   border-color: var(--border);
   box-shadow: none;

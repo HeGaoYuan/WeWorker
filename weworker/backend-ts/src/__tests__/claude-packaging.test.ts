@@ -148,18 +148,4 @@ describe('packaged Claude Code entrypoint', () => {
 
     expect(packageJson.dependencies?.['@anthropic-ai/claude-agent-sdk']).toBe('0.3.252')
   })
-
-  it('packages bundled ZCF templates at the runtime lookup path', () => {
-    const packageJsonPath = path.resolve(process.cwd(), '..', 'package.json')
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
-      build?: {
-        extraResources?: Array<{ from?: string; to?: string; filter?: string[] }>
-      }
-    }
-
-    const bundledZcfResource = packageJson.build?.extraResources?.find((entry) => entry.to === 'bundled')
-
-    expect(bundledZcfResource?.from).toBe('backend-ts/bundled/')
-    expect(bundledZcfResource?.filter).toEqual(expect.arrayContaining(['zcf/**']))
-  })
 })

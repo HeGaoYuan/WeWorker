@@ -64,13 +64,6 @@
         ]
       },
       {
-        "from": "backend-ts/bundled/",
-        "to": "bundled",
-        "filter": [
-          "zcf/**"
-        ]
-      },
-      {
         "from": "build/bridge-dist/",
         "to": "bridge",
         "filter": [

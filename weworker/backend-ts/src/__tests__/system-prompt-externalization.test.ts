@@ -82,19 +82,18 @@ describe('System Prompt - complete output contract before externalization', () =
     vi.restoreAllMocks()
   })
 
-  it('locks the complete full prompt including Windows, blacklist, adapters, memory and ZCF order', async () => {
+  it('locks the complete full prompt including Windows, blacklist, adapters, memory and style order', async () => {
     const { buildSystemPrompt } = await import('../agent.js')
 
     const prompt = buildSystemPrompt({
       channelPermissionMode: 'full',
       platform: 'win32',
       memoryProtocol: '[[MEMORY_PROTOCOL_FULL]]',
-      zcfRole: 'custom-reviewer',
-      zcfMode: 'direct',
-      zcfCustomRoles: [{
+      styleId: 'custom-reviewer',
+      customStyles: [{
         id: 'custom-reviewer',
         label: '测试评审风格',
-        prompt: '[[ZCF_CUSTOM_RULE_FULL]]',
+        prompt: '[[CUSTOM_STYLE_RULE_FULL]]',
       }],
     })
 
@@ -107,7 +106,7 @@ describe('System Prompt - complete output contract before externalization', () =
       不要说明自己在切换风格；直接按该风格自然回复。
       禁止使用 emoji、表情符号、颜文字或装饰性 Unicode 字符。
 
-      [[ZCF_CUSTOM_RULE_FULL]]
+      [[CUSTOM_STYLE_RULE_FULL]]
 
       ---
 
@@ -420,19 +419,18 @@ describe('System Prompt - complete output contract before externalization', () =
     `)
   })
 
-  it('locks the complete qa_only prompt with memory and ZCF composition', async () => {
+  it('locks the complete qa_only prompt with memory and style composition', async () => {
     const { buildSystemPrompt } = await import('../agent.js')
 
     const prompt = buildSystemPrompt({
       channelPermissionMode: 'qa_only',
       platform: 'linux',
       memoryProtocol: '[[MEMORY_PROTOCOL_QA_ONLY]]',
-      zcfRole: 'custom-reviewer',
-      zcfMode: 'direct',
-      zcfCustomRoles: [{
+      styleId: 'custom-reviewer',
+      customStyles: [{
         id: 'custom-reviewer',
         label: '测试评审风格',
-        prompt: '[[ZCF_CUSTOM_RULE_QA_ONLY]]',
+        prompt: '[[CUSTOM_STYLE_RULE_QA_ONLY]]',
       }],
     })
 
@@ -445,7 +443,7 @@ describe('System Prompt - complete output contract before externalization', () =
       不要说明自己在切换风格；直接按该风格自然回复。
       禁止使用 emoji、表情符号、颜文字或装饰性 Unicode 字符。
 
-      [[ZCF_CUSTOM_RULE_QA_ONLY]]
+      [[CUSTOM_STYLE_RULE_QA_ONLY]]
 
       ---
 

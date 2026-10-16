@@ -3,7 +3,7 @@
 // 这里只放纯函数（不引用 React / zustand / DOM），便于在裸 node --test 环境下直接单测。
 //
 // 数据契约（沿用现有实现，未改动）：
-//   zcfCustomRoles: [{ id, label, prompt }]
+//   zcfCustomRoles: [{ id, label, prompt }]（字段名沿用历史命名，语义上就是「自定义风格」）
 //   落地持久化仍由 SettingsModal.handleSaveRoles 统一 trim，并过滤掉 label/prompt 为空的自定义风格。
 
 /** 风格名称输入框 placeholder（沿用原有文案）。 */
@@ -32,7 +32,7 @@ export const DEFAULT_STYLE_ID = 'default'
 
 /**
  * 卡片是否提供编辑入口：只有自定义风格可编辑。
- * 内置风格（默认 / 专业严谨简单明确 / 内置工作流）与 ZCF 扩展风格都不提供编辑入口，行为保持不变。
+ * 内置风格（默认 / 专业严谨简单明确 / 工程师专业版）由应用维护正文，不提供编辑入口。
  */
 export function isEditableStyleRole(role) {
   return role?.kind === 'custom'
@@ -108,7 +108,7 @@ export function savedSnapshotSignature(savedSnapshot) {
 
 /**
  * 已保存设置是否需要同步进面板本地草稿。
- * 设置页里保存任何一项（模型、用户目录、黑名单、模板语言…）后端都会回传整份 settings，
+ * 设置页里保存任何一项（模型、用户目录、黑名单…）后端都会回传整份 settings，
  * 其中 zcf_custom_roles / zcf_enabled_roles 是「内容相同的新引用」。若只按引用变化刷新，
  * 尚未点「保存配置」的本地草稿（新增/编辑的自定义风格）就会被已保存设置覆盖而消失。
  * 因此这里按内容签名判断：内容没变 → sync:false（保留草稿），内容真的变了 → sync:true（采用已保存设置）。

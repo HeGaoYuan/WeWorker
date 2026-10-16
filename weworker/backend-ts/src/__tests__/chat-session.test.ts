@@ -22,7 +22,6 @@ vi.mock('../tools.js', () => ({
   getMcpToolDefinitionSummary: () => '',
 }))
 vi.mock('../logger.js', () => ({ createLogger: () => ({ info() {}, error() {}, warn() {}, debug() {} }) }))
-vi.mock('../zcf-sync.js', () => ({ composeSystemPromptWithZcf: (prompt: string) => prompt }))
 vi.mock('../adapter-parser.js', () => ({ parseAllAdapters: () => new Map() }))
 vi.mock('../user-directory-access.js', () => ({
   buildAgentFilesystemSettings: () => ({}),

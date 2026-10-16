@@ -17,7 +17,6 @@ import { useCapabilitiesPanelStore } from './store/capabilities-panel.js'
 import { useWorksStore } from './store/works.js'
 import { useStatusStore } from './store/status.js'
 import { useSettingsStore } from './store/settings.js'
-import { useZcfStore } from './store/zcf.js'
 import { useScheduledTasksStore } from './store/scheduled-tasks.js'
 import { useUserFilesStore } from './store/user-files.js'
 import { useTerminalStore } from './store/terminal.js'
@@ -90,7 +89,6 @@ export default function App() {
   const loadSettings = useSettingsStore((s) => s.load)
   const settingsLoaded = useSettingsStore((s) => s.loaded)
   const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted)
-  const loadZcfCatalog = useZcfStore((s) => s.loadCatalog)
   const poll = useStatusStore((s) => s.poll)
   const toggleUserFilesPanel = useUserFilesStore((s) => s.togglePanel)
   const userFilesOpen = useUserFilesStore((s) => s.open)
@@ -123,7 +121,7 @@ export default function App() {
 
   useEffect(() => {
     loadWorks()
-    loadSettings().then(() => loadZcfCatalog())
+    loadSettings()
     poll()
     const interval = setInterval(poll, 3000)
     return () => clearInterval(interval)

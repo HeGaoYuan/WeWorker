@@ -4,7 +4,7 @@
  */
 import { getSettings } from './config.js'
 import { streamChat } from './agent.js'
-import { resolveZcfPrefs } from './zcf-sync.js'
+import { resolveStyleId } from './style-settings.js'
 import * as store from './works-store.js'
 import type { ScheduledTask, ContentBlock } from './works-store.js'
 import { parseAllAdapters } from './adapter-parser.js'
@@ -161,14 +161,13 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
     let stepIndex = 0
     const seenToolIds = new Set<string>()
 
-    const zcfPrefs = resolveZcfPrefs(workWithMessages, settings)
+    const styleId = resolveStyleId(workWithMessages, settings)
 
     for await (const event of streamChat(workWithMessages.messages, settings, undefined, {
       streaming: false,
       enabledAdapterIds,
       workId: workWithMessages.id,
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
       memoryScope: taskMemoryContext.scope,
       memoryExpectedType: 'task_execution',
       memoryTriggerHint: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',

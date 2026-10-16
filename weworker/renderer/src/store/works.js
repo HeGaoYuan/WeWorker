@@ -51,13 +51,9 @@ export const useWorksStore = create((set, get) => ({
     const reuseEmptyWork = async (work) => {
       set({ activeWorkId: work.id })
       getScheduledTasksStore().then(s => s?.setState({ activeTaskId: null })).catch(() => {})
-      const prefs = {}
-      if (opts.zcf_role !== undefined) prefs.zcf_role = opts.zcf_role
-      if (opts.zcf_mode !== undefined) prefs.zcf_mode = opts.zcf_mode
-      const roleChanged = prefs.zcf_role !== undefined && work.zcf_role !== prefs.zcf_role
-      const modeChanged = prefs.zcf_mode !== undefined && work.zcf_mode !== prefs.zcf_mode
-      if (roleChanged || modeChanged) {
-        return get().updateWorkZcfPrefs(work.id, prefs)
+      // 风格沿用 work 上的 `zcf_role` 字段名（历史字段，改名需要数据迁移）。
+      if (opts.styleId !== undefined && work.zcf_role !== opts.styleId) {
+        return get().updateWorkStyle(work.id, { zcf_role: opts.styleId })
       }
       return work
     }
@@ -89,8 +85,7 @@ export const useWorksStore = create((set, get) => ({
       }
       const body = {}
       if (opts.projectId !== undefined) body.project_id = opts.projectId
-      if (opts.zcf_role !== undefined) body.zcf_role = opts.zcf_role
-      if (opts.zcf_mode !== undefined) body.zcf_mode = opts.zcf_mode
+      if (opts.styleId !== undefined) body.zcf_role = opts.styleId
       const res = await backendFetch(`${API}/works`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -233,18 +228,22 @@ export const useWorksStore = create((set, get) => ({
     }))
   },
 
-  updateWorkZcfPrefs: async (id, prefs) => {
+  /**
+   * 修改某个 work 的风格（`zcf_role` 是历史字段名，后端 PATCH `/works/:id/style`）。
+   * 先做乐观更新，失败时回滚。
+   */
+  updateWorkStyle: async (id, prefs) => {
     const previous = get().works.find((w) => w.id === id)
     set((s) => ({
       works: s.works.map((w) => (w.id === id ? { ...w, ...prefs } : w)),
     }))
     try {
-      const res = await backendFetch(`${API}/works/${id}/zcf`, {
+      const res = await backendFetch(`${API}/works/${id}/style`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prefs),
       })
-      if (!res.ok) throw new Error('Failed to update ZCF prefs')
+      if (!res.ok) throw new Error('Failed to update style')
       const work = await res.json()
       set((s) => ({
         works: s.works.map((w) => (w.id === id ? { ...w, ...work } : w)),

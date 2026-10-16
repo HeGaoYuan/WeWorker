@@ -26,13 +26,12 @@ const CUSTOM_ROLES = [
   { id: 'custom-b', label: '', prompt: '' },
 ]
 
-test('只有自定义风格卡片可编辑，内置与扩展风格行为保持不变', () => {
+test('只有自定义风格卡片可编辑，内置风格行为保持不变', () => {
   assert.equal(isEditableStyleRole({ id: 'custom-a', kind: 'custom' }), true)
-  // selectableStyles 里内置风格是 default/core，ZCF 扩展风格是 zcf。
+  // 设置页里内置风格是 default/core，只有自定义风格是 custom。
   assert.equal(isEditableStyleRole({ id: 'default', kind: 'default', badge: '内置' }), false)
+  assert.equal(isEditableStyleRole({ id: 'weworker-clear', kind: 'core', badge: '内置' }), false)
   assert.equal(isEditableStyleRole({ id: 'engineer-professional', kind: 'core', badge: '内置' }), false)
-  assert.equal(isEditableStyleRole({ id: 'auto-plan', kind: 'zcf', badge: '内置' }), false)
-  assert.equal(isEditableStyleRole({ id: 'zcf-style', kind: 'zcf', badge: 'ZCF' }), false)
   assert.equal(isEditableStyleRole(undefined), false)
   assert.equal(isEditableStyleRole(null), false)
 })
@@ -148,7 +147,7 @@ test('已保存设置只是重新回传（内容相同的新引用）时不同�
   assert.equal(resolveSavedSnapshotSync(savedSnapshotSignature(saved), saved).sync, false)
 })
 
-test('已保存内容真的变化时同步（保存配置 / 从 ZCF 更新后采用已保存设置）', () => {
+test('已保存内容真的变化时同步（保存配置后采用已保存设置）', () => {
   const saved = [{ id: 'custom-a', label: '简洁日报', prompt: '只输出要点' }]
   const baseline = savedSnapshotSignature(saved)
   const added = [...saved, { id: 'custom-b', label: '周报', prompt: '三段式' }]
