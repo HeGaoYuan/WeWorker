@@ -2028,6 +2028,9 @@ function ModelTab() {
                           minMenuWidth={280}
                           matchAnchorWidth
                           className="settings-model-dropdown"
+                          searchable
+                          allowCustom
+                          searchPlaceholder="搜索或输入模型名"
                         />
                         <button type="button" onClick={() => loadModels(p.id, true)} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                           {loadingModels ? '获取中…' : '刷新模型'}
@@ -2091,6 +2094,9 @@ function ModelTab() {
                             minMenuWidth={280}
                             matchAnchorWidth
                             className="settings-model-dropdown"
+                            searchable
+                            allowCustom
+                            searchPlaceholder="搜索或输入模型名"
                           />
                           <button type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                             {loadingModels ? '获取中…' : '刷新模型'}

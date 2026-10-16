@@ -14,6 +14,18 @@ describe('provider model catalog', () => {
     expect(findProviderByWeWorkerBaseUrl('https://api.deepseek.com/anthropic/')?.id).toBe('deepseek')
   })
 
+  it('keeps model names out of the build config so the catalog stays authoritative', () => {
+    // 供应商只写死构建期路由与安全配置；模型名一律来自模型列表接口或用户手填，
+    // 否则供应商改名/上下架时会固化出一个接口里不存在的「当前模型」。
+    for (const id of ['anthropic', 'glm', 'deepseek', 'custom']) {
+      const entry = provider(id)
+      expect(entry.models).toEqual([])
+      expect(entry.defaultModel).toBe('')
+    }
+    // 内置模型是固定服务、没有列表接口，保留其内置模型名。
+    expect(provider('builtin').defaultModel).not.toBe('')
+  })
+
   it.each(['weworker', 'webwright'] as const)('honors an explicit %s catalog even when the conversation URL matches a preset', async target => {
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ data: [{ id: 'fixture-model' }] }))
     await listProviderModels({ provider: provider('custom'), target,
@@ -83,14 +95,15 @@ describe('provider model catalog', () => {
     expect(fetchImpl).toHaveBeenCalledWith('https://api.deepseek.com/models', expect.anything())
   })
 
-  it('falls back to built-in choices only when the remote catalog fails', async () => {
+  it('never substitutes hardcoded choices when the remote catalog fails', async () => {
     const remoteBody = JSON.stringify({ error: { message: 'offline' }, request_id: 'req-catalog' })
     const fetchImpl = vi.fn(async () => new Response(remoteBody, { status: 503, statusText: 'Service Unavailable' })) as typeof fetch
     const result = await listProviderModels({
       provider: provider('deepseek'), apiKey: 'secret',
     }, fetchImpl)
     expect(result.source).toBe('fallback')
-    expect(result.models).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
+    // 模型名不再内置：拉取失败时列表为空，由用户在模型下拉里手填。
+    expect(result.models).toEqual([])
     expect(result.warning).toBe(`OpenAI 接口：HTTP 503 Service Unavailable\n${remoteBody}`)
   })
 

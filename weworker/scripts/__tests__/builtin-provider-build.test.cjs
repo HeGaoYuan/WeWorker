@@ -47,3 +47,14 @@ test('overlay can replace a managed provider endpoint without runtime reinsertio
   assert.deepEqual(runtime.getProvider('builtin_dev'), managed);
   assert.ok(runtime.ALLOWED_LLM_BASE_URLS.has('https://example.com/v1'));
 });
+
+test('build profile accepts providers without a built-in model but keeps non-empty ones consistent', () => {
+  // 模型名不再写死：models 与 defaultModel 允许同时为空，由模型列表接口或用户手填决定。
+  const withoutModels = { ...profile, providers: profile.providers.map(p =>
+    ['anthropic', 'glm', 'deepseek'].includes(p.id) ? { ...p, models: [], defaultModel: '' } : p) };
+  validateBuildProfile(withoutModels);
+  // 非空 defaultModel 仍必须出现在 models 里。
+  const mismatched = { ...profile, providers: profile.providers.map(p =>
+    p.id === 'deepseek' ? { ...p, models: ['fixture-model'], defaultModel: 'other-model' } : p) };
+  assert.throws(() => validateBuildProfile(mismatched), /must exist in models or be empty/);
+});
