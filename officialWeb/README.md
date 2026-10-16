@@ -26,6 +26,6 @@ npm run dev
 - 落地页：`src/pages/Landing.jsx`
 - Adapter 调用统计：`/stats`（`src/pages/Stats.jsx`；本地 dev 需配置 `METRICS_TARGET` / `METRICS_TOKEN`，由 Vite 代理 `/api/stats`）
 - 文档：`public/docs/` + `src/pages/Docs.jsx`
-- 站点清单：`src/lib/sites.json`（与 `extension/adapters` 对齐）
+- 站点清单：`src/lib/sites.json`（与仓库根 `adapters/` 对齐）
 - 外链与仓库地址：`src/lib/siteConfig.js`
 - 设计系统备忘：`design-system/weworker-open/`

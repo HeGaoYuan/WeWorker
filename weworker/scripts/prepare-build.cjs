@@ -29,7 +29,6 @@ const {
 
 const WEWORKER_ROOT = path.resolve(__dirname, '..');
 const PROFILE_PATH = path.resolve(WEWORKER_ROOT, 'build-profile.json');
-const ADAPTERS_SRC_DIR = path.resolve(__dirname, '../../extension/adapters');
 const BUILTIN_SRC_DIR = path.resolve(__dirname, '../../adapters');
 const BUILTIN_DIST_DIR = path.resolve(WEWORKER_ROOT, 'build/builtin-adapters');
 const BUILTIN_BUILD_MODULE = require('node:url').pathToFileURL(path.resolve(__dirname, '../../webcli/builtin-adapter-build.js')).href;
@@ -88,9 +87,8 @@ async function main() {
   // ── Task 2.2: Adapter 筛选逻辑（manifest.json 为唯一数据源） ──
 
   const requestedIds = profile.adapters;
-  const selection = selectBuiltinAdapters({ names: requestedIds, builtinDir: BUILTIN_SRC_DIR, legacyDir: ADAPTERS_SRC_DIR });
-  const filteredAdapters = selection.legacy.map(({ manifest }) => manifest);
-  // Separate resources for host-managed packages. Never copy these into Extension.
+  const selection = selectBuiltinAdapters({ names: requestedIds, builtinDir: BUILTIN_SRC_DIR });
+  // Host-managed packages are delivered via the Bridge at runtime. Never copy these into Extension.
   if (fs.existsSync(BUILTIN_DIST_DIR)) fs.rmSync(BUILTIN_DIST_DIR, { recursive: true, force: true });
   writeBuiltinAdapters({ selection, outputDir: BUILTIN_DIST_DIR, profile: options.profileName });
   validateBuiltinOutput(BUILTIN_DIST_DIR);
@@ -99,7 +97,10 @@ async function main() {
   if (fs.existsSync(ADAPTERS_DIST_DIR)) fs.rmSync(ADAPTERS_DIST_DIR, { recursive: true, force: true });
   fs.mkdirSync(ADAPTERS_DIST_DIR, { recursive: true });
 
-  const filteredRegistry = buildRegistryFromManifests(filteredAdapters, { defaultIcon: DEFAULT_ICON, preserveOrder: true });
+  // 所有 Adapter 均为 host-managed 包，不再随扩展打包；扩展内置清单保持为空，
+  // 运行时由 Bridge 下发。index.json/registry.json 仍需生成：扩展启动时依赖
+  // index.json 初始化，skill-installer 存在读取 registry.json 的 legacy 路径。
+  const filteredRegistry = buildRegistryFromManifests([], { defaultIcon: DEFAULT_ICON, preserveOrder: true });
   // Generated resources must be byte-stable across profile preparation runs.
   delete filteredRegistry.updated_at;
   fs.writeFileSync(
@@ -108,31 +109,17 @@ async function main() {
     'utf-8'
   );
 
-  // 复制对应的 adapter 目录（含 webcli-generated 等子目录）
-  for (const entry of filteredAdapters) {
-    const srcDir = path.resolve(ADAPTERS_SRC_DIR, entry.id);
-    const destDir = path.resolve(ADAPTERS_DIST_DIR, entry.id);
-    if (fs.existsSync(srcDir)) {
-      copyTreeSync(srcDir, destDir);
-    } else {
-      console.warn(`[prepare-build] WARNING: adapter directory not found: ${srcDir}`);
-    }
-  }
-
-  console.log(
-    `[prepare-build] Adapter filtering complete: ${filteredAdapters.length} adapter(s) copied` +
-    `, ${selection.packages.length} host-managed package(s)` +
-    '.'
-  );
-
   // 生成 adapters/index.json：扩展启动时据此初始化已安装 adapter ID 列表。
   // 缺失该文件会导致扩展无法发现任何 adapter（static direct 路由也不加载），
-  // 所有工具退化到 page 路由。此前打包产物一直缺此文件。
-  const adapterIds = filteredAdapters.map((entry) => entry.id).sort();
+  // 所有工具退化到 page 路由。
   fs.writeFileSync(
     path.resolve(ADAPTERS_DIST_DIR, 'index.json'),
-    JSON.stringify(adapterIds, null, 2) + '\n',
+    JSON.stringify([], null, 2) + '\n',
     'utf-8'
+  );
+
+  console.log(
+    `[prepare-build] Adapter filtering complete: ${selection.packages.length} host-managed package(s).`
   );
 
   // ── Task 2.3: 生成 .build-defines.json ──

@@ -5,6 +5,11 @@
   "description": "京东：导航主页、查看购物车、查看订单、购买商品、支付",
   "match": [
     "jd.com",
+    "www.jd.com",
+    "search.jd.com",
+    "item.jd.com",
+    "cart.jd.com",
+    "order.jd.com",
     "pc-settlement-lite-pro.pf.jd.com"
   ],
   "requires_auth": true,
@@ -168,7 +173,7 @@
       "requires_confirmation": false
     }
   ],
-  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/jd.com",
+  "homepage_url": "https://www.jd.com/",
   "icon": "cart",
   "scenarios": [
     {

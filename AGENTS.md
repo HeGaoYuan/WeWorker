@@ -15,8 +15,8 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 - `weworker/renderer/`：React Renderer，负责桌面端用户界面和交互。
 - `weworker/electron/`：Electron 主进程、窗口生命周期、IPC、资源路径和应用退出清理。
 - `weworker/scripts/`：构建、打包、配置生成、校验和开发辅助脚本。
-- `extension/`：浏览器扩展、页面注入、Bridge、Adapter manifest 和扩展权限配置。
-- `extension/adapters/`：Adapter 定义与站点能力描述；新增或修改 Adapter 时必须同步清单、权限、文档和对应验证。
+- `extension/`：浏览器扩展、页面注入、Bridge 和扩展权限配置。
+- `adapters/`：仓库根目录的内置 Adapter v2 包（host-managed）定义与站点能力描述；新增或修改 Adapter 时必须同步构建 profile、权限、文档和对应验证。构建时由 `weworker/scripts/prepare-build.cjs` 打包为 host-managed 包，经 Bridge 下发，不随扩展内置。
 - `webcli/`：WebCLI 命令入口与 Adapter 调用层；统一对外提供 `webcli call <adapter-id>.<tool-id>`。
 - `components/webwright/`：网站探索agent实现源码目录。源码中可以沿用既有包名和路径，用户侧文案、UI、文档统一使用「网站探索agent」。
 - `officialWeb/`：产品官网、文档站与下载页（Vite + React）。
@@ -27,7 +27,7 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 
 - `weworker/build-profile.json` 是桌面端构建 profile 基线；新增 Provider、Adapter 打包范围或构建元数据时必须同步验证。
 - `extension/manifest.json` 是浏览器扩展 manifest 基线；新增权限、host 权限或扩展能力时必须确认不会引入私有域名、私网 IP 或过宽权限。
-- `extension/adapters/index.json` 是 Adapter 注册清单；新增、删除或重命名 Adapter 时必须与实际目录、manifest、WebCLI 调用路径保持一致。
+- 扩展内置的 `adapters/index.json` 与 `adapters/registry.json` 由 `weworker/scripts/prepare-build.cjs` 构建时生成（当前恒为空清单），不得手工维护或提交生成产物；新增、删除或重命名 Adapter 时只需更新 `adapters/<id>/manifest.json` 与 `weworker/build-profile.json` 的打包范围。
 - `weworker/scripts/build-profile-overlay.cjs` 负责按 profile/overlay 生成构建配置；修改构建配置时必须验证生成结果和最终构建入口一致。
 - 构建产物、本地配置、缓存、真实用户数据和运行时临时文件不得提交。
 - 修改依赖时必须同步 lockfile，并说明新增依赖的用途。

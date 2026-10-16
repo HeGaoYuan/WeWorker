@@ -139,11 +139,11 @@ npm run build:win
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `adapters` | `string[]` | 要打包的适配器 ID 列表，对应 `extension/adapters/` 下的目录名。未列出的适配器不会进入安装包，构建时会跳过并输出 WARNING |
+| `adapters` | `string[]` | 要打包的适配器 ID 列表，对应仓库根 `adapters/` 下的目录名。未列出的适配器不会进入安装包，构建时会报错 |
 | `providers` | `object[]` | 用户可选的 AI 提供商列表。每项声明 `models`、`defaultModel`，以及 WeWorker／Webwright 各自使用的明确协议、Adapter、Base URL 和结构化输出策略 |
 | `defaultProvider` | `string` | 默认选中的提供商 ID，必须存在于 `providers` 的 `id` 中 |
 
-> **提示**：`adapters` 只控制打包哪些适配器，开发模式下（`npm run dev`）所有适配器都可用，不受此限制。如需查看所有可用适配器，见 `extension/adapters/` 目录。
+> **提示**：`adapters` 只控制打包哪些适配器，开发模式下（`npm run dev`）所有适配器都可用，不受此限制。如需查看所有可用适配器，见仓库根 `adapters/` 目录。
 
 派生发行版不要直接修改公共 Profile 或 Extension Manifest。将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
 

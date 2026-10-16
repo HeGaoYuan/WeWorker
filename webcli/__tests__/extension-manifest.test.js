@@ -35,22 +35,4 @@ describe('extension manifest web accessible resources', () => {
     expect(matchesAnyResource(resources, 'adapters/example.test/webcli-generated/tools/search_records.generated.js')).toBe(true);
   });
 
-  it('covers every current adapter support_files entry', () => {
-    const manifest = readJson('extension/manifest.json');
-    const resources = manifest.web_accessible_resources.flatMap((entry) => entry.resources || []);
-    const adaptersDir = path.join(extensionDir, 'adapters');
-    const missing = [];
-
-    for (const adapterId of fs.readdirSync(adaptersDir)) {
-      const manifestPath = path.join(adaptersDir, adapterId, 'manifest.json');
-      if (!fs.existsSync(manifestPath)) continue;
-      const adapterManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      for (const supportFile of adapterManifest.support_files || []) {
-        const relPath = `adapters/${adapterId}/${supportFile}`;
-        if (!matchesAnyResource(resources, relPath)) missing.push(relPath);
-      }
-    }
-
-    expect(missing).toEqual([]);
-  });
 });

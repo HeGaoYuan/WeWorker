@@ -1509,7 +1509,7 @@ function buildDetailHintsToolModule(memory, toolName, semanticConfig) {
     }));
 }
 function buildIndexSnippet(siteKey) {
-    return `// 把这一行加入 extension/adapters/${siteKey}/index.js 的 tools 数组中
+    return `// 把这一行加入 adapters/${siteKey}/index.js 的 tools 数组中
 ...(window.__webmcpGeneratedSupport?.[${serializeJsValue(siteKey)}]?.tools || []),
 `;
 }
@@ -1552,7 +1552,7 @@ function buildIntegrationGuide(memory, context) {
         '',
         '## 运行时启用',
         '',
-        '- scaffold 生成器也会同步更新 extension/adapters/index.json，让扩展初始化阶段可以发现这个适配器。',
+        '- scaffold 生成器也会同步更新输出根目录下的 index.json（与适配器目录同级），让初始化阶段可以发现这个适配器。',
         '- 生成或更新适配器后，重新加载一次 Chrome 扩展，让后台重新扫描已安装适配器。',
         '- 生成工具默认标记为 API background/direct，应先在无目标标签页的情况下直接调用。',
         `- 只有 direct 调用返回登录或页面上下文错误时，才打开 ${memory.canonicalEntryUrl || memory.siteOrigin || `https://${memory.siteHost}/`} 完成登录。`,

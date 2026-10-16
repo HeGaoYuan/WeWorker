@@ -10,7 +10,7 @@
       "match": ["mail.google.com"],
       "version": "2026-02-24T08:15:35Z",
       "verified_on": "2026-02-24",
-      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/mail.google.com",
+      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/adapters/mail.google.com",
       "i18n": {
         "zh": {
           "name": "Gmail",
@@ -26,7 +26,7 @@
       "match": ["mail.163.com"],
       "version": "2026-02-22T00:00:00Z",
       "verified_on": "2026-02-22",
-      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/mail.163.com",
+      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/adapters/mail.163.com",
       "i18n": {
         "zh": {
           "name": "163邮箱",
@@ -42,7 +42,7 @@
       "match": ["jd.com", "pc-settlement-lite-pro.pf.jd.com"],
       "version": "2026-03-16T00:00:00Z",
       "verified_on": "2026-03-16",
-      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/jd.com",
+      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/adapters/jd.com",
       "i18n": {
         "zh": {
           "name": "京东",
@@ -58,7 +58,7 @@
       "match": ["xiaohongshu.com"],
       "version": "2026-03-10T00:00:00Z",
       "verified_on": "2026-03-10",
-      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/xiaohongshu.com",
+      "homepage": "https://github.com/WeWorker/WeWorker/tree/main/adapters/xiaohongshu.com",
       "i18n": {
         "zh": {
           "name": "小红书",
