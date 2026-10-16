@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type {
   SDKMessage,
+  Options,
   McpServerConfig,
   SettingSource,
   HookCallback,
@@ -29,7 +30,7 @@ import { composeSystemPromptWithZcf } from './zcf-sync.js'
 import { computeUsageMetrics } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
-import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
+import { acquireModelRuntime } from './anthropic-endpoint-relay.js'
 import { createWeWorkerToolPolicy } from './agent-tool-policy.js'
 import { spawnManagedClaudeCodeProcess } from './claude-process.js'
 import { waitForAdapterRuntimeReload } from './adapter-runtime-reload.js'
@@ -61,6 +62,8 @@ import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic
 import { renderPrompt } from './prompt-loader.js'
 import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
 import { resolveThinkingEffort } from './thinking-effort.js'
+import { StreamingVisibleText } from './streaming-visible-text.js'
+import { AssistantCheckpoint, ClaudeSession, claudeConversationSessions, fingerprintSessionSources } from './claude-session.js'
 
 const log = createLogger('agent')
 
@@ -88,6 +91,7 @@ function getStoredCompactedConversation(workId: string | undefined, messages: Me
 
 export function clearStoredConversationCompaction(workId: string): void {
   compactedConversationByWork.delete(workId)
+  claudeConversationSessions.remove(workId)
 }
 
 const MODEL_AUTH_ENV_KEYS = [
@@ -402,10 +406,16 @@ ${authSites.join('\n')}
   return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
 }
 function findClaudeExecutable(): string | undefined {
+  const configured = process.env.WEWORKER_CLAUDE_CODE_PATH
+  if (configured && fs.existsSync(configured)) return configured
+  // On Windows the SDK resolves the bundled native executable itself. Running
+  // a Unix locator through PowerShell on every turn adds startup delay and fails.
+  if (process.platform === 'win32') return undefined
   try {
     const result = execSync('which claude', {
       shell: process.env.SHELL || '/bin/zsh',
       timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim()
     if (result && fs.existsSync(result)) return result
   } catch {}
@@ -740,7 +750,7 @@ function stripBase64Images(text: string): string {
   return result.trim()
 }
 
-function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id: string; text: string }[]): Generator<SSEEvent> {
+function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[]): Generator<SSEEvent> {
   // Log SDK message types for timing analysis
   if (msg.type !== 'stream_event') {
     log.info(`sdk-event: type=${msg.type}`)
@@ -753,7 +763,7 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     if (event.type === 'content_block_start') {
       if (event.content_block?.type === 'text') {
         // Start buffering a new text block
-        textBlockBuf.push({ id: String(event.index ?? textBlockBuf.length), text: '' })
+        textBlockBuf.push({ id: String(event.index ?? textBlockBuf.length), text: '', filter: new StreamingVisibleText() })
       } else if (event.content_block?.type === 'tool_use') {
         yield {
           type: 'tool_call_start',
@@ -767,26 +777,29 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     }
 
     if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-      // Accumulate into the current text block buffer
-      const buf = textBlockBuf[textBlockBuf.length - 1]
-      if (buf) {
-        buf.text += event.delta.text
-      } else {
-        // Fallback: no open block, emit directly
-        yield { type: 'text_delta', content: event.delta.text }
+      const id = String(event.index ?? textBlockBuf.length - 1)
+      let buf = textBlockBuf.find(block => block.id === id)
+      if (!buf) {
+        buf = { id, text: '', filter: new StreamingVisibleText() }
+        textBlockBuf.push(buf)
       }
+      buf.text += event.delta.text
+      const visible = buf.filter.push(event.delta.text)
+      if (visible) yield { type: 'text_delta', content: visible }
       return
     }
 
     if (event.type === 'content_block_stop') {
-      const buf = textBlockBuf.pop()
+      const index = event.index === undefined ? textBlockBuf.length - 1 : textBlockBuf.findIndex(block => block.id === String(event.index))
+      const buf = index >= 0 ? textBlockBuf.splice(index, 1)[0] : undefined
       if (buf?.text) {
+        const remaining = buf.filter.finish()
+        if (remaining) yield { type: 'text_delta', content: remaining }
         const cleaned = stripBase64Images(buf.text)
         const parsed = parseAssistantMemoryOutput(cleaned)
         const memoryParse = summarizeAssistantMemoryParse(parsed)
         log.info('memory_parse', memoryParse)
         yield { type: 'memory_parse', memoryParse }
-        if (parsed.visibleText) yield { type: 'text_delta', content: parsed.visibleText }
         if (parsed.decision?.should_remember && parsed.decision.candidate) {
           yield { type: 'memory_candidate', candidate: parsed.decision.candidate }
         }
@@ -925,15 +938,15 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
 }
 
 export async function* streamChat(...args: Parameters<typeof streamChatWithBaseUrl>): AsyncGenerator<SSEEvent> {
-  let runtime: Awaited<ReturnType<typeof prepareModelRuntime>>
+  let runtime: Awaited<ReturnType<typeof acquireModelRuntime>>
   try {
-    runtime = await prepareModelRuntime(args[1])
+    runtime = await acquireModelRuntime(args[1], args[3]?.workId)
   } catch {
     yield { type: 'error', content: '模型接口地址无效或无法启动本地转发' }
     return
   }
   try {
-    yield* streamChatWithBaseUrl(args[0], runtime.settings, args[2], args[3])
+    yield* streamChatWithBaseUrl(args[0], runtime.settings, args[2], args[3], runtime.retain)
   } finally {
     await runtime.close()
   }
@@ -978,10 +991,12 @@ async function* streamChatWithBaseUrl(
     /** Additional tools hidden from the model. */
     extraDisallowedTools?: string[];
   } = {},
+  retainRuntime?: () => () => Promise<void>,
 ): AsyncGenerator<SSEEvent> {
   // Claude Code discovers user Skills when each query starts. If a website was
   // just scaffolded, wait for its hot-install to finish before starting query.
   await waitForAdapterRuntimeReload()
+  if ((opts.forceCompaction || opts.compactionOnly) && opts.workId) claudeConversationSessions.remove(opts.workId)
   const enabledAdapterIds = opts.enabledAdapterIds
   const channelPermissionMode = opts.channelPermissionMode ?? 'full'
 
@@ -1033,7 +1048,7 @@ async function* streamChatWithBaseUrl(
     ? false
     : opts.streaming !== false
 
-  const textBlockBuf: { id: string; text: string }[] = []
+  const textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[] = []
   const thinkingEffort = resolveThinkingEffort(settings.active_provider, settings.model, opts.thinkingEffort)
   const queryStartTime = Date.now()
   log.info(` calling Claude API 鈥?model=${settings.model}`)
@@ -1333,47 +1348,110 @@ async function* streamChatWithBaseUrl(
     }
   }
 
-  const queryHandle = query({
-    prompt: contextAssembly.sdk.prompt,
-    options: {
-      abortController,
+  const queryOptions: Options = {
+    abortController,
+    model: settings.model,
+    systemPrompt: contextAssembly.sdk.system_prompt,
+    mcpServers: { weworker: activeMcpServer },
+    disallowedTools,
+    canUseTool,
+    settings: filesystemSettings,
+    // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
+    permissionMode: 'default',
+    includePartialMessages,
+    cwd: agentCwd,
+    settingSources,
+    effort: thinkingEffort,
+    pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
+    spawnClaudeCodeProcess,
+    env: envWithWebcli,
+    hooks: memoryEnabled ? {
+      UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }],
+      PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }],
+    } : undefined,
+  }
+  const sessionEligible = Boolean(opts.workId)
+    && !opts.mcpServerOverride
+    && !opts.restrictBuiltInTools
+    && !opts.extraToolGuard
+    && !opts.forceCompaction
+    && !opts.compactionOnly
+    && !settings.base_url_is_full
+    && (!compactionPlan.shouldCompact || compactionCompleted)
+  const sessionFingerprint = createHash('sha256').update(JSON.stringify({
+    settings: {
+      provider: settings.active_provider,
+      apiKey: settings.api_key,
+      baseUrl: settings.base_url,
       model: settings.model,
-      systemPrompt: contextAssembly.sdk.system_prompt,
-      mcpServers: { weworker: activeMcpServer },
-      disallowedTools,
-      canUseTool,
-      settings: filesystemSettings,
-      // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
-      permissionMode: 'default',
-      includePartialMessages,
-      cwd: agentCwd,
-      settingSources,
-      effort: thinkingEffort,
-      pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
-      spawnClaudeCodeProcess,
-      env: envWithWebcli,
-      hooks: memoryEnabled ? {
-        UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }],
-        PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }],
-      } : undefined,
+      contextLimit: settings.context_limit,
     },
-  })
+    systemPrompt: contextAssembly.sdk.system_prompt,
+    identityPrompt,
+    siteToolkitPrompt,
+    channelPermissionMode,
+    enabledAdapterIds: [...(enabledAdapterIds ?? [])].sort(),
+    env: envWithWebcli,
+    disallowedTools,
+    filesystemSettings,
+    agentCwd,
+    settingSources,
+    thinkingEffort,
+    memoryEnabled,
+    includePartialMessages,
+    memoryScope: opts.memoryScope ?? { user: 'local' },
+    compaction: opts.workId ? compactedConversationByWork.get(opts.workId) : undefined,
+    sources: fingerprintSessionSources(skillRoots, queryEnv.CLAUDE_CONFIG_DIR || '', agentCwd),
+  })).digest('hex')
+  const reusableSession = sessionEligible
+    ? claudeConversationSessions.get(opts.workId!, sessionFingerprint, messages)
+    : undefined
+  if (!sessionEligible && opts.workId) claudeConversationSessions.remove(opts.workId)
+  let queryHandle: ReturnType<typeof query> | undefined
+  let conversationSession = reusableSession
+  let sessionIsNew = false
+  if (!conversationSession && sessionEligible) {
+    const releaseRuntime = retainRuntime?.()
+    const created = new ClaudeSession((input, session) => {
+      session.options = queryOptions
+      return query({ prompt: input, options: {
+        ...queryOptions,
+        abortController: new AbortController(),
+        canUseTool: (...args) => session.options!.canUseTool!(...args),
+        hooks: memoryEnabled ? {
+          UserPromptSubmit: [{ hooks: [(...args) => session.options!.hooks!.UserPromptSubmit![0].hooks[0](...args)] }],
+          PostToolBatch: [{ hooks: [(...args) => session.options!.hooks!.PostToolBatch![0].hooks[0](...args)] }],
+        } : undefined,
+      } })
+    }, () => { void releaseRuntime?.() })
+    if (claudeConversationSessions.put(opts.workId!, sessionFingerprint, messages, created)) {
+      conversationSession = created
+      sessionIsNew = true
+    } else {
+      created.close()
+    }
+  }
+  if (conversationSession) conversationSession.options = queryOptions
+  if (!conversationSession) queryHandle = query({ prompt: contextAssembly.sdk.prompt, options: queryOptions })
+  log.info('claude_session', { reused: !!reusableSession, persistent: !!conversationSession })
 
   // When the abort signal fires, forcefully close the query to kill the
   // underlying Claude CLI subprocess. Without this, the child process
   // keeps running (and operating on websites) even after the HTTP
   // connection is closed.
   let queryRunning = true
+  let retained = false
   const onAbort = () => {
     log.info(` onAbort called 鈥?queryRunning=${queryRunning}`)
     if (!queryRunning) return // query already finished, nothing to kill
     log.info(' abort signal received, closing query handle')
-    queryHandle.close()
+    if (conversationSession && opts.workId) claudeConversationSessions.remove(opts.workId)
+    else queryHandle?.close()
   }
   if (abortController) {
     if (abortController.signal.aborted) {
       log.info(' abortController already aborted before query started')
-      queryHandle.close()
+      onAbort()
       return
     }
     abortController.signal.addEventListener('abort', onAbort, { once: true })
@@ -1382,12 +1460,23 @@ async function* streamChatWithBaseUrl(
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
+    let firstTextReceived = false
     let completed = false
     let assistantResponseCount = 0
     let memoryParseCount = 0
     let sdkUserEventCount = 0
     let sdkUserReminderObservedCount = 0
-    for await (const msg of queryHandle) {
+    const messageStream = conversationSession
+      ? conversationSession.turn(
+          sessionIsNew ? contextAssembly.sdk.prompt : messagePromptText(messages[messages.length - 1]),
+          activeMcpServer as McpServerConfig,
+          abortController?.signal,
+          !sessionIsNew,
+        )
+      : queryHandle!
+    const assistantCheckpoint = new AssistantCheckpoint()
+    let streamError = false
+    for await (const msg of messageStream) {
       if (!firstEventReceived) {
         firstEventReceived = true
         log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
@@ -1404,11 +1493,18 @@ async function* streamChatWithBaseUrl(
       }
       if (msg.type === 'assistant') assistantResponseCount += 1
       for (const skillContext of skillContextCollector.observe(msg)) {
+        assistantCheckpoint.observe({ type: 'skill_context', skillContext })
         turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
         log.info('skill_context_captured', { chars: skillContext.text.length })
         yield { type: 'skill_context', skillContext }
       }
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
+        if (event.type === 'text_delta' && event.content && !firstTextReceived) {
+          firstTextReceived = true
+          log.info('first_visible_text', { elapsed_ms: Date.now() - queryStartTime, reused_session: !!reusableSession })
+        }
+        assistantCheckpoint.observe(event)
+        if (event.type === 'error') streamError = true
         if (event.type === 'memory_parse') memoryParseCount += 1
         if (
           event.type === 'text_delta'
@@ -1428,6 +1524,12 @@ async function* streamChatWithBaseUrl(
     if (completed) {
       for (const event of turnContextCollector.finish()) yield event
     }
+    if (conversationSession && opts.workId) {
+      if (completed && !streamError && !abortController?.signal.aborted) {
+        claudeConversationSessions.complete(opts.workId, conversationSession, messages, assistantCheckpoint)
+        retained = true
+      } else claudeConversationSessions.remove(opts.workId)
+    }
     log.info(` for-await loop completed normally 鈥?total=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
     log.info('memory_context_check', {
       user_prompt_injections: memoryUserPromptInjectionCount,
@@ -1441,11 +1543,15 @@ async function* streamChatWithBaseUrl(
     // Silently ignore abort errors (user cancelled)
     if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('aborted'))) {
       log.info(` caught abort error: ${e.message}`)
+      if (conversationSession && opts.workId) claudeConversationSessions.remove(opts.workId)
       return
     }
     log.info(` caught error: ${e instanceof Error ? e.message : String(e)}`)
+    if (conversationSession && opts.workId) claudeConversationSessions.remove(opts.workId)
     yield { type: 'error', content: e instanceof Error ? e.message : String(e) }
   } finally {
+    if (conversationSession && !retained && opts.workId) claudeConversationSessions.remove(opts.workId)
+    if (!conversationSession) queryHandle?.close()
     log.info(' finally block 鈥?setting queryRunning=false')
     queryRunning = false
     if (abortController) {

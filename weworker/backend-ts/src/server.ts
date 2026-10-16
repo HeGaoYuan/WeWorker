@@ -94,7 +94,7 @@ import { execFile } from 'node:child_process'
 import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow } from './site-memory.js'
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
-import { buildConfiguredModelEnv, streamChat, type SSEEvent } from './agent.js'
+import { buildConfiguredModelEnv, clearStoredConversationCompaction, streamChat, type SSEEvent } from './agent.js'
 import { matchSiteAdapter, resolveSiteToolkitPrompt } from './site-gate.js'
 import { listToolkitSkills, resolveToolkitSkillPrompt, toolkitGateCandidates } from './toolkit-skills.js'
 import { decideTier4, openTier4Turn } from './tier4-dispatch.js'
@@ -2191,6 +2191,7 @@ app.patch('/works/:id', (req, res) => {
 })
 
 app.delete('/works/:id', (req, res) => {
+  clearStoredConversationCompaction(req.params.id)
   store.deleteWork(req.params.id)
   res.json({ ok: true })
 })

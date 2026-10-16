@@ -94,6 +94,7 @@ export async function runChannelChat(
   const seenToolIds = new Set<string>()
 
   for await (const event of streamChat(messages, settings, opts?.abortController, {
+    workId: messages.at(-1)?.work_id,
     ...(opts?.profileOptions ?? {}),
     streaming: false,
     channelPermissionMode: opts?.channelPermissionMode ?? 'full',

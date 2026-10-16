@@ -1,6 +1,6 @@
 import http from 'node:http'
 import https from 'node:https'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import type { Settings } from './config.js'
 import { normalizeLlmUrlInput } from './llm-egress.js'
 
@@ -60,5 +60,44 @@ export async function prepareModelRuntime(settings: Settings) {
   return {
     settings: { ...settings, base_url: relay.baseUrl, base_url_is_full: false },
     close: relay.close,
+  }
+}
+
+// Reference-count the relay: an HTTP turn and its retained CLI session have
+// independent lifetimes. Never share runtime configuration across conversations.
+type ModelRuntime = Awaited<ReturnType<typeof prepareModelRuntime>>
+interface RuntimeEntry { fingerprint: string; promise: Promise<ModelRuntime>; references: number }
+const runtimes = new Map<string, RuntimeEntry>()
+
+export async function acquireModelRuntime(settings: Settings, workId?: string) {
+  const fingerprint = createHash('sha256').update(JSON.stringify(settings)).digest('hex')
+  let entry = workId ? runtimes.get(workId) : undefined
+  if (!entry || entry.fingerprint !== fingerprint) {
+    entry = { fingerprint, promise: prepareModelRuntime(settings), references: 0 }
+    if (workId) runtimes.set(workId, entry)
+  }
+  const current = entry
+  current.references++
+  let runtime: ModelRuntime
+  try { runtime = await current.promise } catch (error) {
+    current.references--
+    if (workId && runtimes.get(workId) === current) runtimes.delete(workId)
+    throw error
+  }
+  const lease = () => {
+    let released = false
+    return async () => {
+      if (released) return
+      released = true
+      if (--current.references === 0) {
+        if (workId && runtimes.get(workId) === current) runtimes.delete(workId)
+        await runtime.close()
+      }
+    }
+  }
+  return {
+    settings: runtime.settings,
+    close: lease(),
+    retain: () => { current.references++; return lease() },
   }
 }
