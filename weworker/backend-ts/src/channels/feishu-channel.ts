@@ -9,7 +9,6 @@ import * as Lark from '@larksuiteoapi/node-sdk'
 
 import type { Channel, ChannelStatus } from './channel-manager.js'
 import { runChannelChat } from './channel-manager.js'
-import { resolveZcfPrefs } from '../zcf-sync.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
 import { getSettings } from '../config.js'
 import { generateTitle, generateTitleWithLLM } from '../title-utils.js'

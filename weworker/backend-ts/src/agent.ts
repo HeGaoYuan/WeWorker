@@ -39,8 +39,8 @@ import {
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
-import { composeSystemPromptWithZcf } from './zcf-sync.js'
-import { computeUsageMetrics } from './usage-metrics.js'
+import { composeSystemPromptWithStyle } from './style-settings.js'
+import { computeUsageMetrics, createApiDurationTracker, resolveTurnApiDuration, type ApiDurationTracker } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
@@ -271,6 +271,10 @@ export interface UsageEvent {
   cache_hit_rate: number
   total_cost_usd?: number
   duration_ms?: number
+  /** Per-turn API time (delta of the CLI's session-cumulative duration_api_ms). */
+  duration_api_ms?: number
+  /** Session-cumulative API time reported by the CLI, for diagnostics only. */
+  duration_api_ms_total?: number
   num_turns?: number
   kind?: 'turn' | 'post_compaction_probe'
 }
@@ -278,9 +282,8 @@ export interface UsageEvent {
 export function buildSystemPrompt(opts?: {
   channelPermissionMode?: ChannelPermissionMode
   platform?: NodeJS.Platform
-  zcfRole?: string | null
-  zcfMode?: string | null
-  zcfCustomRoles?: import('./zcf-sync.js').ZcfCustomRole[]
+  styleId?: string | null
+  customStyles?: import('./style-settings.js').CustomStyle[]
   memoryProtocol?: string
 }): string {
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
@@ -289,7 +292,7 @@ export function buildSystemPrompt(opts?: {
   const defaultShell = platform === 'win32' ? 'powershell' : 'bash'
   if (channelPermissionMode === 'qa_only') {
     const base = renderPrompt('agent-qa-only', {}).trim()
-    return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
+    return composeSystemPromptWithStyle(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.styleId, opts?.customStyles ?? [])
   }
 
   const allAdapters = parseAllAdapters()
@@ -409,7 +412,7 @@ ${authSites.join('\n')}
     windows_encryption_rules: windowsEncryptionRules,
     login_detection_rules: loginDetectionRules,
   }).trimEnd()}\n`
-  return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
+  return composeSystemPromptWithStyle(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.styleId, opts?.customStyles ?? [])
 }
 function findClaudeExecutable(): string | undefined {
   const configured = process.env.WEWORKER_CLAUDE_CODE_PATH
@@ -760,7 +763,19 @@ function stripBase64Images(text: string): string {
   return result.trim()
 }
 
-function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[]): Generator<SSEEvent> {
+/**
+ * SDK message → SSE event mapping, including the per-turn `usage` metrics.
+ *
+ * Exported for focused tests of the `usage` log line / event: the CLI's
+ * `duration_api_ms` is session-cumulative, so `apiDuration` must be the same
+ * tracker object for every turn of one CLI session.
+ */
+export function* mapSdkMessage(
+  msg: SDKMessage,
+  streaming: boolean,
+  textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[],
+  apiDuration: ApiDurationTracker = createApiDurationTracker(),
+): Generator<SSEEvent> {
   // Log SDK message types for timing analysis
   if (msg.type !== 'stream_event') {
     log.info(`sdk-event: type=${msg.type}`)
@@ -926,10 +941,17 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       errors?: string[]
       result?: string
     }
+    // `duration_api_ms` is the CLI's session-cumulative API duration (same
+    // ledger lifecycle as total_cost_usd), so the per-turn value is a delta
+    // against the previous sample of this query() session.
+    const apiDurationSample = resolveTurnApiDuration(r.duration_api_ms, apiDuration.lastCumulativeMs)
+    if (apiDurationSample.cumulativeMs !== null) {
+      apiDuration.lastCumulativeMs = apiDurationSample.cumulativeMs
+    }
     if (r.usage) {
       const m = computeUsageMetrics(r.usage)
       log.info(
-        `usage in=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_create=${m.cache_creation_input_tokens} out=${m.output_tokens} total_in=${m.total_input_tokens} cache_hit=${(m.cache_hit_rate * 100).toFixed(1)}% cost=$${r.total_cost_usd ?? 0} dur=${r.duration_ms ?? 0}ms api=${r.duration_api_ms ?? '?'}ms ttft=${r.ttft_ms ?? '?'}ms to_request=${r.time_to_request_ms ?? '?'}ms spawn_to_request=${r.time_to_request_from_spawn_ms ?? '?'}ms turns=${r.num_turns ?? 0} subtype=${r.subtype ?? '?'}`,
+        `usage in=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_create=${m.cache_creation_input_tokens} out=${m.output_tokens} total_in=${m.total_input_tokens} cache_hit=${(m.cache_hit_rate * 100).toFixed(1)}% cost=$${r.total_cost_usd ?? 0} dur=${r.duration_ms ?? 0}ms api=${apiDurationSample.turnMs ?? '?'}ms api_total=${apiDurationSample.cumulativeMs ?? '?'}ms${apiDurationSample.baselineReset ? ' api_reset=true' : ''} ttft=${r.ttft_ms ?? '?'}ms to_request=${r.time_to_request_ms ?? '?'}ms spawn_to_request=${r.time_to_request_from_spawn_ms ?? '?'}ms turns=${r.num_turns ?? 0} subtype=${r.subtype ?? '?'}`,
       )
       yield {
         type: 'usage',
@@ -937,6 +959,8 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
           ...m,
           total_cost_usd: r.total_cost_usd,
           duration_ms: r.duration_ms,
+          duration_api_ms: apiDurationSample.turnMs ?? undefined,
+          duration_api_ms_total: apiDurationSample.cumulativeMs ?? undefined,
           num_turns: r.num_turns,
         },
       } as SSEEvent
@@ -1016,8 +1040,7 @@ async function* streamChatWithBaseUrl(
     streaming?: boolean;
     enabledAdapterIds?: Set<string>;
     workId?: string;
-    zcfRole?: string | null;
-    zcfMode?: string | null;
+    styleId?: string | null;
     channelPermissionMode?: ChannelPermissionMode;
     onAskUser?: (event: { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }) => void;
     channelAskUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>;
@@ -1242,9 +1265,8 @@ async function* streamChatWithBaseUrl(
     : ''
   const baseSystemPrompt = opts.systemPromptOverride ?? buildSystemPrompt({
     channelPermissionMode,
-    zcfRole: opts.zcfRole,
-    zcfMode: opts.zcfMode,
-    zcfCustomRoles: settings.zcf_custom_roles,
+    styleId: opts.styleId,
+    customStyles: settings.zcf_custom_roles,
     memoryProtocol,
   })
   const systemPrompt = opts.appendSystemPrompt?.trim()
@@ -1591,6 +1613,10 @@ async function* streamChatWithBaseUrl(
     closeTurn = () => queryHandle.close()
   }
   const sdkStartTime = Date.now()
+  // A live session keeps one CLI (and therefore one cost ledger) across turns,
+  // so its tracker must survive across turns; a one-off query starts a fresh
+  // ledger on every turn and needs a fresh tracker.
+  const apiDurationTracker: ApiDurationTracker = session?.apiDuration ?? createApiDurationTracker()
 
   // When the abort signal fires, forcefully close the query to kill the
   // underlying Claude CLI subprocess. Without this, the child process
@@ -1650,7 +1676,7 @@ async function* streamChatWithBaseUrl(
         log.info('skill_context_captured', { chars: skillContext.text.length })
         yield { type: 'skill_context', skillContext }
       }
-      for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
+      for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf, apiDurationTracker)) {
         if (event.type === 'memory_parse') memoryParseCount += 1
         if (event.type === 'error') turnFailed = true
         if (

@@ -16,8 +16,8 @@ export interface Work {
   title: string
   label: LabelColor
   project_id: string | null
+  /** 该任务使用的风格 id（列名沿用历史命名，改列名需要数据迁移）。 */
   zcf_role: string | null
-  zcf_mode: string | null
   created_at: string
   updated_at: string
 }
@@ -154,6 +154,8 @@ function db(): DatabaseSync {
   } catch {
     // Column already exists — ignore
   }
+  // 历史列 `zcf_mode`（已移除的工作流模式）保留在 schema 里：删除列属于数据库
+  // schema 变更，本次不迁移、不删用户数据；读写侧已不再使用该列。
   try {
     _db.exec('ALTER TABLE works ADD COLUMN zcf_mode TEXT DEFAULT NULL')
   } catch {
@@ -260,33 +262,46 @@ export function createWork(title = '', projectId: string | null = null): Work {
   const now = new Date().toISOString()
   const id = randomUUID()
   db().prepare('INSERT INTO works (id, title, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, title, projectId, now, now)
-  return { id, title, label: null, project_id: projectId, zcf_role: null, zcf_mode: null, created_at: now, updated_at: now }
+  return { id, title, label: null, project_id: projectId, zcf_role: null, created_at: now, updated_at: now }
 }
 
-export function updateWorkZcfPrefs(
+export function updateWorkStyle(
   id: string,
-  prefs: { zcf_role?: string | null; zcf_mode?: string | null },
+  prefs: { zcf_role?: string | null },
 ): Work | null {
   const work = getWork(id)
   if (!work) return null
   const zcf_role = prefs.zcf_role !== undefined ? prefs.zcf_role : work.zcf_role
-  const zcf_mode = prefs.zcf_mode !== undefined ? prefs.zcf_mode : work.zcf_mode
   const now = new Date().toISOString()
-  db().prepare('UPDATE works SET zcf_role = ?, zcf_mode = ?, updated_at = ? WHERE id = ?').run(
+  db().prepare('UPDATE works SET zcf_role = ?, updated_at = ? WHERE id = ?').run(
     zcf_role,
-    zcf_mode,
     now,
     id,
   )
-  return { ...work, zcf_role, zcf_mode, updated_at: now }
+  return { ...work, zcf_role, updated_at: now }
+}
+
+/** 显式投影：`SELECT *` 会带回已废弃的历史列（如 zcf_mode），API 响应不再透出它们。 */
+function toWork(row: Record<string, unknown>): Work {
+  return {
+    id: row.id as string,
+    title: (row.title as string) ?? '',
+    label: (row.label as LabelColor) ?? null,
+    project_id: (row.project_id as string | null) ?? null,
+    zcf_role: (row.zcf_role as string | null) ?? null,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  }
 }
 
 export function listWorks(): Work[] {
-  return db().prepare('SELECT * FROM works ORDER BY updated_at DESC').all() as unknown as Work[]
+  const rows = db().prepare('SELECT * FROM works ORDER BY updated_at DESC').all() as unknown as Array<Record<string, unknown>>
+  return rows.map(toWork)
 }
 
 export function getWork(id: string): Work | null {
-  return (db().prepare('SELECT * FROM works WHERE id = ?').get(id) as unknown as Work) ?? null
+  const row = db().prepare('SELECT * FROM works WHERE id = ?').get(id) as unknown as Record<string, unknown> | undefined
+  return row ? toWork(row) : null
 }
 
 export function getWorkWithMessages(id: string): WorkWithMessages | null {

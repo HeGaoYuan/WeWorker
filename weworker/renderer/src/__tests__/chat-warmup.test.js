@@ -50,11 +50,11 @@ describe('chat warm-up', () => {
       calls.push({ url, body: JSON.parse(options.body) })
       return { ok: true, json: async () => ({ status: 'starting' }) }
     }
-    assert.deepEqual(await warmupChat('work-a', { thinkingEffort: 'low', zcfRole: 'ignored' }), { status: 'starting' })
-    await warmupChat(null, { thinkingEffort: 'medium', zcfRole: 'role-a', zcfMode: 'direct' })
+    assert.deepEqual(await warmupChat('work-a', { thinkingEffort: 'low', styleId: 'ignored' }), { status: 'starting' })
+    await warmupChat(null, { thinkingEffort: 'medium', styleId: 'engineer-professional' })
     assert.equal(calls[0].url, 'http://127.0.0.1:8765/works/work-a/warmup')
     assert.deepEqual(calls[0].body, { thinkingEffort: 'low' })
     assert.equal(calls[1].url, 'http://127.0.0.1:8765/chat/warmup')
-    assert.deepEqual(calls[1].body, { thinkingEffort: 'medium', zcfRole: 'role-a', zcfMode: 'direct' })
+    assert.deepEqual(calls[1].body, { thinkingEffort: 'medium', styleId: 'engineer-professional' })
   })
 })

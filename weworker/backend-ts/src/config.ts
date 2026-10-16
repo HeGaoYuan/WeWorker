@@ -57,14 +57,13 @@ import {
   type UserDirectoryBlacklistEntry,
 } from './user-directory-blacklist.js'
 import {
-  CORE_STYLE_ID,
   DEFAULT_STYLE_ID,
-  migrateLegacyDefaultRole,
-  normalizeZcfCustomRoles,
-  normalizeZcfEnabledRoles,
-  normalizeZcfMode,
-  type ZcfCustomRole,
-} from './zcf-role-settings.js'
+  normalizeCustomStyles,
+  normalizeDefaultStyleId,
+  normalizeEnabledStyles,
+  stripObsoleteZcfSettings,
+  type CustomStyle,
+} from './style-settings.js'
 import { DEFAULT_CONTEXT_LIMIT, normalizeContextLimit } from './context-window.js'
 import { normalizeAddedProviders } from './provider-visibility.js'
 
@@ -332,20 +331,17 @@ export interface Settings {
   /** P2 API 查询路由的 LLM 分类层开关（默认开；env WEWORKER_LLM_ROUTE=1|0 可覆盖）。 */
   api_query_llm_route: boolean
 
-  /** ZCF output style id synced from zcf templates; empty = no extra role prompt */
+  /**
+   * 当前生效的风格 id（默认 / 预定义内置风格 / 自定义风格）。
+   * 键名沿用历史字段以避免数据迁移；与 ZCF 已无关系。
+   */
   zcf_default_role: string
 
-  /** ZCF workflow mode id: direct (默认) | auto-plan (自动规划) */
-  zcf_default_mode: string
-
-  /** Language used when syncing ZCF templates */
-  zcf_lang: 'zh-CN' | 'en'
-
-  /** Built-in + custom role ids shown in chat picker */
+  /** 生效的风格 id 列表（风格互斥，恒为 1 项）；随 zcf_default_role 一起维护 */
   zcf_enabled_roles: string[]
 
-  /** User-defined ZCF roles (id, label, prompt) */
-  zcf_custom_roles: ZcfCustomRole[]
+  /** User-defined styles (id, label, prompt)；键名沿用历史字段以避免数据迁移 */
+  zcf_custom_roles: CustomStyle[]
 
   /** 长期记忆按档位的估算 token 预算（extension 覆盖所有 extension:*）。 */
   memory_budgets: MemoryBudgets
@@ -467,13 +463,9 @@ const DEFAULTS: Settings = {
   user_directory_blacklist: [],
   open_browser_allowed_origins: [],
 
-  zcf_default_role: CORE_STYLE_ID,
+  zcf_default_role: DEFAULT_STYLE_ID,
 
-  zcf_default_mode: 'auto-plan',
-
-  zcf_lang: 'zh-CN',
-
-  zcf_enabled_roles: [CORE_STYLE_ID],
+  zcf_enabled_roles: [DEFAULT_STYLE_ID],
 
   zcf_custom_roles: [],
   memory_budgets: { ...DEFAULT_MEMORY_BUDGETS },
@@ -572,24 +564,13 @@ function normalizeChannelsConfig(channels: ChannelsConfig): ChannelsConfig {
   }
 }
 
-function listInstalledStyleIds(): string[] {
-  const stylesDir = path.join(CONFIG_DIR, 'claude-config', 'output-styles')
-  const ids = new Set<string>([DEFAULT_STYLE_ID, CORE_STYLE_ID])
-  if (fs.existsSync(path.join(stylesDir, `${CORE_STYLE_ID}.md`))) {
-    ids.add(CORE_STYLE_ID)
-  }
-  const extensionsDir = path.join(stylesDir, 'extensions')
-  if (fs.existsSync(extensionsDir)) {
-    for (const file of fs.readdirSync(extensionsDir).filter((f) => f.endsWith('.md'))) {
-      ids.add(file.replace(/\.md$/, ''))
-    }
-  }
-  return [...ids]
-}
-
 function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   const merged = deepMerge(cloneDefaults(), raw ?? {}) as Settings
+
+  // ZCF 机制已整体移除：老 settings.json 里的纯 ZCF 残留字段不再读取，也不再写回磁盘。
+  // （`zcf_default_role` / `zcf_enabled_roles` / `zcf_custom_roles` 是风格字段，保留。）
+  stripObsoleteZcfSettings(merged as unknown as Record<string, unknown>)
 
   merged.custom_auth_type = raw?.custom_auth_type === 'api_key' ? 'api_key' : 'auth_token'
 
@@ -624,17 +605,15 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   merged.user_directory_blacklist = normalizeUserDirectoryBlacklist(merged.user_directory_blacklist)
   merged.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(merged.open_browser_allowed_origins)
-  merged.zcf_custom_roles = normalizeZcfCustomRoles(merged.zcf_custom_roles)
+  merged.zcf_custom_roles = normalizeCustomStyles(merged.zcf_custom_roles)
   merged.memory_budgets = normalizeMemoryBudgets(merged.memory_budgets)
-  merged.zcf_default_role = migrateLegacyDefaultRole(merged.zcf_default_role)
-  merged.zcf_enabled_roles = normalizeZcfEnabledRoles(
+  merged.zcf_default_role = normalizeDefaultStyleId(merged.zcf_default_role)
+  merged.zcf_enabled_roles = normalizeEnabledStyles(
     merged.zcf_enabled_roles,
     merged.zcf_custom_roles,
-    listInstalledStyleIds(),
     merged.zcf_default_role,
   )
-  merged.zcf_default_role = merged.zcf_enabled_roles[0] || CORE_STYLE_ID
-  merged.zcf_default_mode = normalizeZcfMode(merged.zcf_default_mode)
+  merged.zcf_default_role = merged.zcf_enabled_roles[0] || DEFAULT_STYLE_ID
 
   const plaintextSecrets = collectPlaintextSecretsFromRaw(raw)
 
@@ -813,19 +792,17 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings.welcome_featured_site_limit = normalizeWelcomeFeaturedSiteLimit(_settings.welcome_featured_site_limit)
   _settings.user_directory_blacklist = normalizeUserDirectoryBlacklist(_settings.user_directory_blacklist)
   _settings.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(_settings.open_browser_allowed_origins)
-  _settings.zcf_custom_roles = normalizeZcfCustomRoles(_settings.zcf_custom_roles)
+  _settings.zcf_custom_roles = normalizeCustomStyles(_settings.zcf_custom_roles)
   _settings.memory_budgets = normalizeMemoryBudgets(_settings.memory_budgets)
   if (updates.zcf_default_role !== undefined) {
-    _settings.zcf_default_role = migrateLegacyDefaultRole(_settings.zcf_default_role)
+    _settings.zcf_default_role = normalizeDefaultStyleId(_settings.zcf_default_role)
   }
-  _settings.zcf_enabled_roles = normalizeZcfEnabledRoles(
+  _settings.zcf_enabled_roles = normalizeEnabledStyles(
     _settings.zcf_enabled_roles,
     _settings.zcf_custom_roles,
-    listInstalledStyleIds(),
     _settings.zcf_default_role,
   )
-  _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || CORE_STYLE_ID
-  _settings.zcf_default_mode = normalizeZcfMode(_settings.zcf_default_mode)
+  _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || DEFAULT_STYLE_ID
 
   _settings.added_providers = normalizeAddedProviders(_settings.added_providers)
 

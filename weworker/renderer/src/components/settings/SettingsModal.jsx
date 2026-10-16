@@ -11,7 +11,7 @@ import SkillsTab from './SkillsTab.jsx'
 import LogsTab from './LogsTab.jsx'
 import MemoryTab from './MemoryTab.jsx'
 import { useUserFilesStore } from '../../store/user-files.js'
-import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
+import { listSelectableStyles, isCustomStyleId, DEFAULT_STYLE_ID as DEFAULT_STYLE } from '../../store/styles.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import { DropdownMenuPortal, useDropdownDismiss } from '../common/DropdownMenuPortal.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
@@ -1074,7 +1074,7 @@ function ConfigTab({ active = true }) {
 
   return (
     <div className="settings-stack" hidden={!active}>
-      <ZcfSettingsPanel active={active} />
+      <StyleSettingsPanel active={active} />
 
       <div className="settings-group">
         <SettingRow
@@ -2531,7 +2531,6 @@ function getStyleOptionDescription(role, kind) {
   }
   return role.description || ''
 }
-
 // 把「已保存设置」单向同步进面板本地草稿：只有已保存内容签名变化时才覆盖本地草稿。
 // 设置页保存任何一项都会让后端回传整份 settings（自定义风格等字段是内容相同的新引用），
 // 若按引用变化就刷新，未点「保存配置」的新增/编辑风格会被已保存设置冲掉。
@@ -2547,45 +2546,23 @@ function useSyncSavedSnapshotToDraft(savedSnapshot, applySavedSnapshot) {
 
 // active=false 表示「配置」页签已切走（面板被隐藏但未卸载）：草稿 state 保留，
 // 只把编辑弹窗关掉，避免弹窗浮在其它页签上（与旧的「切页签即卸载」观感一致）。
-function ZcfSettingsPanel({ active = true }) {
-  const zcfLang = useSettingsStore((s) => s.zcfLang)
-  const zcfPackageVersion = useSettingsStore((s) => s.zcfPackageVersion)
-  const zcfSync = useSettingsStore((s) => s.zcfSync)
+function StyleSettingsPanel({ active = true }) {
   const zcfDefaultRole = useSettingsStore((s) => s.zcfDefaultRole)
-  const zcfDefaultMode = useSettingsStore((s) => s.zcfDefaultMode)
   const zcfEnabledRoles = useSettingsStore((s) => s.zcfEnabledRoles)
   const zcfCustomRoles = useSettingsStore((s) => s.zcfCustomRoles)
-  const saveZcfRoles = useSettingsStore((s) => s.saveZcfRoles)
-  const saveZcfDefaults = useSettingsStore((s) => s.saveZcfDefaults)
-  const syncMeta = useZcfStore((s) => s.syncMeta)
-  const packageVersion = useZcfStore((s) => s.packageVersion)
-  const extensionStyles = useZcfStore((s) => s.extensionStyles)
-  const coreStyles = useZcfStore((s) => s.coreStyles)
-  const zcfModes = useZcfStore((s) => s.modes)
-  const syncing = useZcfStore((s) => s.syncing)
-  const syncTemplates = useZcfStore((s) => s.syncTemplates)
-  const loadCatalog = useZcfStore((s) => s.loadCatalog)
-  const loadSettings = useSettingsStore((s) => s.load)
-  const [lang, setLang] = useState(zcfLang || 'zh-CN')
-  const [message, setMessage] = useState(null)
-  const [selectedStyleId, setSelectedStyleId] = useState(zcfDefaultRole || zcfEnabledRoles?.[0] || 'default')
-  const [selectedModeId, setSelectedModeId] = useState(normalizeZcfModeId(zcfDefaultMode))
+  const saveStyleSettings = useSettingsStore((s) => s.saveStyleSettings)
+  const [selectedStyleId, setSelectedStyleId] = useState(zcfDefaultRole || zcfEnabledRoles?.[0] || DEFAULT_STYLE)
   const [customRoles, setCustomRoles] = useState(zcfCustomRoles || [])
   const [customEditor, setCustomEditor] = useState(null)
   const [rolesMessage, setRolesMessage] = useState(null)
   const [savingRoles, setSavingRoles] = useState(false)
 
+  // 风格清单 = 应用内置风格（默认 / 专业严谨简单明确 / 工程师专业版）+ 自定义风格。
+  // 全部是纯提示词：没有模板语言、没有扩展目录、没有「更新扩展」入口。
+  const savedSelectableStyles = useMemo(() => listSelectableStyles(zcfCustomRoles), [zcfCustomRoles])
+
   const selectableStyles = useMemo(() => {
-    const core = (coreStyles.length ? coreStyles : [
-      { id: 'default', label: '默认' },
-      { id: 'weworker-clear', label: '专业严谨简单明确' },
-    ]).map((role) => ({
-      ...role,
-      kind: role.id === 'default' ? 'default' : 'core',
-      badge: '内置',
-    }))
-    const ext = extensionStyles.map((role) => ({ ...role, kind: 'zcf', badge: 'ZCF' }))
-    const custom = customRoles.map((role) => {
+    const custom = (customRoles || []).map((role) => {
       const label = String(role.label || '').trim()
       const prompt = String(role.prompt || '').trim()
       return {
@@ -2596,40 +2573,17 @@ function ZcfSettingsPanel({ active = true }) {
         draft: !label || !prompt,
       }
     })
-    return [...core, ...ext, ...custom]
-  }, [coreStyles, extensionStyles, customRoles])
-
-  const selectableModes = useMemo(() => {
-    const baseModes = zcfModes.length ? zcfModes : [
-      { id: 'direct', label: '默认', description: '直接执行，不额外注入规划工作流' },
-      { id: 'auto-plan', label: '自动规划', description: '自动判断任务复杂度，必要时先规划再执行' },
-    ]
-    const seen = new Set()
-    return baseModes
-      .map((mode) => ({
-        ...mode,
-        id: normalizeZcfModeId(mode.id),
-      }))
-      .filter((mode) => {
-        if (!mode.id || seen.has(mode.id)) return false
-        seen.add(mode.id)
-        return true
-      })
-  }, [zcfModes])
-
-  useEffect(() => {
-    setLang(zcfLang || 'zh-CN')
-  }, [zcfLang])
+    return [...listSelectableStyles([]), ...custom]
+  }, [customRoles])
 
   // 已保存设置 → 本地草稿：只在内容真正变化时刷新，避免其它保存动作新建的等价引用冲掉草稿。
+  // 已删除风格的残留 id（历史 auto-plan 等）在写回草稿前回落到默认，避免卡片列表里没有选中项。
   useSyncSavedSnapshotToDraft(
     [zcfDefaultRole, zcfEnabledRoles],
-    () => setSelectedStyleId(zcfDefaultRole || zcfEnabledRoles?.[0] || 'default'),
-  )
-
-  useSyncSavedSnapshotToDraft(
-    zcfDefaultMode,
-    () => setSelectedModeId(normalizeZcfModeId(zcfDefaultMode)),
+    () => {
+      const saved = zcfDefaultRole || zcfEnabledRoles?.[0] || DEFAULT_STYLE
+      setSelectedStyleId(savedSelectableStyles.some((role) => role.id === saved) ? saved : DEFAULT_STYLE)
+    },
   )
 
   useSyncSavedSnapshotToDraft(
@@ -2637,45 +2591,11 @@ function ZcfSettingsPanel({ active = true }) {
     () => setCustomRoles(zcfCustomRoles || []),
   )
 
-  useEffect(() => {
-    if (!coreStyles.length) loadCatalog()
-  }, [coreStyles.length, loadCatalog])
-
   // 切走「配置」时关闭编辑弹窗（不改动 customRoles/selectedStyleId 等草稿）。
   useEffect(() => {
     if (active) return
     setCustomEditor(null)
   }, [active])
-
-  const syncedAt = syncMeta?.lastExtensionSyncAt || syncMeta?.syncedAt || zcfSync?.lastExtensionSyncAt || zcfSync?.syncedAt
-  const version = packageVersion || zcfPackageVersion
-  const syncedLabel = syncedAt
-    ? new Date(syncedAt).toLocaleString()
-    : '尚未手动更新扩展'
-
-  const handleLangChange = async (nextLang) => {
-    setLang(nextLang)
-    setMessage(null)
-    try {
-      await saveZcfDefaults({ zcfLang: nextLang })
-      await loadSettings()
-      await loadCatalog()
-      setMessage({ ok: true, text: '模板语言已保存' })
-    } catch (e) {
-      setMessage({ ok: false, text: e.message || '保存失败' })
-    }
-  }
-
-  const handleSync = async () => {
-    setMessage(null)
-    try {
-      await syncTemplates(lang)
-      await loadSettings()
-      setMessage({ ok: true, text: '已更新扩展风格与工作流模板' })
-    } catch (e) {
-      setMessage({ ok: false, text: e.message || '更新失败' })
-    }
-  }
 
   const selectStyle = (roleId) => {
     setSelectedStyleId(roleId)
@@ -2732,11 +2652,9 @@ function ZcfSettingsPanel({ active = true }) {
 
   const rolesDirty = JSON.stringify({
     style: selectedStyleId,
-    mode: selectedModeId,
     custom: (customRoles || []).map((r) => ({ id: r.id, label: r.label, prompt: r.prompt })),
   }) !== JSON.stringify({
-    style: zcfDefaultRole || zcfEnabledRoles?.[0] || 'default',
-    mode: normalizeZcfModeId(zcfDefaultMode),
+    style: zcfDefaultRole || zcfEnabledRoles?.[0] || DEFAULT_STYLE,
     custom: (zcfCustomRoles || []).map((r) => ({ id: r.id, label: r.label, prompt: r.prompt })),
   })
 
@@ -2744,37 +2662,34 @@ function ZcfSettingsPanel({ active = true }) {
     setSavingRoles(true)
     setRolesMessage(null)
     try {
-      const sanitizedCustom = customRoles
+      const sanitizedCustom = (customRoles || [])
         .map((role) => ({
           id: role.id,
           label: String(role.label || '').trim(),
           prompt: String(role.prompt || '').trim(),
         }))
         .filter((role) => role.label && role.prompt)
-      if (selectedStyleId.startsWith('custom-') && !sanitizedCustom.some((role) => role.id === selectedStyleId)) {
+      if (isCustomStyleId(selectedStyleId) && !sanitizedCustom.some((role) => role.id === selectedStyleId)) {
         setRolesMessage({ ok: false, text: '请先填写当前选中的自定义风格名称与提示词' })
         setSavingRoles(false)
         return
       }
       const availableIds = new Set([
-        ...(coreStyles.length ? coreStyles : [{ id: 'default', label: '默认' }, { id: 'weworker-clear', label: '专业严谨简单明确' }]).map((r) => r.id),
-        ...extensionStyles.map((r) => r.id),
+        ...listSelectableStyles([]).map((r) => r.id),
         ...sanitizedCustom.map((r) => r.id),
       ])
-      const activeStyle = availableIds.has(selectedStyleId) ? selectedStyleId : 'default'
-      await saveZcfRoles({
+      const activeStyle = availableIds.has(selectedStyleId) ? selectedStyleId : DEFAULT_STYLE
+      await saveStyleSettings({
         zcfDefaultRole: activeStyle,
         zcfEnabledRoles: [activeStyle],
         zcfCustomRoles: sanitizedCustom,
       })
-      await saveZcfDefaults({ zcfDefaultMode: selectedModeId })
-      await loadCatalog()
       // 保存成功后本地草稿与已保存内容对齐（trim、丢弃空条目），沿用旧行为：
       // 保存前后端回传会顺带刷新面板；现在只有「内容变化」才刷新，所以这里显式对齐一次，
       // 避免保存成功但草稿残留空白时「保存配置」按钮仍然亮着。
       setCustomRoles(sanitizedCustom)
       setSelectedStyleId(activeStyle)
-      setRolesMessage({ ok: true, text: '风格与工作流设置已保存' })
+      setRolesMessage({ ok: true, text: '风格设置已保存' })
     } catch (e) {
       setRolesMessage({ ok: false, text: e.message || '保存失败' })
     } finally {
@@ -2782,52 +2697,16 @@ function ZcfSettingsPanel({ active = true }) {
     }
   }
 
+  const selectedStyleLabel = [...selectableStyles]
+    .find((role) => role.id === selectedStyleId)?.label || '默认'
+
   return (
     <div className="settings-group">
       <SettingRow
-        title="风格与工作流"
-        description="内置专业工程师风格与工作流模板；扩展风格需手动从 ZCF 更新（同名覆盖）"
-        message={message}
-        fallback={`ZCF 包版本 ${version || '未知'} · 上次扩展更新 ${syncedLabel}`}
-        stacked
-        footer={(
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={syncing}
-            className="settings-btn settings-btn-primary"
-          >
-            {syncing ? '更新中...' : '从 ZCF 更新扩展'}
-          </button>
-        )}
-      >
-        <div className="settings-pill settings-pill--wide">
-          <span className="settings-pill-prefix">模板语言</span>
-          <AppDropdownSelect
-            value={lang}
-            options={[
-              { value: 'zh-CN', label: '简体中文' },
-              { value: 'en', label: 'English' },
-            ]}
-            onChange={handleLangChange}
-            disabled={syncing}
-            ariaLabel="ZCF 模板语言"
-            minMenuWidth={140}
-            className="settings-dropdown-select"
-          />
-        </div>
-      </SettingRow>
-
-      <SettingRow
-        title="高级 · 风格与工作流"
-        description="风格与工作流作为新会话默认配置；聊天输入框不再展示切换入口"
+        title="风格"
+        description="内置与自定义风格都是应用内的提示词；风格互斥，新会话默认使用当前选中的风格"
         message={rolesMessage}
-        fallback={`当前默认：${
-          [...(coreStyles.length ? coreStyles : [{ id: 'default', label: '默认' }, { id: 'weworker-clear', label: '专业严谨简单明确' }]),
-            ...extensionStyles,
-            ...(customRoles || []).map((r) => ({ id: r.id, label: r.label }))]
-            .find((r) => r.id === selectedStyleId)?.label || '默认'
-        }`}
+        fallback={`当前默认：${selectedStyleLabel}`}
         stacked
         footer={(
           <button
@@ -2843,7 +2722,7 @@ function ZcfSettingsPanel({ active = true }) {
         <div className="settings-style-section">
           <div className="settings-style-section__header">
             <div className="settings-card-title">默认风格</div>
-            <div className="settings-card-subtitle">风格互斥，只能选择一个；更多 ZCF 风格需手动「从 ZCF 更新扩展」</div>
+            <div className="settings-card-subtitle">风格互斥，只能选择一个；自定义风格可编辑提示词</div>
           </div>
           <div className="settings-style-option-grid">
             {selectableStyles.map((role) => (
@@ -2872,29 +2751,6 @@ function ZcfSettingsPanel({ active = true }) {
               )
             ))}
             <StyleAddCard onSelect={addCustomRole} />
-          </div>
-        </div>
-
-        <div className="settings-style-section">
-          <div className="settings-style-section__header">
-            <div className="settings-card-title">默认工作流</div>
-            <div className="settings-card-subtitle">作为新会话的默认执行模式；聊天中不再单独展示切换入口</div>
-          </div>
-          <div className="settings-style-option-grid">
-            {selectableModes.map((mode) => (
-              <StyleOptionCard
-                key={mode.id}
-                selected={selectedModeId === mode.id}
-                title={mode.label || (mode.id === 'auto-plan' ? '自动规划' : '默认')}
-                description={mode.description || (mode.id === 'auto-plan' ? '自动判断任务复杂度，必要时先规划再执行' : '直接执行，不额外注入规划工作流')}
-                badge="内置"
-                kind={mode.id === 'auto-plan' ? 'zcf' : 'default'}
-                onSelect={() => {
-                  setSelectedModeId(mode.id)
-                  setRolesMessage(null)
-                }}
-              />
-            ))}
           </div>
         </div>
       </SettingRow>

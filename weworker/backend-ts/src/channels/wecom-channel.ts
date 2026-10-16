@@ -20,7 +20,7 @@ import crypto from 'node:crypto'
 import type { Channel, ChannelStatus } from './channel-manager.js'
 import { runChannelChat } from './channel-manager.js'
 import { streamChat } from '../agent.js'
-import { resolveZcfPrefs } from '../zcf-sync.js'
+import { resolveStyleId } from '../style-settings.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
 import type { ChannelPermissionMode } from './channel-permissions.js'
 import { parseChannelCommand } from './channel-profile.js'
@@ -800,7 +800,7 @@ export class WecomChannel implements Channel {
     }
 
     const channelPermissionMode = turn.mode
-    const zcfPrefs = resolveZcfPrefs(work, settings)
+    const styleId = resolveStyleId(work, settings)
     let chatFailure: unknown = null
 
     try {
@@ -809,8 +809,7 @@ export class WecomChannel implements Channel {
         ...profileOptions,
         streaming: true,
         workId: work.id,
-        zcfRole: zcfPrefs.zcfRole,
-        zcfMode: zcfPrefs.zcfMode,
+        styleId,
         channelPermissionMode,
         memoryScope: this._profile.memoryScope(userId),
         channelAskUserHandler: askUserHandler,

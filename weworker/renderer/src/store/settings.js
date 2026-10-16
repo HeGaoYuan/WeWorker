@@ -56,13 +56,12 @@ function settingsPatch(data, fallback = {}) {
       : (fallback.resourcePreviewExtensionsCustomized ?? false),
     defaultResourcePreviewExtensions,
     providers: data.providers ?? {},
-    zcfDefaultRole: data.zcf_default_role || fallback.zcfDefaultRole || 'weworker-clear',
-    zcfDefaultMode: data.zcf_default_mode || fallback.zcfDefaultMode || 'auto-plan',
-    zcfLang: data.zcf_lang || fallback.zcfLang || 'zh-CN',
-    zcfEnabledRoles: data.zcf_enabled_roles ?? fallback.zcfEnabledRoles ?? ['weworker-clear'],
+    // 风格设置：沿用历史 `zcf_*` 字段名（改名需要数据迁移），语义上只是「风格」。
+    // 纯 ZCF 字段（zcf_lang / zcf_default_mode / zcf_package_version / zcf_sync）已删除，
+    // 老 settings.json 里的残留值被后端忽略，这里也不再读取。
+    zcfDefaultRole: data.zcf_default_role || fallback.zcfDefaultRole || 'default',
+    zcfEnabledRoles: data.zcf_enabled_roles ?? fallback.zcfEnabledRoles ?? ['default'],
     zcfCustomRoles: data.zcf_custom_roles ?? fallback.zcfCustomRoles ?? [],
-    zcfPackageVersion: data.zcf_package_version || fallback.zcfPackageVersion || '',
-    zcfSync: data.zcf_sync ?? fallback.zcfSync ?? null,
   }
 }
 
@@ -129,13 +128,9 @@ export const useSettingsStore = create((set, get) => ({
   userDirectoryBlacklist: [],
   defaultOpenBrowserAllowedOrigins: [],
   openBrowserAllowedOrigins: [],
-  zcfDefaultRole: 'weworker-clear',
-  zcfDefaultMode: 'auto-plan',
-  zcfLang: 'zh-CN',
-  zcfEnabledRoles: ['weworker-clear'],
+  zcfDefaultRole: 'default',
+  zcfEnabledRoles: ['default'],
   zcfCustomRoles: [],
-  zcfPackageVersion: '',
-  zcfSync: null,
   providers: {
     builtin:   { has_key: false, model: 'ark-code-latest', context_limit: 1000000, readonly: true, added: true, visible: true },
     builtin_dev: { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, readonly: true, added: true, visible: true },
@@ -413,29 +408,21 @@ export const useSettingsStore = create((set, get) => ({
     set(state => ({ channels: { ...state.channels, ...Object.fromEntries(Object.keys(updates).filter(key => data[key]).map(key => [key, data[key]])) } }))
   },
 
-  saveZcfDefaults: async ({ zcfDefaultRole, zcfDefaultMode, zcfLang }) => {
-    const body = {}
-    if (zcfDefaultRole !== undefined) body.zcf_default_role = zcfDefaultRole
-    if (zcfDefaultMode !== undefined) body.zcf_default_mode = zcfDefaultMode
-    if (zcfLang !== undefined) body.zcf_lang = zcfLang
-    const res = await backendFetch(`${API}/settings/zcf-defaults`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '保存失败')
-    set(settingsPatch(data, get()))
-  },
-
-  saveZcfRoles: async ({ zcfDefaultRole, zcfEnabledRoles, zcfCustomRoles }) => {
+  /**
+   * 保存风格设置（当前风格 + 已启用列表 + 自定义风格）。
+   *
+   * 走 `/settings/styles`；请求体字段名沿用历史 `zcf_*` 键（后端 `Settings`
+   * 类型与 settings.json 同名字段，改名需要数据迁移）。风格互斥，`zcf_enabled_roles`
+   * 恒为 `[当前风格]`。
+   */
+  saveStyleSettings: async ({ zcfDefaultRole, zcfEnabledRoles, zcfCustomRoles }) => {
     const activeStyle = zcfDefaultRole || zcfEnabledRoles?.[0] || 'default'
     const body = {
       zcf_default_role: activeStyle,
       zcf_enabled_roles: [activeStyle],
     }
     if (zcfCustomRoles !== undefined) body.zcf_custom_roles = zcfCustomRoles
-    const res = await backendFetch(`${API}/settings/zcf-roles`, {
+    const res = await backendFetch(`${API}/settings/styles`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -443,6 +430,7 @@ export const useSettingsStore = create((set, get) => ({
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '保存失败')
     set(settingsPatch(data, get()))
+    return data
   },
 }))
 
