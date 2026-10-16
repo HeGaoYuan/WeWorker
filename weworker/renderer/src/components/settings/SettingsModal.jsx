@@ -3,7 +3,7 @@ import AppSwitch from '../common/AppSwitch.jsx'
 import AppDropdownInput from '../common/AppDropdownInput.jsx'
 import React, { useState, useEffect, useMemo, useRef, useId } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiOutlined, AppstoreAddOutlined, BgColorsOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DisconnectOutlined, DownOutlined, LinkOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
+import { ApiOutlined, AppstoreAddOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DisconnectOutlined, DownOutlined, EditOutlined, LinkOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import { isBuiltinProvider } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
@@ -27,7 +27,9 @@ import {
   customStyleDialogTitle,
   isEditableStyleRole,
   removeStyleDraft,
+  resolveSavedSnapshotSync,
   resolveSelectedStyleAfterRemove,
+  savedSnapshotSignature,
   styleDeleteConfirmMessage,
   upsertStyleDraft,
   validateStyleName,
@@ -133,6 +135,12 @@ const LOGOS = {
 export default function SettingsPage({ onClose }) {
   const [tab, setTab] = useState('model')
   const [appVersion, setAppVersion] = useState('')
+  // 「配置」页签的未保存编辑（自定义风格草稿、用户目录、黑名单等）都存在面板本地 state，
+  // 而下面各页签是条件渲染：切走即卸载，切回来会用「已保存设置」重新初始化，草稿因此丢失。
+  // 所以「配置」首次进入后就保持挂载，切走只隐藏（ConfigTab 的 hidden）+ 关闭编辑弹窗，不再卸载。
+  // 首次进入前不挂载，保持「设置页打开时不触发配置页加载」的既有行为。
+  const [configMounted, setConfigMounted] = useState(false)
+  if (tab === 'config' && !configMounted) setConfigMounted(true)
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(v => setAppVersion(v || ''))
@@ -185,7 +193,7 @@ export default function SettingsPage({ onClose }) {
           <div className={`settings-body${tab === 'model' || tab === 'channels' ? ' settings-body--model' : ''}`}>
             {tab === 'channels' && <ChannelsTab />}
             {tab === 'permissions' && <PermissionsTab />}
-            {tab === 'config' && <ConfigTab />}
+            {configMounted && <ConfigTab active={tab === 'config'} />}
             {tab === 'memory' && <MemoryTab />}
             {tab === 'skills' && <SkillsTab />}
             {tab === 'logs' && <LogsTab />}
@@ -707,7 +715,8 @@ function OriginList({ origins = [], emptyText, onRemove, readOnly = false }) {
   )
 }
 
-function ConfigTab() {
+// active=false 表示「配置」已不是当前页签：面板保持挂载（未保存编辑不丢），仅由 hidden 隐藏。
+function ConfigTab({ active = true }) {
   const userDirectory = useSettingsStore((s) => s.userDirectory)
   const downloadSubdirectory = useSettingsStore((s) => s.downloadSubdirectory)
   const downloadDirectory = useSettingsStore((s) => s.downloadDirectory)
@@ -1064,8 +1073,8 @@ function ConfigTab() {
   const canSaveBlacklist = !blacklistHasInvalidEntries && !draftPatternError
 
   return (
-    <div className="settings-stack">
-      <ZcfSettingsPanel />
+    <div className="settings-stack" hidden={!active}>
+      <ZcfSettingsPanel active={active} />
 
       <div className="settings-group">
         <SettingRow
@@ -2322,8 +2331,9 @@ function StyleOptionCard({
 }
 
 // 自定义风格卡片：复用 StyleOptionCard 作为卡片本体（选中/切换行为不变），
-// 再在卡片右上角补一个明确的「编辑」入口（色板图标 + 文字），点击打开编辑弹窗。
-// 该入口在 CSS 里绝对定位，脱离文档流，不参与卡片高度计算（卡片高度与内置卡片一致）。
+// 再在卡片右侧补一个明确的「编辑」入口（铅笔图标 + 文字），点击打开编辑弹窗。
+// 该入口在 CSS 里绝对定位（垂直居中、位于蓝色选择圆点左侧），脱离文档流，
+// 不参与卡片高度计算（卡片高度与内置卡片一致）。
 function EditableStyleOptionCard({
   selected = false,
   roleId,
@@ -2352,7 +2362,7 @@ function EditableStyleOptionCard({
           title={`${STYLE_EDIT_LABEL}自定义风格`}
           aria-label={`${STYLE_EDIT_LABEL}自定义风格 ${title}`}
         >
-          <BgColorsOutlined aria-hidden="true" />
+          <EditOutlined aria-hidden="true" />
           <span>{STYLE_EDIT_LABEL}</span>
         </button>
       </div>
@@ -2522,7 +2532,22 @@ function getStyleOptionDescription(role, kind) {
   return role.description || ''
 }
 
-function ZcfSettingsPanel() {
+// 把「已保存设置」单向同步进面板本地草稿：只有已保存内容签名变化时才覆盖本地草稿。
+// 设置页保存任何一项都会让后端回传整份 settings（自定义风格等字段是内容相同的新引用），
+// 若按引用变化就刷新，未点「保存配置」的新增/编辑风格会被已保存设置冲掉。
+function useSyncSavedSnapshotToDraft(savedSnapshot, applySavedSnapshot) {
+  const signatureRef = useRef(savedSnapshotSignature(savedSnapshot))
+  const { sync, signature } = resolveSavedSnapshotSync(signatureRef.current, savedSnapshot)
+  useEffect(() => {
+    if (!sync) return
+    signatureRef.current = signature
+    applySavedSnapshot()
+  }, [sync, signature])
+}
+
+// active=false 表示「配置」页签已切走（面板被隐藏但未卸载）：草稿 state 保留，
+// 只把编辑弹窗关掉，避免弹窗浮在其它页签上（与旧的「切页签即卸载」观感一致）。
+function ZcfSettingsPanel({ active = true }) {
   const zcfLang = useSettingsStore((s) => s.zcfLang)
   const zcfPackageVersion = useSettingsStore((s) => s.zcfPackageVersion)
   const zcfSync = useSettingsStore((s) => s.zcfSync)
@@ -2596,21 +2621,31 @@ function ZcfSettingsPanel() {
     setLang(zcfLang || 'zh-CN')
   }, [zcfLang])
 
-  useEffect(() => {
-    setSelectedStyleId(zcfDefaultRole || zcfEnabledRoles?.[0] || 'default')
-  }, [zcfDefaultRole, zcfEnabledRoles])
+  // 已保存设置 → 本地草稿：只在内容真正变化时刷新，避免其它保存动作新建的等价引用冲掉草稿。
+  useSyncSavedSnapshotToDraft(
+    [zcfDefaultRole, zcfEnabledRoles],
+    () => setSelectedStyleId(zcfDefaultRole || zcfEnabledRoles?.[0] || 'default'),
+  )
 
-  useEffect(() => {
-    setSelectedModeId(normalizeZcfModeId(zcfDefaultMode))
-  }, [zcfDefaultMode])
+  useSyncSavedSnapshotToDraft(
+    zcfDefaultMode,
+    () => setSelectedModeId(normalizeZcfModeId(zcfDefaultMode)),
+  )
 
-  useEffect(() => {
-    setCustomRoles(zcfCustomRoles || [])
-  }, [zcfCustomRoles])
+  useSyncSavedSnapshotToDraft(
+    zcfCustomRoles,
+    () => setCustomRoles(zcfCustomRoles || []),
+  )
 
   useEffect(() => {
     if (!coreStyles.length) loadCatalog()
   }, [coreStyles.length, loadCatalog])
+
+  // 切走「配置」时关闭编辑弹窗（不改动 customRoles/selectedStyleId 等草稿）。
+  useEffect(() => {
+    if (active) return
+    setCustomEditor(null)
+  }, [active])
 
   const syncedAt = syncMeta?.lastExtensionSyncAt || syncMeta?.syncedAt || zcfSync?.lastExtensionSyncAt || zcfSync?.syncedAt
   const version = packageVersion || zcfPackageVersion
@@ -2734,6 +2769,11 @@ function ZcfSettingsPanel() {
       })
       await saveZcfDefaults({ zcfDefaultMode: selectedModeId })
       await loadCatalog()
+      // 保存成功后本地草稿与已保存内容对齐（trim、丢弃空条目），沿用旧行为：
+      // 保存前后端回传会顺带刷新面板；现在只有「内容变化」才刷新，所以这里显式对齐一次，
+      // 避免保存成功但草稿残留空白时「保存配置」按钮仍然亮着。
+      setCustomRoles(sanitizedCustom)
+      setSelectedStyleId(activeStyle)
       setRolesMessage({ ok: true, text: '风格与工作流设置已保存' })
     } catch (e) {
       setRolesMessage({ ok: false, text: e.message || '保存失败' })

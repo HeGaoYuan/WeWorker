@@ -1,5 +1,5 @@
 // 「设置 - 配置」自定义风格编辑弹窗的纯逻辑：卡片可编辑判定、弹窗草稿构造、标题、名称校验、
-// 草稿写回与删除（含删除后的选中项回落）。
+// 草稿写回与删除（含删除后的选中项回落），以及「已保存设置」与本地草稿的同步判定。
 // 这里只放纯函数（不引用 React / zustand / DOM），便于在裸 node --test 环境下直接单测。
 //
 // 数据契约（沿用现有实现，未改动）：
@@ -96,4 +96,25 @@ export function resolveSelectedStyleAfterRemove(selectedStyleId, removedRoleId) 
 export function styleDeleteConfirmMessage(label) {
   const name = String(label ?? '').trim() || STYLE_UNNAMED_LABEL
   return `确定删除自定义风格“${name}”吗？删除后点击「保存配置」才会生效。`
+}
+
+/**
+ * 「已保存设置」快照的内容签名：内容相同的新数组 / 新对象会得到相同签名。
+ * 只做序列化，不引用 React / zustand。
+ */
+export function savedSnapshotSignature(savedSnapshot) {
+  return JSON.stringify(savedSnapshot ?? null)
+}
+
+/**
+ * 已保存设置是否需要同步进面板本地草稿。
+ * 设置页里保存任何一项（模型、用户目录、黑名单、模板语言…）后端都会回传整份 settings，
+ * 其中 zcf_custom_roles / zcf_enabled_roles 是「内容相同的新引用」。若只按引用变化刷新，
+ * 尚未点「保存配置」的本地草稿（新增/编辑的自定义风格）就会被已保存设置覆盖而消失。
+ * 因此这里按内容签名判断：内容没变 → sync:false（保留草稿），内容真的变了 → sync:true（采用已保存设置）。
+ * previousSignature 传挂载时的签名即可，这样首次渲染不会覆盖刚初始化的本地草稿。
+ */
+export function resolveSavedSnapshotSync(previousSignature, savedSnapshot) {
+  const signature = savedSnapshotSignature(savedSnapshot)
+  return { sync: previousSignature !== signature, signature }
 }

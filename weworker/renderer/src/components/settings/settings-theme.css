@@ -156,6 +156,12 @@
   gap: 12px;
 }
 
+/* 「配置」页签切走后只隐藏、不卸载（保留面板内未保存的草稿）。
+   类选择器里的 display:flex 会盖掉 hidden 属性的浏览器默认 display:none，所以这里显式声明。 */
+.settings-stack[hidden] {
+  display: none;
+}
+
 .settings-group {
   background: var(--bg-primary);
   border: 1px solid var(--border-strong);
@@ -931,7 +937,7 @@
 }
 
 /* 自定义风格卡片：外层容器承担卡片外观与选中态，内层仍是原来的选择按钮，
-   卡片内「编辑」入口绝对定位到右上角：脱离文档流、不参与高度计算，
+   卡片内「编辑」入口绝对定位到卡片右侧中部（蓝色选择圆点左边）：脱离文档流、不参与高度计算，
    因此自定义卡片高度与内置卡片完全一致。relative 只用于给它当定位父级。 */
 .settings-style-option-wrap {
   position: relative;
@@ -979,29 +985,34 @@
   background: var(--accent-soft, rgba(51, 156, 255, 0.1));
 }
 
-/* 「编辑」入口容器：绝对定位到卡片右上角，脱离文档流 —— 卡片高度只由内层选择按钮决定，
-   与内置卡片一致。纵向压在标题行上沿、横向越过 radio 列占右侧留白，
-   底边停在 radio 顶边之上（不遮 radio），描述行在标题行下方（不遮描述）。 */
+/* 「编辑」入口容器：绝对定位到卡片右侧、相对卡片高度垂直居中（top:50% + translateY(-50%)），
+   水平停在蓝色选择圆点（radio）左边 —— right: 40px = 卡片内边距 14px + radio 18px + 间距 8px，
+   所以按钮右缘始终在 radio 左缘左边 8px，不会压住 radio。
+   仍然是 absolute：显示/隐藏都不参与卡片高度计算，卡片高度与内置卡片一致。 */
 .settings-style-option-actions {
   position: absolute;
-  top: 3px;
-  right: 8px;
+  top: 50%;
+  right: 40px;
+  transform: translateY(-50%);
   display: flex;
   justify-content: flex-end;
 }
 
-/* 标题行让出右上角按钮的位置：宽卡片 40px；空间不够时先收窄到刚好放下徽标
-   （100% - 50px = 徽标 + 间距），但绝不低于 26px —— 实测按钮左缘到标题列右缘
-   是 21px（8px 右偏移 + 57px 按钮宽 - 44px 右侧 padding/radio/gap），26px 留出
-   5px 余量，所以标题/徽标在任何卡片宽度下都不会画到按钮下面。
-   这里用 margin 而不是 padding：标题行的盒子右缘因此落在安全线左侧，
-   配合 overflow:hidden，即使徽标已无法继续收缩（border-box 不会小于自身
-   padding+border）也只是被容器裁掉，不会跑到按钮底下。
-   标题文字（.settings-style-option__title-text）优先收缩并省略号截断，
-   徽标只在标题缩到 0 后才跟着收缩；标题固定单行，不会换行把卡片撑高。 */
+/* 标题行与描述行让出按钮所在的那条竖直带：这里用 max-width（而不是 padding/margin）——
+   它只收窄文本盒子自身，不会给文本列的 flex 项加最小宽度，所以窄卡片下 radio 也不会被挤出去。
+   按钮宽 54px（图标 13 + 间隙 3 + 「编辑」22 + 内边距 14 + 边框 2），其左缘在 radio 左缘
+   左边 40 + 54 = 94px 处；文本列右缘本来在 radio 左缘左边 12px 处，因此要再让出 54px
+   （56px = 54 + 2px 余量），文本最多画到按钮左缘左边 4px 之外。
+   标题文字（.settings-style-option__title-text）优先收缩并省略号截断，徽标只在标题缩到 0
+   后才跟着收缩；标题固定单行，不会换行把卡片撑高。 */
 .settings-style-option-wrap .settings-style-option__title {
-  margin-right: clamp(26px, 100% - 50px, 40px);
+  margin-right: 0;
+  max-width: calc(100% - 56px);
   overflow: hidden;
+}
+
+.settings-style-option-wrap .settings-style-option__desc {
+  max-width: calc(100% - 56px);
 }
 
 .settings-style-option-wrap .settings-style-option__title-text {
@@ -1024,9 +1035,9 @@
 .settings-style-option-edit {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   height: 22px;
-  padding: 0 8px;
+  padding: 0 7px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--bg-primary, #fff);
@@ -1045,7 +1056,7 @@
   color: var(--accent);
 }
 
-/* 色板图标（BgColorsOutlined）：跟随按钮文字颜色，尺寸与卡片内既有图标协调。 */
+/* 铅笔图标（EditOutlined）：跟随按钮文字颜色，尺寸与卡片内既有图标协调。 */
 .settings-style-option-edit .anticon {
   flex-shrink: 0;
   font-size: 13px;
@@ -1058,17 +1069,29 @@
   background: var(--accent-soft, rgba(51, 156, 255, 0.1));
 }
 
-/* 窄屏（≤480px 窗口）：编辑入口收紧（更贴右上角、更窄），按钮左缘到标题列右缘
-   降到 14px，安全距离放到 20px；按钮仍不溢出卡片、不压住标题与徽标。 */
-@media (max-width: 480px) {
+/* 极窄卡片回退：实测卡片宽 ≈ (窗口宽 - 240) / 2，窗口 ≤580px 时卡片 ≤170px，
+   此时卡片内固定占用「类型图标 36 + 两个 12px 间距 + radio 18 + 内边距 28」= 106px，
+   留给文字只剩 ~30px —— 居中按钮（左缘在卡片左起 95px 处）会盖住文本列的左缘（卡片左起 63px），
+   相交检测必然报碰撞，文本列也会被压到 0 宽。也就是说在这个宽度下「垂直居中且位于 radio 左边」
+   与「不压住文字」几何上无法同时成立，这里按「窄屏不得压住文字/radio」优先回退：
+   按钮回到 radio 上方的右上角（水平越过 radio 列但纵向停在 radio 顶边之上，右缘离卡片边框 4px），
+   标题行按 clamp 让位、描述行恢复整列宽度，按钮本身收紧内边距 ——
+   实测在卡片 120px（窗口 480px）时按钮左缘 69px > 标题盒右缘 63px，不相交、不溢出卡片。 */
+@media (max-width: 580px) {
   .settings-style-option-actions {
     top: 3px;
-    right: 6px;
+    right: 4px;
+    transform: none;
   }
 
   .settings-style-option-edit {
     gap: 3px;
-    padding: 0 6px;
+    padding: 0 3px;
+  }
+
+  .settings-style-option-wrap .settings-style-option__title,
+  .settings-style-option-wrap .settings-style-option__desc {
+    max-width: none;
   }
 
   .settings-style-option-wrap .settings-style-option__title {

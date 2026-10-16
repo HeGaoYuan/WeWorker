@@ -13,7 +13,9 @@ import {
   customStyleDialogTitle,
   isEditableStyleRole,
   removeStyleDraft,
+  resolveSavedSnapshotSync,
   resolveSelectedStyleAfterRemove,
+  savedSnapshotSignature,
   styleDeleteConfirmMessage,
   upsertStyleDraft,
   validateStyleName,
@@ -131,4 +133,43 @@ test('删除二次确认文案带风格名，未命名风格有占位名', () =>
   assert.equal(styleDeleteConfirmMessage(null), `确定删除自定义风格“${STYLE_UNNAMED_LABEL}”吗？删除后点击「保存配置」才会生效。`)
   assert.equal(STYLE_DELETE_LABEL, '删除')
   assert.equal(STYLE_DELETE_CONFIRM_TITLE, '删除自定义风格')
+})
+
+test('已保存设置只是重新回传（内容相同的新引用）时不同步，草稿不被冲掉', () => {
+  const saved = [{ id: 'custom-a', label: '简洁日报', prompt: '只输出要点，禁止 emoji' }]
+  const baseline = savedSnapshotSignature(saved)
+  // 设置页保存任何一项，后端都回传整份 settings：JSON 解析得到的是内容相同的新数组/新对象。
+  const refetched = JSON.parse(JSON.stringify(saved))
+  assert.notEqual(refetched, saved)
+  assert.notEqual(refetched[0], saved[0])
+  assert.equal(savedSnapshotSignature(refetched), baseline)
+  assert.deepEqual(resolveSavedSnapshotSync(baseline, refetched), { sync: false, signature: baseline })
+  // 首次渲染：以挂载时的已保存内容为基线，因此不会覆盖 useState 初始化出来的本地草稿。
+  assert.equal(resolveSavedSnapshotSync(savedSnapshotSignature(saved), saved).sync, false)
+})
+
+test('已保存内容真的变化时同步（保存配置 / 从 ZCF 更新后采用已保存设置）', () => {
+  const saved = [{ id: 'custom-a', label: '简洁日报', prompt: '只输出要点' }]
+  const baseline = savedSnapshotSignature(saved)
+  const added = [...saved, { id: 'custom-b', label: '周报', prompt: '三段式' }]
+  const addedSync = resolveSavedSnapshotSync(baseline, added)
+  assert.equal(addedSync.sync, true)
+  assert.equal(addedSync.signature, savedSnapshotSignature(added))
+  // 重命名 / 改提示词 / 删条目都算变化。
+  assert.equal(resolveSavedSnapshotSync(baseline, [{ id: 'custom-a', label: '日报', prompt: '只输出要点' }]).sync, true)
+  assert.equal(resolveSavedSnapshotSync(baseline, [{ id: 'custom-a', label: '简洁日报', prompt: '三段式' }]).sync, true)
+  assert.equal(resolveSavedSnapshotSync(baseline, []).sync, true)
+  // 选中风格 + 启用角色（[默认风格, 启用列表]）同样按内容判定。
+  const styleBaseline = savedSnapshotSignature(['weworker-clear', ['weworker-clear']])
+  assert.equal(resolveSavedSnapshotSync(styleBaseline, ['weworker-clear', ['weworker-clear']]).sync, false)
+  assert.equal(resolveSavedSnapshotSync(styleBaseline, ['default', ['default']]).sync, true)
+})
+
+test('快照缺失时签名稳定，不产生假变化', () => {
+  assert.equal(savedSnapshotSignature(undefined), 'null')
+  assert.equal(savedSnapshotSignature(undefined), savedSnapshotSignature(null))
+  assert.equal(resolveSavedSnapshotSync(savedSnapshotSignature(undefined), null).sync, false)
+  // 连续比较：第二次用内容相同的新引用，仍不触发同步。
+  const baseline = savedSnapshotSignature([{ id: 'custom-a', label: 'a', prompt: 'b' }])
+  assert.equal(resolveSavedSnapshotSync(baseline, JSON.parse('[{"id":"custom-a","label":"a","prompt":"b"}]')).sync, false)
 })
