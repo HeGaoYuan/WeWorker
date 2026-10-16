@@ -22,6 +22,7 @@ import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
 import ContextPanel from './ContextPanel.jsx'
 import ModelSelector from './ModelSelector.jsx'
 import { normalizeThinkingEffort } from '../../utils/thinking-effort.js'
+import { shouldWarmupOnTextChange } from '../../utils/chat-warmup.js'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
@@ -82,6 +83,7 @@ export default function InputBar({
   attachmentTarget = 'welcome',
   contextSnapshot = null,
   historyMessages = [],
+  onWarmup,
 }) {
   const textareaRef = useRef(null)
   const slashMenuRef = useRef(null)
@@ -383,6 +385,8 @@ export default function InputBar({
     } else if (historyIndex >= 0) {
       setHistoryIndex(-1)
     }
+    // Starting to type a message: let the Backend start its model process now.
+    if (onWarmup && !inputDisabled && shouldWarmupOnTextChange(text, nextText)) onWarmup(thinkingEffort)
     onTextChange(nextText)
     syncSlashMenuFromText(nextText, event.target.selectionStart ?? nextText.length)
   }

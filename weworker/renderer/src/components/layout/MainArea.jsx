@@ -17,6 +17,7 @@ import WebsiteExplorationPage from '../website-exploration/WebsiteExplorationPag
 import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 import DedicatedAgentsPage from '../dedicated-agents/DedicatedAgentsPage.jsx'
 import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
+import { requestChatWarmup } from '../../api/backend.js'
 
 export default function MainArea({ onOpenSettings }) {
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
@@ -177,6 +178,8 @@ export default function MainArea({ onOpenSettings }) {
         zcfModes={zcfModes}
         onZcfRoleChange={handleZcfRoleChange}
         onZcfModeChange={handleZcfModeChange}
+        // Same style/mode that handleSendFromWelcome passes to createWork.
+        onWarmup={(thinkingEffort) => requestChatWarmup(null, { thinkingEffort, zcfRole: zcfDefaultRole, zcfMode: zcfDefaultMode })}
       />
     </MainWorkspaceShell>
   )

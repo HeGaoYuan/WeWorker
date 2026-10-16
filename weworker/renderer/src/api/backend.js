@@ -1,4 +1,20 @@
 import { backendFetch } from './http.js'
+import { createChatWarmupScheduler } from '../utils/chat-warmup.js'
+
+/**
+ * Start the Backend chat session ahead of the first message.
+ * `workId` null targets the welcome screen, whose work is created on send.
+ */
+export async function warmupChat(workId, { thinkingEffort, zcfRole, zcfMode } = {}) {
+  const res = await backendFetch(workId ? `/works/${workId}/warmup` : '/chat/warmup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workId ? { thinkingEffort } : { thinkingEffort, zcfRole, zcfMode }),
+  })
+  return res.ok ? res.json().catch(() => null) : null
+}
+
+export const requestChatWarmup = createChatWarmupScheduler({ send: warmupChat })
 
 let contextCompactionLifecycleHandler = null
 
