@@ -67,6 +67,10 @@ WORKER_STARTUP_TIMEOUT_S = 120
 # that reads control.json exits on its own; one that cannot (e.g. hung before
 # main() started) would otherwise keep the busy slot forever.
 CANCEL_ESCALATION_GRACE_S = 5
+# The developer model answers in one non-streaming request that must emit a
+# complete Tool implementation; the shared 120s default aborts it mid-generation
+# (seen as ReadTimeout at exactly 120s before any byte arrives).
+DEVELOPER_REQUEST_TIMEOUT_S = 600
 
 
 def _default_config_spec(
@@ -206,10 +210,10 @@ class ProcessManager:
             raise InvalidStateError("请先在 WeWorker 中配置可用于 Webwright 的模型。") from exc
         endpoint = active.base_url.rstrip("/")
         if active.model_class == "anthropic":
-            model = {"model_class": "anthropic", "model_name": active.model, "anthropic_endpoint": f"{endpoint}/v1/messages"}
+            model = {"model_class": "anthropic", "model_name": active.model, "anthropic_endpoint": f"{endpoint}/v1/messages", "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S}
             env_extra = {"ANTHROPIC_API_KEY": active.api_key}
         elif active.model_class == "zhipu":
-            model = {"model_class": "zhipu", "model_name": active.model, "zhipu_endpoint": f"{endpoint}/chat/completions"}
+            model = {"model_class": "zhipu", "model_name": active.model, "zhipu_endpoint": f"{endpoint}/chat/completions", "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S}
             env_extra = {"ZHIPUAI_API_KEY": active.api_key}
         else:
             model = {
@@ -217,6 +221,7 @@ class ProcessManager:
                 "provider_id": active.provider_id,
                 "model_name": active.model,
                 "openai_chat_endpoint": f"{endpoint}/chat/completions",
+                "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S,
             }
             env_extra = {"OPENAI_CHAT_API_KEY": active.api_key}
         return model, env_extra

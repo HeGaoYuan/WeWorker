@@ -1,5 +1,5 @@
 const ITEMS = [
-  { label: '开源 MIT', detail: '社区可贡献 Adapter' },
+  { label: 'Apache-2.0', detail: '社区可贡献 Adapter' },
   { label: '本地优先', detail: '对话与配置在设备上' },
   { label: '真实浏览器', detail: '扩展继承登录态' },
   { label: '完整文档', detail: '快速开始与使用说明' },

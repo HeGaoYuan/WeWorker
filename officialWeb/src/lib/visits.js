@@ -28,5 +28,8 @@ export async function reportVisit(path) {
 export async function fetchVisits({ since = '7d' } = {}) {
   const res = await fetch(`/api/visits?since=${encodeURIComponent(since)}`)
   if (!res.ok) throw new Error(`visits 请求失败: ${res.status}`)
+  if (!res.headers.get('content-type')?.includes('application/json')) {
+    return { rows: [], totalPv: 0, totalUv: 0, unavailable: true }
+  }
   return res.json()
 }

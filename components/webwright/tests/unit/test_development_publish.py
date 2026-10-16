@@ -19,7 +19,11 @@ from webwright.server.debug_store import DebugRunStore
 from webwright.server.app import create_app
 from webwright.server.development import build_development_input, sanitize_evidence
 from webwright.server.development_store import DevelopmentRunStore
-from webwright.server.process_manager import InvalidStateError, ProcessManager
+from webwright.server.process_manager import (
+    DEVELOPER_REQUEST_TIMEOUT_S,
+    InvalidStateError,
+    ProcessManager,
+)
 from webwright.server.weworker_model_config import ManagedModelConfig
 from webwright.server import publisher as publisher_module
 from webwright.server.publisher import ToolkitPublisher, artifact_hash, render_artifacts
@@ -1459,6 +1463,7 @@ def test_resolve_developer_openai_model_preserves_provider_identity(
         "provider_id": "deepseek",
         "model_name": "deepseek-v4-flash",
         "openai_chat_endpoint": "https://api.deepseek.com/chat/completions",
+        "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S,
     }
     assert environment == {"OPENAI_CHAT_API_KEY": "secret-key"}
 

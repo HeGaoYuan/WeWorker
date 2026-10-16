@@ -14,6 +14,7 @@ export default function Stats() {
   const [totalCalls, setTotalCalls] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [statsUnavailable, setStatsUnavailable] = useState(false)
   const [expanded, setExpanded] = useState(() => new Set())
   const [since, setSince] = useState('7d')
   const [kind, setKind] = useState('adapter')
@@ -23,12 +24,16 @@ export default function Stats() {
   const [visits, setVisits] = useState(null)
   const [visitsLoading, setVisitsLoading] = useState(true)
   const [visitsError, setVisitsError] = useState(null)
+  const [visitsUnavailable, setVisitsUnavailable] = useState(false)
 
   const loadVisits = useCallback(async () => {
     setVisitsLoading(true)
     setVisitsError(null)
+    setVisitsUnavailable(false)
     try {
-      setVisits(await fetchVisits({ since }))
+      const data = await fetchVisits({ since })
+      setVisitsUnavailable(Boolean(data.unavailable))
+      setVisits(data)
     } catch (e) {
       setVisitsError(e.message)
     } finally {
@@ -43,9 +48,11 @@ export default function Stats() {
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setStatsUnavailable(false)
     try {
       const by = view === 'user' ? 'user' : 'tool'
       const data = await fetchStats({ by, since, kind })
+      setStatsUnavailable(Boolean(data.unavailable))
       const rows = data.rows || []
       setGroups(view === 'user' ? groupByUser(rows) : groupByDomain(rows))
       setTotalCalls(data.totalCalls || 0)
@@ -207,11 +214,17 @@ export default function Stats() {
           </div>
         )}
 
-        {!visitsLoading && !visitsError && visits && visits.rows.length === 0 && (
+        {!visitsLoading && !visitsError && visitsUnavailable && (
+          <div className="bg-surface border border-border rounded-xl p-4 text-sm text-muted">
+            网站访问统计服务暂未接入；页面可正常使用。
+          </div>
+        )}
+
+        {!visitsLoading && !visitsError && !visitsUnavailable && visits && visits.rows.length === 0 && (
           <div className="bg-surface border border-border rounded-xl p-4 text-muted text-sm">暂无访问数据。</div>
         )}
 
-        {!visitsLoading && !visitsError && visits && visits.rows.length > 0 && (
+        {!visitsLoading && !visitsError && !visitsUnavailable && visits && visits.rows.length > 0 && (
           <div className="bg-surface border border-border rounded-xl overflow-hidden">
             {/* Header */}
             <div className="grid grid-cols-[1fr_100px_100px] gap-3 px-4 py-3 text-xs text-muted border-b border-border bg-bg/40">
@@ -261,14 +274,22 @@ export default function Stats() {
       )}
 
       {/* Empty */}
-      {!loading && !error && groups.length === 0 && (
+      {!loading && !error && statsUnavailable && (
+        <div className="text-center py-16 rounded-xl border border-border bg-surface/40">
+          <div className="text-[rgb(var(--color-text))] mb-2">统计服务暂未接入</div>
+          <p className="text-muted text-sm">当前官网未配置 /api/stats 反向代理，稍后接入后这里会展示 Adapter 调用统计。</p>
+        </div>
+      )}
+
+      {/* Empty */}
+      {!loading && !error && !statsUnavailable && groups.length === 0 && (
         <div className="text-center py-16">
           <div className="text-[rgb(var(--color-text))] mb-2">暂无埋点数据。</div>
         </div>
       )}
 
       {/* Table */}
-      {!loading && !error && groups.length > 0 && (
+      {!loading && !error && !statsUnavailable && groups.length > 0 && (
         <div className="bg-surface border border-border rounded-xl overflow-hidden">
           {/* Header row */}
           <div className={`grid ${cols} gap-3 px-4 py-3 text-xs text-muted border-b border-border bg-bg/40`}>
