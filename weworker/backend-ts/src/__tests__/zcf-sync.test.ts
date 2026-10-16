@@ -249,9 +249,8 @@ describe('zcf-sync', () => {
     expect(appendix).toContain('自动规划')
     expect(appendix).toContain('直接执行')
     expect(appendix).toContain('六步法')
-    // Direct execution needs no "selected workflow" preamble, and follow-ups do not repeat it.
-    expect(appendix).toContain('选用直接执行时不必说明')
-    expect(appendix).toContain('不要重复说明')
+    expect(appendix).toContain('不要向用户说明所选工作流')
+    expect(appendix).not.toContain('在首条回复中用一行说明所选工作流及理由')
   })
 
   it('resolveZcfPrefs normalizes legacy workflow modes to auto-plan', () => {

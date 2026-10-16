@@ -24,3 +24,14 @@ it('keeps deployment keys out of settings during activation, unrelated saves and
   expect(JSON.parse(fs.readFileSync(path.join(root, '.weworker', 'settings.json'), 'utf8')).api_key).toBe('')
   expect(config.updateSettings({ active_provider: 'anthropic', api_key: '' }).api_key).toBe('')
 })
+
+it('starts a fresh settings file in onboarding and persists completion', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-onboarding-fixture-'))
+  vi.spyOn(os, 'homedir').mockReturnValue(root)
+  vi.resetModules()
+  const config = await import('../config.js')
+  expect(config.getSettings().onboarding_completed).toBe(false)
+  config.updateSettings({ onboarding_completed: true })
+  config.resetSettingsStateForTests()
+  expect(config.getSettings().onboarding_completed).toBe(true)
+})

@@ -14,6 +14,31 @@ afterEach(() => {
 })
 
 describe('chat model settings integration', () => {
+  it('completes first-run onboarding through the backend and updates the gate state', async () => {
+    globalThis.window = {}
+    let request
+    globalThis.fetch = async (url, options) => {
+      request = { path: new URL(url).pathname, body: JSON.parse(options.body) }
+      return Response.json({
+        onboarding_completed: true,
+        active_provider: 'builtin',
+        model: 'ark-code-latest',
+        providers: { builtin: { has_key: true, model: 'ark-code-latest' } },
+      })
+    }
+    await useSettingsStore.getState().completeOnboarding('builtin')
+    assert.deepEqual(request, { path: '/settings/onboarding/complete', body: { provider: 'builtin' } })
+    assert.equal(useSettingsStore.getState().onboardingCompleted, true)
+    assert.equal(useSettingsStore.getState().activeProvider, 'builtin')
+  })
+
+  it('does not mark onboarding complete when the backend rejects a provider without a key', async () => {
+    globalThis.window = {}
+    globalThis.fetch = async () => Response.json({ detail: '请先填写并保存 API Key' }, { status: 400 })
+    await assert.rejects(useSettingsStore.getState().completeOnboarding('anthropic'), /API Key/)
+    assert.equal(useSettingsStore.getState().onboardingCompleted, initialState.onboardingCompleted)
+  })
+
   it('saves a preset key before activating it and synchronizes model settings', async () => {
     globalThis.window = {}
     const calls = []
