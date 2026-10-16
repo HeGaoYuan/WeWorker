@@ -4,6 +4,8 @@
  */
 import type express from 'express'
 import { getSettings } from '../config.js'
+import { clearStoredConversationCompaction } from '../agent.js'
+import { disposeChatSession } from '../chat-session.js'
 import { parseAllAdapters, type ParsedAdapter } from '../adapter-parser.js'
 import * as works from '../works-store.js'
 import { createLogger } from '../logger.js'
@@ -355,6 +357,8 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       const agent = requireAgent(req.params.id)
       if (!agent.work_ids.includes(req.params.workId)) throw new DedicatedAgentError('对话不存在', 404)
       removeAgentWork(agent.id, req.params.workId)
+      disposeChatSession(req.params.workId, 'work_deleted')
+      clearStoredConversationCompaction(req.params.workId)
       works.deleteWork(req.params.workId)
       works.markExternalWrite()
       res.json({ ok: true })
@@ -425,7 +429,11 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
       deleteAgent(agent.id)
       const deleteConversations = req.query.keep_conversations !== '1'
       if (deleteConversations) {
-        for (const workId of agent.work_ids) works.deleteWork(workId)
+        for (const workId of agent.work_ids) {
+          disposeChatSession(workId, 'work_deleted')
+          clearStoredConversationCompaction(workId)
+          works.deleteWork(workId)
+        }
         works.markExternalWrite()
       }
       removeAgentRuntime(agent.id)
