@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { copyToClipboard } from '../lib/copyToClipboard.js'
 
-const COMMAND =
-  '请帮我安装并接入 WebCLI，使用 webcli call 调用 Adapter 完成网页任务。'
+/** 点击「复制」写入剪贴板的完整安装指引（Hero 展示为短文案） */
+const COPY_TEXT =
+  '帮我装好 WebCLI：先跑 npx skills add https://unpkg.com/weworker-webcli/skills/webcli/SKILL.md，再跑 npm install -g weworker-webcli，然后 webcli extension-path 把完整路径发我，并列出在 Chrome 里加载该扩展的步骤（chrome://extensions/ → 开发者模式 → 加载已解压的扩展程序）。'
 
 export default function HeroCommandBar() {
   const [copied, setCopied] = useState(false)
 
   const onCopy = async () => {
-    const ok = await copyToClipboard(COMMAND)
+    const ok = await copyToClipboard(COPY_TEXT)
     if (!ok) return
     setCopied(true)
     window.setTimeout(() => setCopied(false), 2000)
@@ -29,7 +30,7 @@ export default function HeroCommandBar() {
           type="button"
           onClick={onCopy}
           className="hero-command-copy shrink-0"
-          aria-label="复制命令"
+          aria-label="复制完整安装指引"
         >
           {copied ? '已复制' : '复制'}
         </button>
