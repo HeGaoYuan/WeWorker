@@ -94,7 +94,8 @@ import { execFile } from 'node:child_process'
 import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow } from './site-memory.js'
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
-import { buildConfiguredModelEnv, clearStoredConversationCompaction, streamChat, type SSEEvent } from './agent.js'
+import { disposeChatSession, disposeIdleChatSession, hasChatSession, hasSpareChatSession } from './chat-session.js'
+import { buildConfiguredModelEnv, streamChat, type SSEEvent } from './agent.js'
 import { matchSiteAdapter, resolveSiteToolkitPrompt } from './site-gate.js'
 import { listToolkitSkills, resolveToolkitSkillPrompt, toolkitGateCandidates } from './toolkit-skills.js'
 import { decideTier4, openTier4Turn } from './tier4-dispatch.js'
@@ -2191,8 +2192,8 @@ app.patch('/works/:id', (req, res) => {
 })
 
 app.delete('/works/:id', (req, res) => {
-  clearStoredConversationCompaction(req.params.id)
   store.deleteWork(req.params.id)
+  disposeChatSession(req.params.id, 'work_deleted')
   res.json({ ok: true })
 })
 
@@ -2760,6 +2761,8 @@ app.post('/works/:id/compact', async (req, res) => {
     const result = await streamConversationCompaction(workId, work.messages, settings, (event) => {
       events.push(event)
     })
+    // The next turn must start from the compacted history, not the live session's full context.
+    if (result.status === 'completed') disposeIdleChatSession(workId, 'manual_compaction')
     res.json({ ok: true, ...result, events })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -2769,6 +2772,92 @@ app.post('/works/:id/compact', async (req, res) => {
   }
 })
 
+
+// ── Chat pre-start: start the Claude Code CLI while the user is typing ─────────
+// Options must match the /works/:id/chat call below so the first turn's
+// configuration fingerprint equals the warm session's (see chat-session.ts).
+const chatWarmupsInFlight = new Set<string>()
+const SPARE_WARMUP_KEY = '\u0000spare'
+type ThinkingEffortInput = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined
+
+async function prewarmChatSession(input: {
+  key: string
+  workId: string | null
+  zcf: { zcf_role?: string | null; zcf_mode?: string | null }
+  messages: store.Message[]
+  thinkingEffort: ThinkingEffortInput
+  dedicatedAgentOptions?: ReturnType<typeof buildDesktopAgentTurnOptions>
+}): Promise<void> {
+  if (chatWarmupsInFlight.has(input.key)) return
+  chatWarmupsInFlight.add(input.key)
+  try {
+    const settings = getSettings()
+    const zcfPrefs = resolveZcfPrefs(input.zcf, settings)
+    for await (const event of streamChat(input.messages, settings, undefined, {
+      ...(input.workId ? { workId: input.workId } : {}),
+      zcfRole: zcfPrefs.zcfRole,
+      zcfMode: zcfPrefs.zcfMode,
+      thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, input.thinkingEffort),
+      reuseSession: true,
+      warmupOnly: true,
+      ...(input.dedicatedAgentOptions ?? {}),
+    })) {
+      if (event.type === 'error') chatLog.warn('chat warm-up skipped', event.content)
+    }
+  } catch (error) {
+    chatLog.warn('chat warm-up failed', error instanceof Error ? error.message : String(error))
+  } finally {
+    chatWarmupsInFlight.delete(input.key)
+  }
+}
+
+// Existing work (including dedicated-agent conversations): warm its own session.
+app.post('/works/:id/warmup', (req, res) => {
+  const workId = req.params.id
+  const { thinkingEffort } = (req.body ?? {}) as { thinkingEffort?: ThinkingEffortInput }
+  const work = store.getWorkWithMessages(workId)
+  if (!work) {
+    res.status(404).json({ detail: 'Work not found' })
+    return
+  }
+  if (hasChatSession(workId) || chatWarmupsInFlight.has(workId)) {
+    res.json({ status: 'ready' })
+    return
+  }
+  let dedicatedAgentOptions: ReturnType<typeof buildDesktopAgentTurnOptions> | undefined
+  const dedicatedAgent = findAgentByWorkId(workId)
+  if (dedicatedAgent) {
+    try {
+      dedicatedAgentOptions = buildDesktopAgentTurnOptions(dedicatedAgent)
+    } catch {
+      res.json({ status: 'skipped' })
+      return
+    }
+  }
+  res.json({ status: 'starting' })
+  void prewarmChatSession({ key: workId, workId, zcf: work, messages: work.messages, thinkingEffort, dedicatedAgentOptions })
+})
+
+// Welcome screen: no work exists until the first send; keep one spare session.
+app.post('/chat/warmup', (req, res) => {
+  const { thinkingEffort, zcfRole, zcfMode } = (req.body ?? {}) as {
+    thinkingEffort?: ThinkingEffortInput
+    zcfRole?: string | null
+    zcfMode?: string | null
+  }
+  if (hasSpareChatSession() || chatWarmupsInFlight.has(SPARE_WARMUP_KEY)) {
+    res.json({ status: 'ready' })
+    return
+  }
+  res.json({ status: 'starting' })
+  void prewarmChatSession({
+    key: SPARE_WARMUP_KEY,
+    workId: null,
+    zcf: { zcf_role: zcfRole ?? null, zcf_mode: zcfMode ?? null },
+    messages: [],
+    thinkingEffort,
+  })
+})
 
 app.post('/works/:id/chat', async (req, res) => {
   const workId = req.params.id
@@ -3057,6 +3146,8 @@ app.post('/works/:id/chat', async (req, res) => {
       memoryScope: initialMemoryScope,
       ...(siteToolkit ? { siteToolkitPrompt: siteToolkit.prompt } : {}),
       onAskUser: (event) => send(event),
+      // Keep this work's Claude Code process between turns (skips the CLI cold start).
+      reuseSession: true,
       ...(dedicatedAgentOptions ?? {}),
     })) {
       if (ev.type === 'skill_context' && ev.skillContext) {

@@ -4,19 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { expect, it } from 'vitest'
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
-import { ClaudeSession } from '../claude-session.js'
+import { ChatSession, PromptQueue } from '../chat-session.js'
 import { spawnManagedClaudeCodeProcess } from '../claude-process.js'
 
 // Real CLI, isolated configuration, local mock endpoint; no paid model calls.
 it('keeps one real Claude process alive and refreshes MCP callbacks between turns', async () => {
   const requests: any[] = []
   const toolCalls: string[] = []
-  const serverForTurn = (name: string) => createSdkMcpServer({ name: 'test-tools', tools: [
-    tool('echo', 'Return the current test turn', {}, async () => {
-      toolCalls.push(name)
-      return { content: [{ type: 'text', text: name }] }
-    }),
-  ] })
   const server = http.createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) body += chunk.toString()
@@ -48,12 +42,17 @@ it('keeps one real Claude process alive and refreshes MCP callbacks between turn
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-sdk-session-test-'))
   const port = (server.address() as import('node:net').AddressInfo).port
   const children: import('node:child_process').ChildProcess[] = []
-  const mcp = serverForTurn('initial')
-  let session: ClaudeSession | undefined
+  let currentTurn = 'initial'
+  const mcp = createSdkMcpServer({ name: 'test-tools', tools: [tool('echo', 'Return current turn', {}, async () => {
+    toolCalls.push(currentTurn)
+    return { content: [{ type: 'text', text: currentTurn }] }
+  })] })
+  let session: ChatSession | undefined
   try {
     const cli = path.resolve(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude')
     expect(fs.existsSync(cli)).toBe(true)
-    session = new ClaudeSession(input => query({ prompt: input, options: {
+    const queue = new PromptQueue()
+    const handle = query({ prompt: queue, options: {
       pathToClaudeCodeExecutable: cli,
       model: 'test-model', systemPrompt: 'Test assistant', tools: [], settingSources: [],
       mcpServers: { weworker: mcp }, persistSession: false, includePartialMessages: true,
@@ -66,29 +65,33 @@ it('keeps one real Claude process alive and refreshes MCP callbacks between turn
         children.push(child)
         return child as any
       },
-    } }))
+    } })
+    session = new ChatSession({ workId: 'fixture-work', fingerprint: 'fixture', queue, query: handle,
+      bindings: { workIdRef: { current: 'fixture-work' }, onAskUser: null, memory: { userPromptInjections: 0, postToolBatchInjections: 0 } } })
     for (const prompt of ['first', 'second']) {
       const events = []
-      for await (const event of session.turn(prompt, serverForTurn(prompt))) events.push(event)
+      currentTurn = prompt
+      for await (const event of session.runTurn({ type: 'user', session_id: '', parent_tool_use_id: null, message: { role: 'user', content: prompt } })) events.push(event)
+      session.complete([{ id: prompt, role: 'user' }])
       expect(events.some(event => event.type === 'result' && event.subtype === 'success')).toBe(true)
       const result = events.find(event => event.type === 'result') as any
       expect(result.usage.input_tokens).toBe(10)
       expect(result.usage.output_tokens).toBe(4)
     }
     expect(children).toHaveLength(1)
-    expect(session.alive).toBe(true)
+    expect(session.closed).toBe(false)
     expect(requests).toHaveLength(4)
     expect(toolCalls).toEqual(['first', 'second'])
     expect(JSON.stringify(requests[0].messages)).toContain('first')
     expect(JSON.stringify(requests[2].messages)).toContain('second')
     expect(requests[2].messages.filter((message: any) => message.role === 'user')).toHaveLength(3)
     const exited = new Promise<void>(resolve => children[0].once('exit', () => resolve()))
-    session.close()
+    session.close('test')
     await exited
-    expect(session.alive).toBe(false)
+    expect(session.closed).toBe(true)
     expect(() => process.kill(children[0].pid!, 0)).toThrow()
   } finally {
-    session?.close()
+    session?.close('test')
     for (const child of children) child.kill()
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))

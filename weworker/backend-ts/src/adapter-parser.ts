@@ -11,6 +11,7 @@ import { createLogger } from './logger.js'
 import type { RegistryScenarioDef } from './site-scenarios.js'
 import type { PromptVarDisplayMap } from './prompt-var-display.js'
 import { mergePromptVarDisplay } from './prompt-var-display.js'
+import { clearDesktopAdapterCatalogCache, getDesktopAdapterCatalog } from './adapter-catalog-cache.js'
 
 const log = createLogger('adapter-parser')
 
@@ -457,7 +458,8 @@ function parseLegacyAdapters(): Map<string, ParsedAdapter> {
 
 /** Managed metadata is refreshed on every read; the compatibility cache cannot override it. */
 export function parseAllAdapters(): Map<string, ParsedAdapter> {
-  const inventory = describeDesktopAdapters()
+  // The shared snapshot is rebuilt whenever registry state or package roots change.
+  const inventory = describeDesktopAdapters({ catalog: getDesktopAdapterCatalog() })
   const result = new Map(parseLegacyAdapters())
   for (const manifest of inventory.adapters) {
     // 已存在的同名条目（v1 遗留 registry 路径）在桌面 manifest 未声明 gate_aliases 时继续供词表，
@@ -487,6 +489,7 @@ export function parseAllAdapters(): Map<string, ParsedAdapter> {
 /** Clear the cache (useful for testing or hot-reload) */
 export function clearAdapterCache(): void {
   _cache = null
+  clearDesktopAdapterCatalogCache()
 }
 
 export function getRegistryDefaultIcon(): string {

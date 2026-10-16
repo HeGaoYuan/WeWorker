@@ -1,7 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type {
   SDKMessage,
-  Options,
+  SDKUserMessage,
   McpServerConfig,
   SettingSource,
   HookCallback,
@@ -22,7 +22,20 @@ import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import type { Message } from './works-store.js'
 import { buildMcpServer as _buildMcpServer, getMcpToolDefinitionSummary } from './tools.js'
 import { parseAllAdapters } from './adapter-parser.js'
-import { refreshDesktopAdapterSkills } from '../../../webcli/adapter-desktop.js'
+import { getDesktopAdapterCatalog, refreshDesktopAdapterSkillsIfStale } from './adapter-catalog-cache.js'
+import {
+  ChatSession,
+  PromptQueue,
+  disposeChatSession,
+  findReusableChatSession,
+  hasChatSession,
+  hasSpareChatSession,
+  isChatSessionBusy,
+  registerChatSession,
+  registerSpareChatSession,
+  type ChatHistoryEntry,
+  type ChatTurnBindings,
+} from './chat-session.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
@@ -30,7 +43,7 @@ import { composeSystemPromptWithZcf } from './zcf-sync.js'
 import { computeUsageMetrics } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
-import { acquireModelRuntime } from './anthropic-endpoint-relay.js'
+import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
 import { createWeWorkerToolPolicy } from './agent-tool-policy.js'
 import { spawnManagedClaudeCodeProcess } from './claude-process.js'
 import { waitForAdapterRuntimeReload } from './adapter-runtime-reload.js'
@@ -63,7 +76,6 @@ import { renderPrompt } from './prompt-loader.js'
 import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
 import { resolveThinkingEffort } from './thinking-effort.js'
 import { StreamingVisibleText } from './streaming-visible-text.js'
-import { AssistantCheckpoint, ClaudeSession, claudeConversationSessions, fingerprintSessionSources } from './claude-session.js'
 
 const log = createLogger('agent')
 
@@ -91,7 +103,6 @@ function getStoredCompactedConversation(workId: string | undefined, messages: Me
 
 export function clearStoredConversationCompaction(workId: string): void {
   compactedConversationByWork.delete(workId)
-  claudeConversationSessions.remove(workId)
 }
 
 const MODEL_AUTH_ENV_KEYS = [
@@ -109,31 +120,26 @@ export function ensureIsolatedClaudeConfigDir(
   const dir = configDir
   fs.mkdirSync(dir, { recursive: true })
   fs.mkdirSync(path.join(dir, 'skills'), { recursive: true })
-  const configFile = path.join(dir, '.claude.json')
-  let config: Record<string, unknown> = {}
-  try {
-    const parsed = JSON.parse(fs.readFileSync(configFile, 'utf8'))
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      config = parsed as Record<string, unknown>
-    }
-  } catch {
-    config = {}
-  }
-  config.env = {}
-  fs.writeFileSync(configFile, JSON.stringify(config, null, 2))
-  if (platform === 'win32') {
-    const settingsFile = path.join(dir, 'settings.json')
-    let userSettings: Record<string, unknown> = {}
+  // Runs before every turn: rewrite the JSON files only when the enforced keys change.
+  const updateJsonObject = (file: string, update: (value: Record<string, unknown>) => void) => {
+    let raw = ''
+    let value: Record<string, unknown> = {}
     try {
-      const parsed = JSON.parse(fs.readFileSync(settingsFile, 'utf8'))
+      raw = fs.readFileSync(file, 'utf8')
+      const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        userSettings = parsed as Record<string, unknown>
+        value = parsed as Record<string, unknown>
       }
     } catch {
-      userSettings = {}
+      value = {}
     }
-    userSettings.defaultShell = 'powershell'
-    fs.writeFileSync(settingsFile, JSON.stringify(userSettings, null, 2))
+    update(value)
+    const next = JSON.stringify(value, null, 2)
+    if (next !== raw) fs.writeFileSync(file, next)
+  }
+  updateJsonObject(path.join(dir, '.claude.json'), (config) => { config.env = {} })
+  if (platform === 'win32') {
+    updateJsonObject(path.join(dir, 'settings.json'), (userSettings) => { userSettings.defaultShell = 'powershell' })
   }
   return dir
 }
@@ -703,6 +709,10 @@ function messagePromptText(message: Message): string {
     .join('\n')
 }
 
+export const HISTORY_REPLAY_HEADER = '[以下是之前的对话历史，仅供参考]'
+export const CURRENT_USER_MESSAGE_HEADER = '[当前用户消息]'
+const RECALLED_MEMORY_HEADER = '[相关长期记忆]'
+
 // Convert stored messages to a single prompt string for the Agent SDK
 export function buildPromptString(messages: Message[]): string {
   if (messages.length === 0) return ''
@@ -721,7 +731,7 @@ export function buildPromptString(messages: Message[]): string {
   }).filter(Boolean).join('\n\n')
 
   if (!historyText) return lastText
-  return `[浠ヤ笅鏄箣鍓嶇殑瀵硅瘽鍘嗗彶锛屼粎渚涘弬鑰僝\n${historyText}\n\n[褰撳墠鐢ㄦ埛娑堟伅]\n${lastText}`
+  return `${HISTORY_REPLAY_HEADER}\n${historyText}\n\n${CURRENT_USER_MESSAGE_HEADER}\n${lastText}`
 }
 
 // Strip any base64 image markdown that Claude may emit in its text response
@@ -907,6 +917,10 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
       total_cost_usd?: number
       duration_ms?: number
+      duration_api_ms?: number
+      ttft_ms?: number
+      time_to_request_ms?: number
+      time_to_request_from_spawn_ms?: number
       num_turns?: number
       is_error?: boolean
       errors?: string[]
@@ -915,7 +929,7 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     if (r.usage) {
       const m = computeUsageMetrics(r.usage)
       log.info(
-        `usage in=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_create=${m.cache_creation_input_tokens} out=${m.output_tokens} total_in=${m.total_input_tokens} cache_hit=${(m.cache_hit_rate * 100).toFixed(1)}% cost=$${r.total_cost_usd ?? 0} dur=${r.duration_ms ?? 0}ms turns=${r.num_turns ?? 0} subtype=${r.subtype ?? '?'}`,
+        `usage in=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_create=${m.cache_creation_input_tokens} out=${m.output_tokens} total_in=${m.total_input_tokens} cache_hit=${(m.cache_hit_rate * 100).toFixed(1)}% cost=$${r.total_cost_usd ?? 0} dur=${r.duration_ms ?? 0}ms api=${r.duration_api_ms ?? '?'}ms ttft=${r.ttft_ms ?? '?'}ms to_request=${r.time_to_request_ms ?? '?'}ms spawn_to_request=${r.time_to_request_from_spawn_ms ?? '?'}ms turns=${r.num_turns ?? 0} subtype=${r.subtype ?? '?'}`,
       )
       yield {
         type: 'usage',
@@ -938,17 +952,59 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
 }
 
 export async function* streamChat(...args: Parameters<typeof streamChatWithBaseUrl>): AsyncGenerator<SSEEvent> {
-  let runtime: Awaited<ReturnType<typeof acquireModelRuntime>>
+  let runtime: Awaited<ReturnType<typeof prepareModelRuntime>>
   try {
-    runtime = await acquireModelRuntime(args[1], args[3]?.workId)
+    runtime = await prepareModelRuntime(args[1])
   } catch {
     yield { type: 'error', content: '模型接口地址无效或无法启动本地转发' }
     return
   }
+  // A persistent session started in this turn keeps using the relay's address,
+  // so it takes ownership of the relay and closes it together with the CLI.
+  let adopted = false
+  const internal: StreamChatInternalOptions = {
+    sessionBaseUrl: args[1].base_url,
+    adoptModelRuntime: () => {
+      adopted = true
+      return runtime.close
+    },
+  }
   try {
-    yield* streamChatWithBaseUrl(args[0], runtime.settings, args[2], args[3], runtime.retain)
+    yield* streamChatWithBaseUrl(args[0], runtime.settings, args[2], { ...args[3], [STREAM_CHAT_INTERNAL]: internal })
   } finally {
-    await runtime.close()
+    if (!adopted) await runtime.close()
+  }
+}
+
+const STREAM_CHAT_INTERNAL = Symbol('streamChatInternal')
+interface StreamChatInternalOptions {
+  /** Configured base URL before any per-turn relay rewrite; part of the session fingerprint. */
+  sessionBaseUrl: string
+  /** Transfer the per-turn model runtime to a new persistent session. */
+  adoptModelRuntime: () => () => Promise<void>
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function userTurnMessage(text: string): SDKUserMessage {
+  return { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null }
+}
+
+/** Per-phase durations for one turn's preparation; logged without prompt text. */
+function createPhaseTimer() {
+  const start = Date.now()
+  let last = start
+  const phases: Record<string, number> = {}
+  return {
+    mark(name: string) {
+      const now = Date.now()
+      phases[name] = (phases[name] ?? 0) + (now - last)
+      last = now
+    },
+    startedAt: start,
+    phases,
   }
 }
 
@@ -990,15 +1046,47 @@ async function* streamChatWithBaseUrl(
     extraToolGuard?: (toolName: string, input: Record<string, unknown>) => { behavior: 'allow' } | { behavior: 'deny'; message: string };
     /** Additional tools hidden from the model. */
     extraDisallowedTools?: string[];
+    /**
+     * Keep this work's Claude Code process alive between turns (desktop chat).
+     * Later turns send only the new message; see chat-session.ts for reuse rules.
+     */
+    reuseSession?: boolean;
+    /**
+     * With reuseSession: prepare the turn and start the CLI without sending a
+     * message. Without workId the session waits as the spare for the next new work.
+     */
+    warmupOnly?: boolean;
+    [STREAM_CHAT_INTERNAL]?: StreamChatInternalOptions;
   } = {},
-  retainRuntime?: () => () => Promise<void>,
 ): AsyncGenerator<SSEEvent> {
+  const phase = createPhaseTimer()
   // Claude Code discovers user Skills when each query starts. If a website was
   // just scaffolded, wait for its hot-install to finish before starting query.
   await waitForAdapterRuntimeReload()
-  if ((opts.forceCompaction || opts.compactionOnly) && opts.workId) claudeConversationSessions.remove(opts.workId)
+  phase.mark('adapter_reload_wait')
   const enabledAdapterIds = opts.enabledAdapterIds
   const channelPermissionMode = opts.channelPermissionMode ?? 'full'
+  const internal = opts[STREAM_CHAT_INTERNAL]
+  // Session reuse is limited to the plain desktop path: channel handlers, custom
+  // prompts/tools and compaction-only runs keep the one-off query behavior.
+  const sessionMode = opts.reuseSession === true
+    && (!!opts.workId || opts.warmupOnly === true)
+    && !!internal
+    && opts.streaming !== false
+    && channelPermissionMode === 'full'
+    && !opts.channelAskUserHandler
+    && !opts.systemPromptOverride
+    && !opts.mcpServerOverride
+    && !opts.restrictBuiltInTools
+    && !opts.forceCompaction
+    && !opts.compactionOnly
+  // Callbacks that a reused session must take from the current turn.
+  const turnBindings: ChatTurnBindings = {
+    workIdRef: { current: opts.workId ?? null },
+    onAskUser: opts.onAskUser ?? null,
+    extraToolGuard: opts.extraToolGuard,
+    memory: { userPromptInjections: 0, postToolBatchInjections: 0 },
+  }
 
   const mcpServer = _buildMcpServer({
     channelPermissionMode,
@@ -1079,8 +1167,10 @@ async function* streamChatWithBaseUrl(
   const filesystemToolGuard = createUnifiedToolGuard(channelPermissionMode)
   const toolPolicy = createWeWorkerToolPolicy(channelPermissionMode)
   const canUseTool: typeof toolPolicy = async (toolName, input, context) => {
-    if (opts.extraToolGuard) {
-      const extraDecision = opts.extraToolGuard(toolName, input as Record<string, unknown>)
+    // Read the guard at call time: a reused session rebinds it for each turn.
+    const extraToolGuard = turnBindings.extraToolGuard
+    if (extraToolGuard) {
+      const extraDecision = extraToolGuard(toolName, input as Record<string, unknown>)
       if (extraDecision.behavior === 'deny') {
         return { behavior: 'deny', message: extraDecision.message, interrupt: false }
       }
@@ -1104,10 +1194,13 @@ async function* streamChatWithBaseUrl(
         ]
   // Isolated runs receive a caller-curated skills directory; a global refresh
   // would write every managed Adapter Skill into it.
-  if (skillRoots.length && !isolatedSkills) refreshDesktopAdapterSkills(skillRoots[0])
+  phase.mark('config_setup')
+  if (skillRoots.length && !isolatedSkills) refreshDesktopAdapterSkillsIfStale(skillRoots[0])
+  phase.mark('managed_skill_sync')
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
   log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
+  phase.mark('loaded_skill_replay')
   // siteGate 预注入与 loadedSkills 走同一通道（同为 prompt 前缀）：命中站点时把该站点的工具速查
   // 放在最前，模型首轮即可直接调用，不必先「激活 Skill」。未命中时为空串，逐字节等价于今天。
   const siteToolkitPrompt = String(opts.siteToolkitPrompt ?? '').trim()
@@ -1137,6 +1230,7 @@ async function* streamChatWithBaseUrl(
       limit: 8,
     })
     : { recalled: '' }
+  phase.mark('memory_recall')
   const memoryProtocol = memoryEnabled
     ? buildMemoryOutputProtocolPrompt({
       scope: opts.memoryScope ?? { user: 'local' },
@@ -1155,7 +1249,11 @@ async function* streamChatWithBaseUrl(
   const systemPrompt = opts.appendSystemPrompt?.trim()
     ? `${baseSystemPrompt}\n\n${opts.appendSystemPrompt.trim()}`
     : baseSystemPrompt
+  phase.mark('system_prompt_build')
   const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
+  const skillIndex = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools
+    ? ''
+    : buildEnabledSkillIndex(path.join(queryEnv.CLAUDE_CONFIG_DIR || '', 'skills'))
   const buildAssembly = (conversationPrompt: string, compaction?: ConversationCompactionSnapshot) => buildContextAssembly({
     systemPrompt,
     identityPrompt,
@@ -1164,7 +1262,7 @@ async function* streamChatWithBaseUrl(
       `Claude Code 原生 ${nativeCommandTool}`,
       'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
     ].join('\n'),
-    skillIndex: channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? '' : buildEnabledSkillIndex(path.join(queryEnv.CLAUDE_CONFIG_DIR || '', 'skills')),
+    skillIndex,
     loadedSkills: skillContextPrefix,
     mcpDynamicTools: opts.mcpServerOverride ? '' : getMcpToolDefinitionSummary(channelPermissionMode),
     subagentDefinitions: '',
@@ -1186,8 +1284,10 @@ async function* streamChatWithBaseUrl(
   let contextAssembly = fullContextAssembly
   let compactionEventEmitted = false
   let compactionCompleted = false
+  const needsCompaction = (compactionPlan.shouldCompact || !!opts.forceCompaction) && conversationMessages.length > 1
+  phase.mark('context_assembly')
 
-  if ((compactionPlan.shouldCompact || opts.forceCompaction) && conversationMessages.length > 1) {
+  if (needsCompaction) {
     const historyMessages = conversationMessages.slice(0, -1)
     const currentMessage = conversationMessages[conversationMessages.length - 1]
     const currentTokens = estimateContextTokens(messagePromptText(currentMessage))
@@ -1314,14 +1414,13 @@ async function* streamChatWithBaseUrl(
     yield { type: 'done' }
     return
   }
+  phase.mark('compaction')
   const turnContextCollector = createTurnContextCollector(contextAssembly.snapshot)
-  let memoryUserPromptInjectionCount = 0
-  let memoryPostToolBatchInjectionCount = 0
   const memoryUserPromptSubmitHook: HookCallback = async (): Promise<HookJSONOutput> => {
-    memoryUserPromptInjectionCount += 1
+    activeBindings.memory.userPromptInjections += 1
     log.info('memory_reminder_injected', {
       source: 'user_prompt_submit',
-      sequence: memoryUserPromptInjectionCount,
+      sequence: activeBindings.memory.userPromptInjections,
       present: true,
     })
     return {
@@ -1333,10 +1432,10 @@ async function* streamChatWithBaseUrl(
     }
   }
   const memoryPostToolBatchHook: HookCallback = async (): Promise<HookJSONOutput> => {
-    memoryPostToolBatchInjectionCount += 1
+    activeBindings.memory.postToolBatchInjections += 1
     log.info('memory_reminder_injected', {
       source: 'post_tool_batch',
-      sequence: memoryPostToolBatchInjectionCount,
+      sequence: activeBindings.memory.postToolBatchInjections,
       present: true,
     })
     return {
@@ -1347,139 +1446,192 @@ async function* streamChatWithBaseUrl(
       },
     }
   }
-
-  const queryOptions: Options = {
-    abortController,
-    model: settings.model,
-    systemPrompt: contextAssembly.sdk.system_prompt,
-    mcpServers: { weworker: activeMcpServer },
-    disallowedTools,
-    canUseTool,
-    settings: filesystemSettings,
-    // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
-    permissionMode: 'default',
-    includePartialMessages,
-    cwd: agentCwd,
-    settingSources,
-    effort: thinkingEffort,
-    pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
-    spawnClaudeCodeProcess,
-    env: envWithWebcli,
-    hooks: memoryEnabled ? {
-      UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }],
-      PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }],
-    } : undefined,
-  }
-  const sessionEligible = Boolean(opts.workId)
-    && !opts.mcpServerOverride
-    && !opts.restrictBuiltInTools
-    && !opts.extraToolGuard
-    && !opts.forceCompaction
-    && !opts.compactionOnly
-    && !settings.base_url_is_full
-    && (!compactionPlan.shouldCompact || compactionCompleted)
-  const sessionFingerprint = createHash('sha256').update(JSON.stringify({
-    settings: {
-      provider: settings.active_provider,
-      apiKey: settings.api_key,
-      baseUrl: settings.base_url,
+  // Session callbacks resolve against the bindings of whichever turn is running.
+  let activeBindings: ChatTurnBindings = turnBindings
+  const buildQueryParams = (
+    prompt: string | PromptQueue,
+    target: { systemPrompt: string; abort?: AbortController; mcp?: McpServerConfig },
+  ) => ({
+    prompt,
+    options: {
+      abortController: target.abort ?? abortController,
       model: settings.model,
-      contextLimit: settings.context_limit,
+      systemPrompt: target.systemPrompt,
+      mcpServers: { weworker: target.mcp ?? activeMcpServer },
+      disallowedTools,
+      canUseTool,
+      settings: filesystemSettings,
+      // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
+      permissionMode: 'default' as const,
+      includePartialMessages,
+      cwd: agentCwd,
+      settingSources,
+      effort: thinkingEffort,
+      pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
+      spawnClaudeCodeProcess,
+      env: envWithWebcli,
+      hooks: memoryEnabled ? {
+        UserPromptSubmit: [{ hooks: [memoryUserPromptSubmitHook] }],
+        PostToolBatch: [{ hooks: [memoryPostToolBatchHook] }],
+      } : undefined,
     },
-    systemPrompt: contextAssembly.sdk.system_prompt,
-    identityPrompt,
-    siteToolkitPrompt,
-    channelPermissionMode,
-    enabledAdapterIds: [...(enabledAdapterIds ?? [])].sort(),
-    env: envWithWebcli,
-    disallowedTools,
-    filesystemSettings,
-    agentCwd,
-    settingSources,
-    thinkingEffort,
-    memoryEnabled,
-    includePartialMessages,
-    memoryScope: opts.memoryScope ?? { user: 'local' },
-    compaction: opts.workId ? compactedConversationByWork.get(opts.workId) : undefined,
-    sources: fingerprintSessionSources(skillRoots, queryEnv.CLAUDE_CONFIG_DIR || '', agentCwd),
-  })).digest('hex')
-  const reusableSession = sessionEligible
-    ? claudeConversationSessions.get(opts.workId!, sessionFingerprint, messages)
-    : undefined
-  if (!sessionEligible && opts.workId) claudeConversationSessions.remove(opts.workId)
-  let queryHandle: ReturnType<typeof query> | undefined
-  let conversationSession = reusableSession
-  let sessionIsNew = false
-  if (!conversationSession && sessionEligible) {
-    const releaseRuntime = retainRuntime?.()
-    const created = new ClaudeSession((input, session) => {
-      session.options = queryOptions
-      return query({ prompt: input, options: {
-        ...queryOptions,
-        abortController: new AbortController(),
-        canUseTool: (...args) => session.options!.canUseTool!(...args),
-        hooks: memoryEnabled ? {
-          UserPromptSubmit: [{ hooks: [(...args) => session.options!.hooks!.UserPromptSubmit![0].hooks[0](...args)] }],
-          PostToolBatch: [{ hooks: [(...args) => session.options!.hooks!.PostToolBatch![0].hooks[0](...args)] }],
-        } : undefined,
-      } })
-    }, () => { void releaseRuntime?.() })
-    if (claudeConversationSessions.put(opts.workId!, sessionFingerprint, messages, created)) {
-      conversationSession = created
-      sessionIsNew = true
-    } else {
-      created.close()
+  })
+
+  // Session mode: reuse this work's live CLI when its configuration and history match.
+  const history: ChatHistoryEntry[] = messages.map((message) => ({ id: message.id, role: message.role }))
+  const recalledMemoryBlock = longTermMemory.recalled ? `${RECALLED_MEMORY_HEADER}\n${longTermMemory.recalled}\n\n` : ''
+  // A new (or still unused warm) session has seen no history: send replay + current message.
+  const fullFirstPrompt = recalledMemoryBlock ? `${recalledMemoryBlock}${contextAssembly.sdk.prompt}` : contextAssembly.sdk.prompt
+  let session: ChatSession | undefined
+  let sessionState: 'cold' | 'new' | 'reused' | 'prewarmed' = 'cold'
+  let turnMessages: AsyncIterable<SDKMessage>
+  let closeTurn: () => void
+  if (sessionMode && internal && (!opts.workId || !isChatSessionBusy(opts.workId))) {
+    const workId = opts.workId ?? null
+    const fingerprint = sha256(JSON.stringify({
+      model: settings.model,
+      baseUrl: internal.sessionBaseUrl,
+      apiKey: sha256(settings.api_key || ''),
+      provider: settings.active_provider,
+      authType: settings.active_auth_type ?? settings.custom_auth_type ?? null,
+      systemPrompt,
+      skillIndex,
+      projectSkillIndex: isolatedSkills ? '' : buildEnabledSkillIndex(path.join(getUserDirectory(), '.claude', 'skills')),
+      adapters: getDesktopAdapterCatalog().effective.map((entry) => `${entry.name}@${entry.digest}`),
+      disallowedTools,
+      settingSources,
+      effort: thinkingEffort ?? null,
+      includePartialMessages,
+      memoryEnabled,
+      cwd: agentCwd,
+      configDir: queryEnv.CLAUDE_CONFIG_DIR,
+      executable: claudeSetup.pathToClaudeCodeExecutable ?? null,
+      openBrowserOrigins: envWithWebcli.WEWORKER_ALLOWED_OPEN_BROWSER_ORIGINS,
+      path: envWithWebcli.PATH,
+    }))
+    const startSession = (): ChatSession => {
+      const sessionAbort = new AbortController()
+      const queue = new PromptQueue()
+      const bindings = turnBindings
+      const sessionMcp = _buildMcpServer({
+        channelPermissionMode,
+        workIdRef: bindings.workIdRef,
+        askUserSSECallback: (event) => bindings.onAskUser?.(event),
+        channelAskUserHandler: null,
+      })
+      const releaseRuntime = internal.adoptModelRuntime()
+      return new ChatSession({
+        workId,
+        fingerprint,
+        bindings,
+        queue,
+        // The long-lived system prompt excludes per-turn memory; each turn's message carries it.
+        query: query(buildQueryParams(queue, { systemPrompt, abort: sessionAbort, mcp: sessionMcp }) as Parameters<typeof query>[0]),
+        onClose: async () => {
+          sessionAbort.abort()
+          await releaseRuntime()
+        },
+      })
     }
+
+    if (opts.warmupOnly) {
+      // Start the CLI now so the user's first message skips its startup.
+      const exists = workId ? hasChatSession(workId) : hasSpareChatSession()
+      if (!exists) {
+        const warm = startSession()
+        if (workId) registerChatSession(warm)
+        else registerSpareChatSession(warm)
+        log.info('chat_session_prewarmed', {
+          work_id: workId ? sha256(workId).slice(0, 12) : null,
+          spare: !workId,
+          prepare_ms: Date.now() - phase.startedAt,
+        })
+      }
+      yield { type: 'done' }
+      return
+    }
+
+    const turnWorkId = workId!
+    const reusable = needsCompaction ? undefined : findReusableChatSession(turnWorkId, fingerprint, history)
+    if (!reusable && needsCompaction) disposeChatSession(turnWorkId, 'compaction')
+    let firstPrompt: string
+    if (reusable) {
+      session = reusable
+      const prewarmed = reusable.fresh
+      sessionState = prewarmed ? 'prewarmed' : 'reused'
+      reusable.bindings.workIdRef.current = turnWorkId
+      reusable.bindings.onAskUser = turnBindings.onAskUser
+      reusable.bindings.extraToolGuard = turnBindings.extraToolGuard
+      reusable.bindings.memory = turnBindings.memory
+      activeBindings = reusable.bindings
+      // A live CLI already holds the conversation and loaded Skills: send only the new message.
+      firstPrompt = prewarmed
+        ? fullFirstPrompt
+        : `${siteToolkitPrompt ? `${siteToolkitPrompt}\n\n` : ''}${recalledMemoryBlock}${messagePromptText(messages[messages.length - 1])}`
+    } else {
+      const created = startSession()
+      registerChatSession(created)
+      session = created
+      sessionState = 'new'
+      firstPrompt = fullFirstPrompt
+    }
+    const activeSession = session
+    turnMessages = activeSession.runTurn(userTurnMessage(firstPrompt))
+    closeTurn = () => disposeChatSession(turnWorkId, 'aborted', activeSession)
+  } else {
+    if (opts.warmupOnly) {
+      yield { type: 'done' }
+      return
+    }
+    const queryHandle = query(buildQueryParams(contextAssembly.sdk.prompt, {
+      systemPrompt: contextAssembly.sdk.system_prompt,
+    }) as Parameters<typeof query>[0])
+    turnMessages = queryHandle
+    closeTurn = () => queryHandle.close()
   }
-  if (conversationSession) conversationSession.options = queryOptions
-  if (!conversationSession) queryHandle = query({ prompt: contextAssembly.sdk.prompt, options: queryOptions })
-  log.info('claude_session', { reused: !!reusableSession, persistent: !!conversationSession })
+  const sdkStartTime = Date.now()
 
   // When the abort signal fires, forcefully close the query to kill the
   // underlying Claude CLI subprocess. Without this, the child process
   // keeps running (and operating on websites) even after the HTTP
   // connection is closed.
   let queryRunning = true
-  let retained = false
   const onAbort = () => {
-    log.info(` onAbort called 鈥?queryRunning=${queryRunning}`)
+    log.info(` onAbort called - queryRunning=${queryRunning}`)
     if (!queryRunning) return // query already finished, nothing to kill
     log.info(' abort signal received, closing query handle')
-    if (conversationSession && opts.workId) claudeConversationSessions.remove(opts.workId)
-    else queryHandle?.close()
+    closeTurn()
   }
   if (abortController) {
     if (abortController.signal.aborted) {
       log.info(' abortController already aborted before query started')
-      onAbort()
+      closeTurn()
       return
     }
     abortController.signal.addEventListener('abort', onAbort, { once: true })
   }
 
+  let completed = false
+  let turnFailed = false
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
-    let firstTextReceived = false
-    let completed = false
     let assistantResponseCount = 0
     let memoryParseCount = 0
     let sdkUserEventCount = 0
     let sdkUserReminderObservedCount = 0
-    const messageStream = conversationSession
-      ? conversationSession.turn(
-          sessionIsNew ? contextAssembly.sdk.prompt : messagePromptText(messages[messages.length - 1]),
-          activeMcpServer as McpServerConfig,
-          abortController?.signal,
-          !sessionIsNew,
-        )
-      : queryHandle!
-    const assistantCheckpoint = new AssistantCheckpoint()
-    let streamError = false
-    for await (const msg of messageStream) {
+    for await (const msg of turnMessages) {
       if (!firstEventReceived) {
         firstEventReceived = true
-        log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+        log.info(` first event received - elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+        log.info('chat_turn_timing', {
+          work_id: opts.workId ? sha256(opts.workId).slice(0, 12) : null,
+          dedicated_agent: isolatedSkills,
+          session: sessionState,
+          phase_ms: { ...phase.phases, sdk_start_to_first_event: Date.now() - sdkStartTime },
+          prepare_ms: sdkStartTime - phase.startedAt,
+          context_tokens: Object.fromEntries(contextAssembly.snapshot.categories.map((item) => [item.id, item.estimated_tokens])),
+        })
       }
       if (msg.type === 'user') {
         sdkUserEventCount += 1
@@ -1493,19 +1645,13 @@ async function* streamChatWithBaseUrl(
       }
       if (msg.type === 'assistant') assistantResponseCount += 1
       for (const skillContext of skillContextCollector.observe(msg)) {
-        assistantCheckpoint.observe({ type: 'skill_context', skillContext })
         turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
         log.info('skill_context_captured', { chars: skillContext.text.length })
         yield { type: 'skill_context', skillContext }
       }
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
-        if (event.type === 'text_delta' && event.content && !firstTextReceived) {
-          firstTextReceived = true
-          log.info('first_visible_text', { elapsed_ms: Date.now() - queryStartTime, reused_session: !!reusableSession })
-        }
-        assistantCheckpoint.observe(event)
-        if (event.type === 'error') streamError = true
         if (event.type === 'memory_parse') memoryParseCount += 1
+        if (event.type === 'error') turnFailed = true
         if (
           event.type === 'text_delta'
           || event.type === 'tool_call_start'
@@ -1524,38 +1670,37 @@ async function* streamChatWithBaseUrl(
     if (completed) {
       for (const event of turnContextCollector.finish()) yield event
     }
-    if (conversationSession && opts.workId) {
-      if (completed && !streamError && !abortController?.signal.aborted) {
-        claudeConversationSessions.complete(opts.workId, conversationSession, messages, assistantCheckpoint)
-        retained = true
-      } else claudeConversationSessions.remove(opts.workId)
-    }
-    log.info(` for-await loop completed normally 鈥?total=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+    log.info(` for-await loop completed normally - total=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
     log.info('memory_context_check', {
-      user_prompt_injections: memoryUserPromptInjectionCount,
-      post_tool_batch_injections: memoryPostToolBatchInjectionCount,
+      user_prompt_injections: activeBindings.memory.userPromptInjections,
+      post_tool_batch_injections: activeBindings.memory.postToolBatchInjections,
       assistant_responses: assistantResponseCount,
       memory_parse_events: memoryParseCount,
       sdk_user_events: sdkUserEventCount,
       sdk_user_reminders_observed: sdkUserReminderObservedCount,
     })
   } catch (e) {
+    turnFailed = true
     // Silently ignore abort errors (user cancelled)
     if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('aborted'))) {
       log.info(` caught abort error: ${e.message}`)
-      if (conversationSession && opts.workId) claudeConversationSessions.remove(opts.workId)
       return
     }
     log.info(` caught error: ${e instanceof Error ? e.message : String(e)}`)
-    if (conversationSession && opts.workId) claudeConversationSessions.remove(opts.workId)
     yield { type: 'error', content: e instanceof Error ? e.message : String(e) }
   } finally {
-    if (conversationSession && !retained && opts.workId) claudeConversationSessions.remove(opts.workId)
-    if (!conversationSession) queryHandle?.close()
-    log.info(' finally block 鈥?setting queryRunning=false')
+    log.info(' finally block - setting queryRunning=false')
     queryRunning = false
     if (abortController) {
       abortController.signal.removeEventListener('abort', onAbort)
+    }
+    if (session && opts.workId) {
+      // Keep the CLI only after a clean turn; anything else may leave it mid-turn.
+      if (completed && !turnFailed && !abortController?.signal.aborted && !session.closed) {
+        session.complete(history)
+      } else {
+        disposeChatSession(opts.workId, abortController?.signal.aborted ? 'aborted' : 'turn_unfinished', session)
+      }
     }
   }
 }
