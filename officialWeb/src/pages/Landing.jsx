@@ -57,14 +57,14 @@ const FEATURES = [
     desc: `通过 Adapter 机制支持任意网站。社区已适配 ${ALL_SITE_NAMES} 等示例，也可以自己编写。`,
   },
   {
-    bento: 'bento-span-1x1',
+    bento: 'bento-span-2x1',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       </svg>
     ),
-    title: '本地运行，数据安全',
-    desc: '所有对话记录和配置存储在本地，不经过任何第三方服务器。',
+    title: '数据说明',
+    desc: '您的对话内容和任务指令会发送至所配置的 AI 模型服务商（如 Anthropic）进行处理。WeWorker 本身不收集、存储或上传您的个人数据至开发者服务器。',
   },
   {
     bento: 'bento-span-1x1',

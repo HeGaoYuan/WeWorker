@@ -340,6 +340,47 @@ body {
   border-color: rgb(var(--color-accent) / 0.35);
 }
 
+.hero-command-copy-done {
+  color: rgb(var(--color-accent));
+  border-color: rgb(var(--color-accent) / 0.45);
+  background: rgb(var(--color-accent) / 0.08);
+}
+
+.copy-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.75rem;
+  z-index: 180;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.1rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--color-text));
+  background: rgb(var(--color-surface) / 0.95);
+  border: 1px solid rgb(var(--color-border));
+  box-shadow: 0 16px 40px -20px rgb(var(--color-accent) / 0.35);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 0.75rem);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.copy-toast-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.copy-toast svg {
+  flex-shrink: 0;
+  color: rgb(var(--color-accent));
+}
+
 .hero-cta-primary {
   @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold text-white transition-colors;
   background: rgb(var(--color-accent));

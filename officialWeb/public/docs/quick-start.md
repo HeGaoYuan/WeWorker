@@ -22,7 +22,7 @@ WeWorker 需要配合 Chrome 扩展才能操作浏览器。扩展已包含在安
 
 1. 打开 Chrome，进入 `chrome://extensions/`
 2. 开启右上角的**开发者模式**
-3. 点击**加载未解压的扩展程序**
+3. 点击**加载未打包的扩展程序**
 4. 选择以下路径中的 `extension` 文件夹：
    - **macOS**：`/Applications/WeWorker.app/Contents/Resources/extension`
    - **Windows**：`%LOCALAPPDATA%\Programs\WeWorker\resources\extension`
