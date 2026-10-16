@@ -126,6 +126,28 @@ afterEach(() => {
 })
 
 describe('desktop chat session reuse', () => {
+  it('defaults cold and prewarmed sessions to explicit thinking off and rebuilds when enabled', async () => {
+    const sessions = installFakeCli()
+    await collect([], { warmupOnly: true })
+    const first = [message('u1', 'First question')]
+    await collect(first)
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].request.options.thinking).toEqual({ type: 'disabled' })
+    expect(sessions[0].request.options).not.toHaveProperty('effort')
+    expect(JSON.parse(sessions[0].request.options.env.CLAUDE_CODE_EXTRA_BODY).thinking).toEqual({ type: 'disabled' })
+    const second = [...first, message('a1', 'reply 1', 'assistant'), message('u2', 'Second question')]
+    await collect(second, { thinkingEffort: 'high' })
+    expect(mocks.query).toHaveBeenCalledTimes(2)
+    expect(sessions[0].closed).toBe(true)
+    expect(sessions[1].request.options.effort).toBe('high')
+    expect(sessions[1].request.options).not.toHaveProperty('thinking')
+    expect(JSON.parse(sessions[1].request.options.env.CLAUDE_CODE_EXTRA_BODY)).not.toHaveProperty('thinking')
+    await collect([...second, message('a2', 'reply 1', 'assistant'), message('u3', 'Third question')], { thinkingEffort: 'off' })
+    expect(mocks.query).toHaveBeenCalledTimes(3)
+    expect(sessions[1].closed).toBe(true)
+    expect(sessions[2].request.options.thinking).toEqual({ type: 'disabled' })
+  })
+
   it('replays history with a readable header', () => {
     const prompt = buildPromptString([message('u1', '第一问'), message('a1', '第一答', 'assistant'), message('u2', '第二问')])
     expect(prompt.startsWith(`${HISTORY_REPLAY_HEADER}\n`)).toBe(true)
@@ -155,6 +177,27 @@ describe('desktop chat session reuse', () => {
     expect(sessions[1].received[0]).toContain('改过的问题')
   })
 
+  it('keeps the current site toolkit prompt on both the first and reused turns', async () => {
+    const sessions = installFakeCli()
+    const first = [message('u1', 'First site question')]
+    await collect(first, { siteToolkitPrompt: 'Site A tool catalog' })
+    await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', 'Second site question')], {
+      siteToolkitPrompt: 'Site B tool catalog',
+    })
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].received[0]).toContain('Site A tool catalog')
+    expect(sessions[0].received[1]).toBe('Site B tool catalog\n\nSecond site question')
+  })
+
+  it('injects site toolkit context after adopting a prewarmed session', async () => {
+    const sessions = installFakeCli()
+    await collect([], { warmupOnly: true })
+    await collect([message('u1', 'First question')], { siteToolkitPrompt: 'Site tool catalog' })
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].received[0]).toContain('Site tool catalog')
+    expect(sessions[0].received[0]).toContain('First question')
+  })
+
   it('does not reuse a session after an unseen user message (for example a routed answer)', async () => {
     installFakeCli()
     await collect([message('u1', '第一问')])
@@ -165,14 +208,32 @@ describe('desktop chat session reuse', () => {
     expect(mocks.query).toHaveBeenCalledTimes(2)
   })
 
-  it('starts a fresh CLI when the model configuration changes', async () => {
+  it.each(['model', 'api_key', 'base_url'])('starts a fresh CLI when %s changes', async field => {
     const sessions = installFakeCli()
     const first = [message('u1', '第一问')]
     await collect(first)
-    await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', '第二问')], {}, { ...settings, model: 'other-model' })
+    await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', '第二问')], {}, { ...settings, [field]: field === 'base_url' ? 'https://example.org' : 'fixture-changed' })
     expect(mocks.query).toHaveBeenCalledTimes(2)
     expect(sessions[0].closed).toBe(true)
-    expect(sessions[1].request.options.model).toBe('other-model')
+    expect(sessions[1].received[0]).toContain('第二问')
+  })
+
+  it('uses the explicitly configured executable without shell lookup', async () => {
+    const sessions = installFakeCli()
+    await collect([message('u1', 'Fixture question')])
+    expect(sessions[0].request.options.pathToClaudeCodeExecutable).toBe(process.execPath)
+  })
+
+  it('does not close a retained session when the completed HTTP request is aborted', async () => {
+    const sessions = installFakeCli()
+    const controller = new AbortController()
+    const first = [message('u1', 'Fixture question')]
+    await collect(first, {}, settings, controller)
+    controller.abort()
+    expect(sessions[0].closed).toBe(false)
+    await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', 'Next question')])
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].request.options.abortController).not.toBe(controller)
   })
 
   it('closes the session after a failed turn', async () => {

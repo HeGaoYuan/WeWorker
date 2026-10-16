@@ -10,7 +10,7 @@ import { getThinkingEffortOptions, normalizeThinkingEffort } from '../../utils/t
 import { modelHealthKey, useModelHealthStore } from '../../store/model-health.js'
 import './model-selector.css'
 
-export default function ModelSelector({ disabled, onPendingChange, thinkingEffort = 'medium', onThinkingEffortChange }) {
+export default function ModelSelector({ disabled, onPendingChange, thinkingEffort = 'off', onThinkingEffortChange }) {
   const activeProvider = useSettingsStore(state => state.activeProvider)
   const model = useSettingsStore(state => state.model)
   const providers = useSettingsStore(state => state.providers)

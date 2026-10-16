@@ -49,7 +49,15 @@ beforeEach(() => {
   mocks.query.mockReset()
   mocks.query.mockImplementation((request) => ({
     async *[Symbol.asyncIterator]() {
-      yield { type: 'result', subtype: 'success', is_error: false, result: request.options.tools ? '已确认订单号A123，等待检查。' : '继续处理', usage: { input_tokens: 400, output_tokens: 8 } }
+      const result = { type: 'result', subtype: 'success', is_error: false, result: request.options.tools ? '已确认订单号A123，等待检查。' : '继续处理', usage: { input_tokens: 400, output_tokens: 8 } }
+      if (typeof request.prompt === 'string') yield result
+      else {
+        const input = request.prompt
+        for await (const message of input) {
+          request.prompt = message.message.content
+          yield result
+        }
+      }
     },
     close() {},
   }))
@@ -62,6 +70,24 @@ afterEach(() => {
 })
 
 describe('agent conversation compaction', () => {
+  it('streams visible text before block stop while preserving the hidden memory decision', async () => {
+    mocks.query.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } }
+        yield { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '立即显示' } } }
+        yield { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '<weworker_memory>{"should_remember":false}' } } }
+        yield { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '</weworker_memory>' } } }
+        yield { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }
+        yield { type: 'result', subtype: 'success', is_error: false, result: '立即显示' }
+      }, close() {},
+    }))
+    const events = await collect([message('only', '你好')], { workId: undefined, streaming: true, channelPermissionMode: 'full' })
+    const text = events.filter(event => event.type === 'text_delta').map(event => event.content).join('')
+    expect(text).toBe('立即显示')
+    expect(events.findIndex(event => event.type === 'text_delta')).toBeLessThan(events.findIndex(event => event.type === 'memory_parse'))
+    expect(events.some(event => event.type === 'memory_parse' && event.memoryParse?.outcome === 'present_ignore')).toBe(true)
+  })
+
   it.each([false, true])('uses and cleans up full URL forwarding for SDK calls, failure=%s', async (fail) => {
     let relayUrl = ''
     mocks.query.mockImplementation((request) => ({

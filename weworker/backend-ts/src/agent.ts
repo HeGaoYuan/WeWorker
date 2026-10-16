@@ -74,7 +74,8 @@ import {
 import { buildAnthropicAuthHeaders, usesAnthropicBearerToken } from './anthropic-auth.js'
 import { renderPrompt } from './prompt-loader.js'
 import { buildLoadedSkillContext, createSkillContextCollector, type LoadedSkillContext } from './skill-context.js'
-import { resolveThinkingEffort } from './thinking-effort.js'
+import { buildThinkingExtraBody, resolveThinkingEffort, type ThinkingEffort } from './thinking-effort.js'
+import { StreamingVisibleText } from './streaming-visible-text.js'
 
 const log = createLogger('agent')
 
@@ -411,10 +412,16 @@ ${authSites.join('\n')}
   return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
 }
 function findClaudeExecutable(): string | undefined {
+  const configured = process.env.WEWORKER_CLAUDE_CODE_PATH
+  if (configured && fs.existsSync(configured)) return configured
+  // On Windows the SDK resolves the bundled native executable itself. Running
+  // a Unix locator through PowerShell on every turn adds startup delay and fails.
+  if (process.platform === 'win32') return undefined
   try {
     const result = execSync('which claude', {
       shell: process.env.SHELL || '/bin/zsh',
       timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim()
     if (result && fs.existsSync(result)) return result
   } catch {}
@@ -753,7 +760,7 @@ function stripBase64Images(text: string): string {
   return result.trim()
 }
 
-function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id: string; text: string }[]): Generator<SSEEvent> {
+function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[]): Generator<SSEEvent> {
   // Log SDK message types for timing analysis
   if (msg.type !== 'stream_event') {
     log.info(`sdk-event: type=${msg.type}`)
@@ -766,7 +773,7 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     if (event.type === 'content_block_start') {
       if (event.content_block?.type === 'text') {
         // Start buffering a new text block
-        textBlockBuf.push({ id: String(event.index ?? textBlockBuf.length), text: '' })
+        textBlockBuf.push({ id: String(event.index ?? textBlockBuf.length), text: '', filter: new StreamingVisibleText() })
       } else if (event.content_block?.type === 'tool_use') {
         yield {
           type: 'tool_call_start',
@@ -780,26 +787,29 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
     }
 
     if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-      // Accumulate into the current text block buffer
-      const buf = textBlockBuf[textBlockBuf.length - 1]
-      if (buf) {
-        buf.text += event.delta.text
-      } else {
-        // Fallback: no open block, emit directly
-        yield { type: 'text_delta', content: event.delta.text }
+      const id = String(event.index ?? textBlockBuf.length - 1)
+      let buf = textBlockBuf.find(block => block.id === id)
+      if (!buf) {
+        buf = { id, text: '', filter: new StreamingVisibleText() }
+        textBlockBuf.push(buf)
       }
+      buf.text += event.delta.text
+      const visible = buf.filter.push(event.delta.text)
+      if (visible) yield { type: 'text_delta', content: visible }
       return
     }
 
     if (event.type === 'content_block_stop') {
-      const buf = textBlockBuf.pop()
+      const index = event.index === undefined ? textBlockBuf.length - 1 : textBlockBuf.findIndex(block => block.id === String(event.index))
+      const buf = index >= 0 ? textBlockBuf.splice(index, 1)[0] : undefined
       if (buf?.text) {
+        const remaining = buf.filter.finish()
+        if (remaining) yield { type: 'text_delta', content: remaining }
         const cleaned = stripBase64Images(buf.text)
         const parsed = parseAssistantMemoryOutput(cleaned)
         const memoryParse = summarizeAssistantMemoryParse(parsed)
         log.info('memory_parse', memoryParse)
         yield { type: 'memory_parse', memoryParse }
-        if (parsed.visibleText) yield { type: 'text_delta', content: parsed.visibleText }
         if (parsed.decision?.should_remember && parsed.decision.candidate) {
           yield { type: 'memory_candidate', candidate: parsed.decision.candidate }
         }
@@ -1023,7 +1033,7 @@ async function* streamChatWithBaseUrl(
     previousTaskFailed?: boolean;
     forceCompaction?: boolean;
     compactionOnly?: boolean;
-    thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    thinkingEffort?: ThinkingEffort;
     /**
      * Run against a dedicated CLAUDE_CONFIG_DIR whose skills/ directory the caller
      * has already populated. Project skills under the user directory and the global
@@ -1126,7 +1136,7 @@ async function* streamChatWithBaseUrl(
     ? false
     : opts.streaming !== false
 
-  const textBlockBuf: { id: string; text: string }[] = []
+  const textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[] = []
   const thinkingEffort = resolveThinkingEffort(settings.active_provider, settings.model, opts.thinkingEffort)
   const queryStartTime = Date.now()
   log.info(` calling Claude API 鈥?model=${settings.model}`)
@@ -1137,6 +1147,7 @@ async function* streamChatWithBaseUrl(
   const pathPrefix = [webcliDir, path.dirname(process.execPath)].join(path.delimiter)
   const envWithWebcli = {
     ...queryEnv,
+    CLAUDE_CODE_EXTRA_BODY: buildThinkingExtraBody(thinkingEffort, queryEnv.CLAUDE_CODE_EXTRA_BODY),
     PATH: `${pathPrefix}${path.delimiter}${queryEnv.PATH || process.env.PATH || ''}`,
     WEWORKER_ALLOWED_OPEN_BROWSER_ORIGINS: getOpenBrowserAllowedOrigins().join(','),
     WEWORKER_ADAPTERS_DIR: path.join(getUserDirectory(), '.claude', 'skills'),
@@ -1253,7 +1264,7 @@ async function* streamChatWithBaseUrl(
       'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
     ].join('\n'),
     skillIndex,
-    loadedSkills: skillContextPrefix,   
+    loadedSkills: skillContextPrefix,
     mcpDynamicTools: opts.mcpServerOverride ? '' : getMcpToolDefinitionSummary(channelPermissionMode),
     subagentDefinitions: '',
     recalledMemory: longTermMemory.recalled,
@@ -1456,7 +1467,7 @@ async function* streamChatWithBaseUrl(
       includePartialMessages,
       cwd: agentCwd,
       settingSources,
-      effort: thinkingEffort,
+      ...(thinkingEffort === 'off' ? { thinking: { type: 'disabled' as const } } : { effort: thinkingEffort }),
       pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
       spawnClaudeCodeProcess,
       env: envWithWebcli,
@@ -1491,6 +1502,7 @@ async function* streamChatWithBaseUrl(
       disallowedTools,
       settingSources,
       effort: thinkingEffort ?? null,
+      includePartialMessages,
       memoryEnabled,
       cwd: agentCwd,
       configDir: queryEnv.CLAUDE_CONFIG_DIR,
@@ -1556,7 +1568,7 @@ async function* streamChatWithBaseUrl(
       // A live CLI already holds the conversation and loaded Skills: send only the new message.
       firstPrompt = prewarmed
         ? fullFirstPrompt
-        : `${recalledMemoryBlock}${messagePromptText(messages[messages.length - 1])}`
+        : `${siteToolkitPrompt ? `${siteToolkitPrompt}\n\n` : ''}${recalledMemoryBlock}${messagePromptText(messages[messages.length - 1])}`
     } else {
       const created = startSession()
       registerChatSession(created)

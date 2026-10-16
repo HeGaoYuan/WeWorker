@@ -1,4 +1,5 @@
 const BASIC_OPTIONS = [
+  { value: 'off', label: '关' },
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
@@ -11,7 +12,9 @@ const ADVANCED_OPTIONS = [
 ]
 
 // Claude 4.6 and newer models expose the extended effort levels in the SDK.
-// Unknown models deliberately use the portable low/medium/high set.
+// Unknown models use off plus the portable low/medium/high set.
+// Start with thinking disabled when adopting the new off-capable preference.
+export const THINKING_EFFORT_STORAGE_KEY = 'weworker-thinking-effort-v2'
 export function getThinkingEffortOptions(providerId, model) {
   const modelName = String(model || '').toLowerCase()
   const supportsAdvanced = providerId === 'anthropic'
@@ -21,7 +24,7 @@ export function getThinkingEffortOptions(providerId, model) {
 
 export function normalizeThinkingEffort(value, options = ADVANCED_OPTIONS) {
   const candidate = String(value || '').toLowerCase()
-  return options.some((option) => option.value === candidate) ? candidate : 'medium'
+  return options.some((option) => option.value === candidate) ? candidate : 'off'
 }
 
 export { BASIC_OPTIONS }

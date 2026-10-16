@@ -2777,7 +2777,7 @@ app.post('/works/:id/compact', async (req, res) => {
 // configuration fingerprint equals the warm session's (see chat-session.ts).
 const chatWarmupsInFlight = new Set<string>()
 const SPARE_WARMUP_KEY = '\u0000spare'
-type ThinkingEffortInput = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined
+type ThinkingEffortInput = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined
 
 async function prewarmChatSession(input: {
   key: string
@@ -2865,7 +2865,7 @@ app.post('/works/:id/chat', async (req, res) => {
     modelMessage?: string;
     attachments?: Array<{ path?: string; name?: string }>;
     retryCompaction?: boolean;
-    thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   }
 
   if (!message?.trim() && (!Array.isArray(attachments) || attachments.length === 0)) {
