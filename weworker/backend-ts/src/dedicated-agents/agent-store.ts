@@ -408,6 +408,11 @@ export function listAgentWorkIds(): Set<string> {
   return new Set(readFile().agents.flatMap((agent) => agent.work_ids))
 }
 
+/** Project ids owned by any dedicated agent (their folder name is generated). */
+export function listAgentProjectIds(): Set<string> {
+  return new Set(readFile().agents.map((agent) => agent.project_id).filter((id): id is string => Boolean(id)))
+}
+
 export interface DedicatedAgentView {
   id: string
   name: string

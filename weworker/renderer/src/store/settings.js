@@ -36,6 +36,7 @@ function settingsPatch(data, fallback = {}) {
 
   return {
     activeProvider: data.active_provider,
+    onboardingCompleted: data.onboarding_completed ?? fallback.onboardingCompleted ?? false,
     baseUrl: data.base_url,
     model: data.model,
     contextLimit: data.context_limit || fallback.contextLimit || 1000000,
@@ -111,6 +112,7 @@ export const PROVIDERS = BUILD_PROVIDERS.map(p => ({
 
 export const useSettingsStore = create((set, get) => ({
   activeProvider: BUILD_DEFAULT_PROVIDER,
+  onboardingCompleted: false,
   baseUrl: 'https://api.anthropic.com',
   model: 'claude-sonnet-4-6',
   contextLimit: 1000000,
@@ -201,6 +203,18 @@ export const useSettingsStore = create((set, get) => ({
     if (!key) throw new Error('请填写 API Key')
     await get().saveProvider(provider, { api_key: key })
     await get().activateProvider(provider)
+  },
+
+  completeOnboarding: async (provider) => {
+    const res = await backendFetch(`${API}/settings/onboarding/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '初始化模型失败')
+    set(settingsPatch(data, get()))
+    return data
   },
 
   // Switch which provider is active

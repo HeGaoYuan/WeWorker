@@ -84,3 +84,25 @@ it('keeps separate projects for agents with the same display name', async () => 
   expect(second.code).toBe(200)
   expect(new Set(works.listWorks().map(work => work.project_id)).size).toBe(2)
 })
+
+it('renames the generated project folder when the Agent name changes', async () => {
+  const created = await call('post /dedicated-agents', input)
+  expect(created.code).toBe(200)
+  const agent = getAgent(created.data.agent.id)!
+  expect(works.getProject(agent.project_id!)!.name).toBe('专属 Agent - Example Agent')
+
+  const renamed = await call('patch /dedicated-agents/:id', { name: 'Example Operations' }, { id: agent.id })
+  expect(renamed.code).toBe(200)
+  expect(renamed.data.agent.name).toBe('Example Operations')
+  // The folder follows the Agent name; no second project appears.
+  expect(works.getProject(agent.project_id!)!.name).toBe('专属 Agent - Example Operations')
+  expect(works.listProjects()).toHaveLength(1)
+  expect(fs.existsSync(works.getProject(agent.project_id!)!.folder_path)).toBe(true)
+})
+
+it('leaves the project folder alone when a patch does not change the name', async () => {
+  const created = await call('post /dedicated-agents', input)
+  const agent = getAgent(created.data.agent.id)!
+  expect((await call('patch /dedicated-agents/:id', { description: 'updated' }, { id: agent.id })).code).toBe(200)
+  expect(works.getProject(agent.project_id!)!.name).toBe('专属 Agent - Example Agent')
+})

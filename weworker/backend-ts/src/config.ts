@@ -176,6 +176,9 @@ export interface ChannelsConfig {
 
 export interface Settings {
 
+  // Whether the first-run model/API key setup has been completed.
+  onboarding_completed: boolean
+
   // Active provider (which one is currently in use)
 
   active_provider: string
@@ -325,6 +328,8 @@ const _defaultProvider = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
 
 
 const DEFAULTS: Settings = {
+
+  onboarding_completed: false,
 
   active_provider: _defaultProvider,
 
@@ -591,8 +596,26 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
 
   const secrets = { ...decryptedSecrets, ...plaintextSecrets }
+  const resolved = applySecrets(merged, secrets)
 
-  return migrateChannelConfigurations(applySecrets(merged, secrets))
+  // Older settings files do not have the onboarding flag. Preserve a user's
+  // existing configured setup while showing the flow for a genuinely new one.
+  if (raw?.onboarding_completed === undefined) {
+    const hasConfiguredModelKey = Boolean(
+      resolved.api_key
+      || resolved.api_key_anthropic
+      || resolved.api_key_glm
+      || resolved.api_key_deepseek
+      || resolved.api_key_custom
+      || Object.values(resolved.model_configurations || {}).some(configuration => Boolean(configuration.api_key?.trim())),
+    )
+    const legacyActiveProvider = typeof raw?.active_provider === 'string' ? raw.active_provider : ''
+    resolved.onboarding_completed = hasConfiguredModelKey
+      || legacyActiveProvider === 'builtin'
+      || legacyActiveProvider === 'builtin_dev'
+  }
+
+  return migrateChannelConfigurations(resolved)
 
 }
 

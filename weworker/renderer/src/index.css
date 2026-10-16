@@ -397,6 +397,14 @@ html.theme-instant-switch *::after {
   flex-shrink: 0;
 }
 
+.initial-setup-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .app-dropdown-select__trigger {
   height: 30px;
   box-sizing: border-box;

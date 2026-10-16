@@ -1,5 +1,15 @@
 # WeWorker Roadmap
 
+- 2026-10-16：专属 Agent 生成的「项目文件夹」改为只读：文件夹名固定为 `专属 Agent - Agent 名字`，用户不能再手动重命名，只能通过修改 Agent 名称同步更新。Backend：Agent 改名（`PATCH /dedicated-agents/:id`）后按同一命名规则同步重命名项目文件夹（同名冲突时回退 `名字 (2)`、`名字 (3)`…，且不会因文件夹冲突导致 Agent 改名失败）；`GET /projects` 给 Agent 项目附加 `dedicated_agent: true`；`PATCH /projects/:id` 对 Agent 项目返回 400，提示改用 Agent 名称。Renderer：侧栏对这类项目隐藏「重命名项目」与「在项目中创建新对话」入口（对话只能在专属 Agent 页里新建），并在文件夹名上悬停说明原因。验证：dedicated-agent 工作区测试 6 项（新增 2 项）、Backend 类型检查、Renderer 生产构建与单测 9 项通过；未在真实窗口内逐项点击验收。
+
+- 2026-10-16：专属 Agent 名称支持就地修改：左侧列表项与详情页头部的名称旁新增小铅笔图标，点击后名称切换为输入框，Enter／失焦经 `PATCH /dedicated-agents/:id` 保存并同步列表与详情，Esc 取消；名称做 trim、非空与 40 字符上限校验。列表项由 `<button>` 改为 `role="button"` 的 `div`，避免「按钮嵌套按钮」并容纳行内输入。新增 `normalizeAgentName` 纯函数及单测（dedicated-agents 单测 9 项通过）、Renderer 生产构建通过；已通过 Vite HMR 应用到运行中的应用，未在真实窗口内逐项点击验收。
+
+- 2026-10-16：修复上下文面板把一次查询内部多轮模型／工具调用的累计 usage 当成单次上下文大小的问题。普通模型 usage 仅用于用量指标，不再校准全局规则等上下文分类；turn-end 快照继续显示当前请求的本地估算，只有上下文探针才执行 provider 校准。Backend 上下文聚焦测试与 Renderer 上下文测试通过。
+
+- 2026-10-16：自动规划模式的工作流选择改为内部判断，不再要求首条回复展示“选用直接执行”等模式标签与理由；要求直接回应用户并保持简洁。Backend ZCF 同步测试 19 项、类型检查通过。
+
+- 2026-10-16：新增首次启动模型初始化界面：默认选择内置模型，支持两个内置模型与 Anthropic、智谱 GLM、DeepSeek 三个预定义供应商；供应商必须先保存 API Key 才能继续。初始化完成状态持久化到 Backend 设置，后续启动直接进入主界面；Renderer 构建、初始化状态存储测试、模型设置测试与 Backend 类型检查通过。
+
 - 2026-10-16：修复 Windows 卸载残留：托盘后台和网站探索agent子进程可能在 NSIS 删除安装目录前仍占用 Electron DLL 与 `resources`，导致卸载后留下文件。新增 `customRemoveFiles`，卸载时结束 WeWorker/Webwright 进程树、等待句柄释放后递归删除安装目录；用户数据目录仍保留。补充打包配置测试；未构建完整安装器或在真实安装/卸载流程中验收。
 - 2026-10-16：为网站探索agent的 Windows PyInstaller 可执行文件补充 WeWorker 版本资源。构建时动态生成 VERSIONINFO，文件属性包含 ProductName/CompanyName「WeWorker」、描述、产品版本、原始文件名等关键字，保留现有 Webwright.exe 文件名和 embedded onedir 结构；补充分发契约测试。验证：distribution 契约测试 10 项通过、Python 语法检查通过；未在本次变更中构建完整 Windows 安装包或进行安全软件白名单实机验收。
 - 2026-10-16：整合本地专属 Agent 工作区改动：创建草稿立即入列表，向导支持名称编辑、必填提示及步骤保留；列表尺寸与对话侧栏对齐。创建成功生成专属项目和首个同名对话，主对话页与 Agent 页共用 work_id，企业微信/微信配对与后续新对话沿用该项目；旧会话取消主列表过滤。合入 #90、#94 后保留两边更新记录，Backend 8 文件 77 项、Renderer 全量 275 项测试及两端构建通过；未验证真实扫码和打包界面。

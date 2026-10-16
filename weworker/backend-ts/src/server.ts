@@ -145,7 +145,7 @@ import { syncWecomChannel } from './channels/sync-wecom-channel.js'
 import { FeishuChannel } from './channels/feishu-channel.js'
 import { registerDedicatedAgentRoutes } from './dedicated-agents/routes.js'
 import { buildDesktopAgentTurnOptions, startAllDedicatedAgents } from './dedicated-agents/agent-channel.js'
-import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId } from './dedicated-agents/agent-store.js'
+import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId, listAgentProjectIds } from './dedicated-agents/agent-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -370,6 +370,7 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
   const names = buildModelConfigurationNames(s)
   return {
     active_provider: s.active_model_configuration || s.active_provider,
+    onboarding_completed: s.onboarding_completed === true,
     user_directory: s.user_directory,
     download_subdirectory: getDownloadSubdirectory(),
     download_directory: getDownloadDirectory(),
@@ -415,6 +416,53 @@ function saveDirectorySetting(rawValue: string | undefined, key: 'user_directory
 
 app.get('/settings', (_req, res) => {
   res.json(buildSettingsResponse(getSettings()))
+})
+
+// Complete the first-run model setup. Built-in providers need no user input;
+// predefined providers must already have a saved API key.
+app.post('/settings/onboarding/complete', (req, res) => {
+  const provider = typeof req.body?.provider === 'string' ? req.body.provider.trim() : ''
+  const isPredefined = provider === 'anthropic' || provider === 'glm' || provider === 'deepseek'
+  if (!isBuiltinProvider(provider) && !isPredefined) {
+    res.status(400).json({ detail: '请选择内置模型或预定义供应商' })
+    return
+  }
+
+  try {
+    const current = getSettings()
+    let updates: Partial<Settings>
+    if (isBuiltinProvider(provider)) {
+      const builtin = getProvider(provider)
+      if (!builtin) throw new Error('内置模型在当前构建中不可用')
+      updates = activateBuiltinProvider(builtin)
+    } else {
+      const apiKey = provider === 'anthropic' ? current.api_key_anthropic
+        : provider === 'glm' ? current.api_key_glm
+          : current.api_key_deepseek
+      if (!apiKey?.trim()) {
+        res.status(400).json({ detail: '请先填写并保存 API Key' })
+        return
+      }
+      const model = provider === 'anthropic' ? current.model_anthropic
+        : provider === 'glm' ? current.model_glm
+          : current.model_deepseek
+      updates = {
+        active_provider: provider,
+        active_model_configuration: '',
+        active_auth_type: 'api_key',
+        api_key: apiKey,
+        model,
+        context_limit: provider === 'anthropic' ? current.context_limit_anthropic
+          : provider === 'glm' ? current.context_limit_glm
+            : current.context_limit_deepseek,
+        base_url: PROVIDER_BASE_URLS[provider] || '',
+        base_url_is_full: false,
+      }
+    }
+    res.json(buildSettingsResponse(updateSettings({ ...updates, onboarding_completed: true })))
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 app.post('/settings/user-directory', (req, res) => {
@@ -2116,7 +2164,12 @@ app.get('/works', (_req, res) => {
 })
 
 app.get('/projects', (_req, res) => {
-  res.json(store.listProjects())
+  // 专属 Agent folders are generated from the Agent name: flag them so the
+  // renderer can hide the manual rename entry.
+  const agentProjectIds = listAgentProjectIds()
+  res.json(store.listProjects().map((project) => (
+    agentProjectIds.has(project.id) ? { ...project, dedicated_agent: true } : project
+  )))
 })
 
 app.post('/projects', (req, res) => {
@@ -2131,6 +2184,10 @@ app.post('/projects', (req, res) => {
 
 app.patch('/projects/:id', (req, res) => {
   try {
+    if (listAgentProjectIds().has(req.params.id)) {
+      res.status(400).json({ detail: '这个文件夹由专属 Agent 自动维护，改名请直接修改 Agent 名称' })
+      return
+    }
     const { name } = req.body as { name?: string }
     const project = store.renameProject(req.params.id, name || '')
     if (!project) { res.status(404).json({ detail: 'Not found' }); return }

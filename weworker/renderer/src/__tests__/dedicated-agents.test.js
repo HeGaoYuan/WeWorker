@@ -14,6 +14,7 @@ import {
   filterSites,
   formatRelativeTime,
   isAgentChannelKey,
+  normalizeAgentName,
   pairingCommand,
   parseExamples,
   resolveDraftSkillName,
@@ -123,4 +124,14 @@ test('agents can be served by WeCom or WeChat bots', () => {
   assert.deepEqual(boundBotPayload({ channel: 'weixin', qr_session_id: 's1', bot_id: 'x' }), { channel: 'weixin', qr_session_id: 's1' })
   assert.deepEqual(boundBotPayload({ channel: 'wecom', qr_session_id: 's2' }), { channel: 'wecom', qr_session_id: 's2' })
   assert.deepEqual(boundBotPayload({ channel: 'wecom', bot_id: 'placeholder-bot', secret: 'placeholder-secret' }), { channel: 'wecom', bot_id: 'placeholder-bot', secret: 'placeholder-secret' })
+})
+
+test('inline agent rename trims the new name and reports whether it changed', () => {
+  assert.deepEqual(normalizeAgentName('  163 邮箱助手  '), { ok: true, value: '163 邮箱助手', changed: true })
+  assert.deepEqual(normalizeAgentName('163 邮箱助手', { currentName: '163 邮箱助手' }), { ok: true, value: '163 邮箱助手', changed: false })
+  assert.deepEqual(normalizeAgentName('163 邮箱助手', { currentName: ' 163 邮箱助手 ' }), { ok: true, value: '163 邮箱助手', changed: false })
+  assert.deepEqual(normalizeAgentName('   '), { ok: false, error: '名称不能为空' })
+  assert.deepEqual(normalizeAgentName(null), { ok: false, error: '名称不能为空' })
+  assert.deepEqual(normalizeAgentName('x'.repeat(41), { maxLength: 40 }), { ok: false, error: '名称最长 40 个字符' })
+  assert.equal(normalizeAgentName('x'.repeat(40), { maxLength: 40 }).ok, true)
 })

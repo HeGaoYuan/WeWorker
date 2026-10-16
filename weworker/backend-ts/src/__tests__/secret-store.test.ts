@@ -9,6 +9,7 @@ import {
 import type { Settings } from '../config.js'
 
 const baseSettings = (): Settings => ({
+  onboarding_completed: true,
   active_provider: 'anthropic',
   api_key: 'active-key',
   base_url: 'https://api.anthropic.com',

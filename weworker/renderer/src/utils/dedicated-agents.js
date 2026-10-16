@@ -74,6 +74,17 @@ export function defaultAgentName(site) {
   return name ? `${name}助手`.slice(0, 40) : ''
 }
 
+/**
+ * Validate a dedicated Agent name typed into the inline editor.
+ * Returns `{ ok: true, value, changed }` or `{ ok: false, error }`.
+ */
+export function normalizeAgentName(input, { currentName = '', maxLength = 40 } = {}) {
+  const value = String(input ?? '').trim()
+  if (!value) return { ok: false, error: '名称不能为空' }
+  if (value.length > maxLength) return { ok: false, error: `名称最长 ${maxLength} 个字符` }
+  return { ok: true, value, changed: value !== String(currentName ?? '').trim() }
+}
+
 /** Validation for the wizard step the user is on. Returns an error message or ''. */
 export function validateWizardStep(stepKey, draft) {
   if (stepKey === 'site') {

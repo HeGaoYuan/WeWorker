@@ -7,18 +7,36 @@ import SiteIcon from '../icons/SiteIcon.jsx'
 import { agentStatusPresentation, TONE_COLORS } from '../../utils/dedicated-agents.js'
 import AgentCreateWizard from './AgentCreateWizard.jsx'
 import AgentDetail from './AgentDetail.jsx'
+import AgentNameEditor from './AgentNameEditor.jsx'
 import { contentStyle, hintStyle, listColumnStyle, pageStyle, sectionStyle, titleStyle } from './styles.js'
 
 const LIST_REFRESH_MS = 8000
 
-function AgentListItem({ agent, site, active, onSelect }) {
+const listNameInputStyle = {
+  fontSize: 12,
+  fontWeight: 500,
+  color: 'var(--text-primary)',
+  fontFamily: 'inherit',
+  padding: '1px 6px',
+  border: '1px solid var(--border)',
+  borderRadius: 5,
+  background: 'var(--bg-primary)',
+  width: 140,
+  maxWidth: '100%',
+}
+
+function AgentListItem({ agent, site, active, onSelect, onRenamed }) {
   const status = agentStatusPresentation(agent)
   const [hovered, setHovered] = useState(false)
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={`work-list-item${active ? ' is-active' : ''}`}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() }
+      }}
       aria-current={active ? 'true' : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -32,13 +50,21 @@ function AgentListItem({ agent, site, active, onSelect }) {
     >
       <SiteIcon site={site || { id: agent.site_id, name: agent.site_id }} size={18} />
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: 'block', fontSize: 12, fontWeight: active ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
+        <AgentNameEditor
+          agentId={agent.id}
+          name={agent.name}
+          onSaved={onRenamed}
+          disabled={agent.draft}
+          iconSize={11}
+          textStyle={{ fontSize: 12, fontWeight: active ? 600 : 500 }}
+          inputStyle={listNameInputStyle}
+        />
         <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: TONE_COLORS[status.tone] }}>
           <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: TONE_COLORS[status.tone] }} />
           {status.label}
         </span>
       </span>
-    </button>
+    </div>
   )
 }
 
@@ -77,6 +103,7 @@ export default function DedicatedAgentsPage({ sidebarWidth }) {
   const loadAgents = useDedicatedAgentsStore((s) => s.loadAgents)
   const startCreate = useDedicatedAgentsStore((s) => s.startCreate)
   const selectAgent = useDedicatedAgentsStore((s) => s.selectAgent)
+  const upsertAgent = useDedicatedAgentsStore((s) => s.upsertAgent)
   const sites = useSitesStore((s) => s.sites)
   const loadSites = useSitesStore((s) => s.load)
 
@@ -111,6 +138,7 @@ export default function DedicatedAgentsPage({ sidebarWidth }) {
               site={siteById.get(agent.site_id)}
               active={agent.id === selectedId}
               onSelect={() => selectAgent(agent.id)}
+              onRenamed={upsertAgent}
             />
           ))}
         </div>
