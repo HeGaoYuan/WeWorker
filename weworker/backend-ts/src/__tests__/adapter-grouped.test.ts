@@ -17,6 +17,12 @@ import { loadRouterConfig, resetRouterConfigCacheForTests } from '../router-conf
 
 const base = (field: string, value: unknown): Record<string, unknown> => ({ [field]: value })
 
+/**
+ * `AdapterGroupedExpansion.raw` 类型是 `unknown`：输入原样透传，非对象输入也照收。
+ * 断言展开结果的形状时先收窄到对象，避免 `out.raw.configs` 这类下标访问无类型。
+ */
+const rawObject = (out: { raw: unknown }): Record<string, unknown> => out.raw as Record<string, unknown>
+
 describe('expandAdapterGroupedField：旧形态兼容', () => {
   it('扁平数组原样返回，且不标记为已展开', () => {
     const raw = base('routes', [{ id: 'a', tool: 'x.com.a' }])
@@ -157,8 +163,8 @@ describe('expandAdapterGroupedRecordField：形态判定', () => {
     )
     expect(out.errors).toEqual([])
     expect(out.expanded).toBe(true)
-    expect(Object.keys(out.raw.configs as object)).toEqual(['a.com.search', 'a.com.read', 'b.com.hot'])
-    expect((out.raw.configs as Record<string, unknown>)['a.com.search']).toBe(entry)
+    expect(Object.keys(rawObject(out).configs as object)).toEqual(['a.com.search', 'a.com.read', 'b.com.hot'])
+    expect((rawObject(out).configs as Record<string, unknown>)['a.com.search']).toBe(entry)
   })
 
   it('幂等：展开结果再展开不变（读时展开 + 合并后校验依赖这条）', () => {
@@ -172,7 +178,7 @@ describe('expandAdapterGroupedRecordField：形态判定', () => {
     const out = expandAdapterGroupedRecordField(base('configs', { 'a.com.search': { default_args: { limit: 5 } } }), 'configs')
     expect(out.expanded).toBe(false)
     expect(out.errors).toEqual([])
-    expect(Object.keys(out.raw.configs as object)).toEqual(['a.com.search'])
+    expect(Object.keys(rawObject(out).configs as object)).toEqual(['a.com.search'])
   })
 
   it('两种形态可逐条混写（用户覆盖层在分节基线上补一条扁平条目）', () => {
@@ -181,13 +187,13 @@ describe('expandAdapterGroupedRecordField：形态判定', () => {
       'configs',
     )
     expect(out.errors).toEqual([])
-    expect(Object.keys(out.raw.configs as object)).toEqual(['a.com.search', 'b.com.hot'])
+    expect(Object.keys(rawObject(out).configs as object)).toEqual(['a.com.search', 'b.com.hot'])
   })
 
   it('分节里的 null 保留为删除标记，交给合并逻辑消费', () => {
     const out = expandAdapterGroupedRecordField(base('configs', { 'a.com': { 'a.com.search': null } }), 'configs')
     expect(out.errors).toEqual([])
-    expect(out.raw.configs).toEqual({ 'a.com.search': null })
+    expect(rawObject(out).configs).toEqual({ 'a.com.search': null })
   })
 
   it('既不像条目也不像分节 → 报错，而不是悄悄丢掉', () => {
