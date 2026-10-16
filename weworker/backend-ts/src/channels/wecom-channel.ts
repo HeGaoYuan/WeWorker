@@ -30,6 +30,7 @@ import { getSettings } from '../config.js'
 import { generateTitle, generateTitleWithLLM } from '../title-utils.js'
 import * as store from '../works-store.js'
 import { createLogger } from '../logger.js'
+import { createTurnTimingLedger } from '../turn-timing.js'
 
 const log = createLogger('wecom')
 
@@ -738,20 +739,16 @@ export class WecomChannel implements Channel {
     // Instead of runChannelChat (which waits for completion), we iterate
     // streamChat events directly so we can push text to the user as it arrives.
     const assistantContent: store.ContentBlock[] = []
-    const toolCallMap = new Map<string, { name: string; args: unknown; thinkMs?: number; startMs?: number }>()
+    const toolCallMap = new Map<string, { name: string; args: unknown; thinkMs?: number }>()
     let fullText = ''
     let currentTextChunk = ''
     const images: string[] = []
     let lastStreamTime = Date.now()
     const STREAM_INTERVAL_MS = 800 // send text update at most every 800ms
 
-    // Per-turn timing (mirrors server.ts / task-executor.ts so 企微 turns are observable)
-    const chatStartTime = Date.now()
-    let lastStepEndTime = chatStartTime
-    // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
-    const toolStartTimes = new Map<string, number>()
-    let llmMsTotal = 0
-    let execMsTotal = 0
+    // Per-turn timing (mirrors server.ts / task-executor.ts so 企微 turns are observable).
+    // llm 与 exec 互不重叠：llm + exec === total，缺 tool_call_result 的工具不会计进 llm。
+    const turnTiming = createTurnTimingLedger()
     let stepIndex = 0
     const seenToolIds = new Set<string>()
 
@@ -838,26 +835,15 @@ export class WecomChannel implements Channel {
           // Dedup + capture think time (streaming emits tool_call_start twice per call)
           const isNew = !seenToolIds.has(event.id)
           let thinkMs: number | undefined
-          let startMs: number | undefined
           if (isNew) {
             seenToolIds.add(event.id)
             stepIndex++
-            startMs = Date.now()
-            // Charge think only when no tool is outstanding (parallel starts' gaps are
-            // LLM arg streaming covered by each tool's own exec window)
-            thinkMs = toolStartTimes.size === 0 ? startMs - lastStepEndTime : 0
-            llmMsTotal += thinkMs
-            toolStartTimes.set(event.id, startMs)
-          } else {
-            // Dedup re-emission: keep the original per-tool start instead of clobbering
-            // it with whatever tool started most recently
-            startMs = toolCallMap.get(event.id)?.startMs
+            thinkMs = turnTiming.toolStarted(event.id)
           }
           toolCallMap.set(event.id, {
             name: cleanName,
             args: event.args,
             ...(thinkMs !== undefined ? { thinkMs } : {}),
-            ...(startMs !== undefined ? { startMs } : {}),
           })
           // Send tool call hint to user
           flushText()
@@ -869,10 +855,7 @@ export class WecomChannel implements Channel {
           lastStreamTime = Date.now()
         } else if (event.type === 'tool_call_result' && event.id) {
           const started = toolCallMap.get(event.id)
-          const toolDuration = started?.startMs ? Date.now() - started.startMs : 0
-          toolStartTimes.delete(event.id)
-          execMsTotal += toolDuration
-          lastStepEndTime = Date.now()
+          const toolDuration = turnTiming.toolSettled(event.id) ?? 0
           assistantContent.push({
             type: 'tool_use',
             id: event.id,
@@ -884,10 +867,15 @@ export class WecomChannel implements Channel {
             ...(started?.thinkMs !== undefined ? { thinkMs: started.thinkMs } : {}),
           })
         } else if (event.type === 'tool_call_image' && event.data) {
+          // 只回图片的工具没有 result 事件：同样结算，避免其耗时漏进 llm。
+          const imageToolDuration = event.id ? turnTiming.toolObserved(event.id) : undefined
           images.push(event.data)
           if (assistantContent.length > 0) {
             const last = assistantContent[assistantContent.length - 1]
-            if (last.type === 'tool_use') last.image = event.data
+            if (last.type === 'tool_use') {
+              last.image = event.data
+              if (imageToolDuration !== undefined && last.execMs === undefined) last.execMs = imageToolDuration
+            }
           }
         } else if (event.type === 'error' && event.content) {
           fullText = event.content
@@ -927,8 +915,8 @@ export class WecomChannel implements Channel {
       return
     }
 
-    // Account for trailing LLM text generation after the last tool
-    llmMsTotal += Date.now() - lastStepEndTime
+    // Close the turn: trailing LLM text plus any tool that never reported a result.
+    const snapshot = turnTiming.finish()
 
     // Save any remaining text chunk
     if (currentTextChunk.trim()) {
@@ -949,7 +937,7 @@ export class WecomChannel implements Channel {
 
     // Persist assistant response (tool calls interleaved with text for desktop view)
     if (assistantContent.length > 0) {
-      assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+      assistantContent.push({ type: 'timing', totalMs: snapshot.totalMs, llmMs: snapshot.llmMs, execMs: snapshot.execMs, steps: stepIndex })
       store.appendMessage(work.id, 'assistant', assistantContent)
       store.markExternalWrite()
     }

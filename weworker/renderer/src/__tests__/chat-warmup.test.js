@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { createChatWarmupScheduler, shouldWarmupOnTextChange } from '../utils/chat-warmup.js'
+import { buildOpenWarmupRequest, createChatWarmupScheduler, readPersistedThinkingEffort, shouldWarmupOnTextChange } from '../utils/chat-warmup.js'
 import { warmupChat } from '../api/backend.js'
 
 const originalFetch = global.fetch
@@ -41,6 +41,21 @@ describe('chat warm-up', () => {
     const request = createChatWarmupScheduler({ send: async () => { throw new Error('offline') } })
     assert.equal(request('work-a'), true)
     await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+
+  it('warms the session as soon as a conversation is opened', () => {
+    const storage = { getItem: (key) => (key === 'weworker-thinking-effort-v2' ? 'high' : null) }
+    assert.deepEqual(buildOpenWarmupRequest('work-a', storage), {
+      workId: 'work-a',
+      payload: { thinkingEffort: 'high' },
+    })
+    // 未持久化 / 取值非法时回落到 off，和输入框的默认值一致。
+    assert.equal(readPersistedThinkingEffort({ getItem: () => null }), 'off')
+    assert.equal(readPersistedThinkingEffort({ getItem: () => 'nonsense' }), 'off')
+    assert.equal(readPersistedThinkingEffort({ getItem: () => { throw new Error('blocked') } }), 'off')
+    // 欢迎页没有 work：仍由首次输入触发预热。
+    assert.equal(buildOpenWarmupRequest(null, storage), null)
+    assert.equal(buildOpenWarmupRequest('', storage), null)
   })
 
   it('posts to the work or welcome warm-up endpoint', async () => {

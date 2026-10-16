@@ -16,6 +16,7 @@ import { useStylesStore, resolveStyleId } from '../../store/styles.js'
 import StylePicker from './StylePicker.jsx'
 import { useChatInputFillStore } from '../../store/chat-input-fill.js'
 import { buildResumePrompt, isPlanChangeIntent, isResumeIntent } from '../../utils/chat-generation-stop.js'
+import { buildOpenWarmupRequest } from '../../utils/chat-warmup.js'
 import { applyAssistantStreamEvent } from '../../utils/chat-stream-events.js'
 import { applyTerminalEventToMessages } from '../../utils/terminal-chat-output.js'
 import { buildTodoWriteContextPrompt, buildTodoWriteState } from '../../utils/todowrite-state.js'
@@ -69,6 +70,13 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
   useEffect(() => {
     setToolbarContextTarget(document.getElementById('workspace-toolbar-context'))
   }, [])
+
+  // 打开/切换会话时就开始预热：CLI 冷启动（约 0.5-0.8s）不再落在用户第一条消息上。
+  // 同一个 work 由 requestChatWarmup 的 60s 节流去重，后端也会在会话已存在时直接返回。
+  useEffect(() => {
+    const request = buildOpenWarmupRequest(workId)
+    if (request) requestChatWarmup(request.workId, request.payload)
+  }, [workId])
 
   useEffect(() => {
     setContextCompactionLifecycleHandler((targetWorkId, status) => {
