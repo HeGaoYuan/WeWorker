@@ -46,6 +46,10 @@ def test_build_is_onedir_and_collects_runtime_assets() -> None:
     assert '"Webwright-windows-x64-Setup.exe"' in source
     assert 'shutil.which("ISCC.exe")' in source
     assert '"/DMyAppSource=' in source
+    assert '"--version-file=' in source
+    assert "StringStruct('ProductName', 'WeWorker')" in source
+    assert "StringStruct('CompanyName', 'WeWorker')" in source
+    assert "StringStruct('FileDescription', 'WeWorker 网站探索agent Runtime')" in source
     installer = (ROOT / "distribution" / "windows" / "Webwright.iss").read_text(
         encoding="utf-8"
     )
@@ -56,6 +60,19 @@ def test_build_is_onedir_and_collects_runtime_assets() -> None:
         ROOT / "distribution" / "scripts" / "webwright_entry.py"
     ).read_text(encoding="utf-8")
     assert "webwright.run.bootstrap" in entry
+
+
+def test_windows_version_file_contains_weworker_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    build = _build_module()
+    monkeypatch.setattr(build, "version", lambda _name: "0.1.0")
+    version_file = build._windows_version_file(tmp_path / "spec")
+    contents = version_file.read_text(encoding="utf-8")
+    assert "StringStruct('ProductName', 'WeWorker')" in contents
+    assert "StringStruct('CompanyName', 'WeWorker')" in contents
+    assert "StringStruct('InternalName', 'WeWorker Runtime')" in contents
+    assert "StringStruct('OriginalFilename', 'Webwright.exe')" in contents
 
 
 def test_embedded_build_keeps_raw_onedir_and_writes_runtime_manifest(
