@@ -8,6 +8,7 @@ import { isBuiltinProvider } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
 import SkillsTab from './SkillsTab.jsx'
 import LogsTab from './LogsTab.jsx'
+import MemoryTab from './MemoryTab.jsx'
 import { useUserFilesStore } from '../../store/user-files.js'
 import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
@@ -136,6 +137,7 @@ export default function SettingsPage({ onClose }) {
               ['model', '模型'],
               ['channels', '通道'],
               ['config', '配置'],
+              ['memory', '记忆'],
               ['permissions', '权限'],
               ['logs', '日志'],
               ['about', '关于'],
@@ -158,6 +160,7 @@ export default function SettingsPage({ onClose }) {
               ['model', '模型'],
               ['channels', '通道'],
               ['config', '配置'],
+              ['memory', '记忆'],
               ['permissions', '权限'],
               ['logs', '日志'],
               ['about', '关于'],
@@ -167,6 +170,7 @@ export default function SettingsPage({ onClose }) {
             {tab === 'channels' && <ChannelsTab />}
             {tab === 'permissions' && <PermissionsTab />}
             {tab === 'config' && <ConfigTab />}
+            {tab === 'memory' && <MemoryTab />}
             {tab === 'skills' && <SkillsTab />}
             {tab === 'logs' && <LogsTab />}
             {tab === 'about' && <AboutTab appVersion={appVersion} commitHash={commitHash} />}

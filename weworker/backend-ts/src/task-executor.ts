@@ -14,6 +14,7 @@ import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext, type MemoryAdapterIdentity } from './memory/memory-event-context.js'
 import { planTaskMemoryEvent } from './memory/memory-event-planner.js'
 import { getMemoryStore } from './memory/memory-store.js'
+import { enforceConfiguredMemoryBudget } from './memory/memory-capacity.js'
 import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory/memory-types.js'
 import { redactSensitive } from './http-security.js'
 
@@ -74,7 +75,12 @@ function queueTaskMemoryProcessing(input: {
   }).then((result) => {
     if (result.status === 'failed') {
       memoryLog.warn('task memory processing failed', { executionId: input.executionId, error: redactSensitive(result.error) })
+      return
     }
+    // 与对话路径一致：写入成功后按当前配置的预算执行容量管理。
+    enforceConfiguredMemoryBudget(store, input.expectedMemoryType, getSettings().memory_budgets, (payload) => {
+      memoryLog.info('task memory budget enforced', { executionId: input.executionId, ...payload })
+    })
   }).catch((error) => {
     memoryLog.warn('task memory processing crashed', { executionId: input.executionId, error: redactSensitive(error instanceof Error ? error.message : String(error)) })
   })

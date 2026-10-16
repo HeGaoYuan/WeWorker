@@ -39,6 +39,9 @@ import {
   getOpenBrowserAllowedOrigins,
   normalizeOpenBrowserAllowedOrigin,
   normalizeOpenBrowserAllowedOrigins,
+  DEFAULT_MEMORY_BUDGETS,
+  normalizeMemoryBudgets,
+  type MemoryBudgets,
   type Settings,
 } from './config.js'
 import { normalizeDownloadSubdirectory } from './download-directory.js'
@@ -129,7 +132,14 @@ import { buildMemoryEventContext } from './memory/memory-event-context.js'
 import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
 import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
 import type { MemoryParseOutcome } from './memory/memory-extractor.js'
-import { getMemoryStore } from './memory/memory-store.js'
+import { getMemoryStore, type MemoryStore } from './memory/memory-store.js'
+import {
+  enforceConfiguredMemoryBudget,
+  resolveMemoryBudgetKey,
+  summarizeMemoryBudgetUsage,
+  type MemoryBudgetKey,
+  type MemoryBudgetUsage,
+} from './memory/memory-capacity.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
@@ -402,6 +412,8 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     zcf_custom_roles: s.zcf_custom_roles,
     zcf_package_version: getZcfPackageVersion(),
     zcf_sync: readZcfSyncMeta(),
+    // 长期记忆按档位预算（估算 token）；Renderer 设置页读取。
+    memory_budgets: normalizeMemoryBudgets(s.memory_budgets),
   }
 }
 
@@ -3358,6 +3370,8 @@ app.post('/works/:id/chat', async (req, res) => {
           ? 'present_ignore'
           : 'missing'
     : 'missing' as MemoryParseOutcome
+  // 准入被拒时也必须给出状态：否则模型会照旧对用户宣称「已写入」，而界面什么都不显示。
+  const memoryAdmitReasons: string[] = []
   const plannedMemoryEvents = memoryCandidates.flatMap((candidate, index) => {
     const planned = planCompletedChatMemoryEvents({
       baseEventId: `${savedUserMessage.id}:model-${index + 1}`,
@@ -3376,6 +3390,7 @@ app.post('/works/:id/chat', async (req, res) => {
       admit_reason: planned.admitReason,
       event_count: planned.events.length,
     })
+    if (planned.events.length === 0 && planned.admitReason) memoryAdmitReasons.push(planned.admitReason)
     return planned.events.map((event) => ({ event, candidate }))
   })
 
@@ -3453,6 +3468,9 @@ app.post('/works/:id/chat', async (req, res) => {
             status: memoryResult.status,
             ...(memoryResult.status === 'failed' ? { error: memoryResult.error } : {}),
           })
+          if (memoryResult.status === 'saved') {
+            enforceMemoryBudgetAfterWrite(memoryStore, event.expectedMemoryType, tag)
+          }
         }).catch(() => {
           broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
         })
@@ -3461,9 +3479,133 @@ app.post('/works/:id/chat', async (req, res) => {
     return
   }
 
+  // 候选被准入层拒绝时也要如实告知：模型已经回答过用户，界面若不显示状态，
+  // 用户会以为记忆已保存（"写入了却查不到"的真实成因）。
+  if (memoryCandidates.length > 0
+    && plannedMemoryEvents.length === 0
+    && memoryAdmitReasons.some((reason) => reason !== 'ignore')) {
+    const rejectionText: Record<string, string> = {
+      execution_evidence_insufficient: '本轮没有实际执行动作，不构成任务记忆',
+      task_assessment_insufficient: '任务结果信息不完整',
+      declarative_invalid: '缺少可核验的执行证据',
+      unknown_site: '目标站点不在当前支持范围内',
+      disabled_site: '目标站点的 Adapter 已停用',
+      missing_site: '缺少站点信息',
+      turn_failed: '本轮未成功完成',
+      no_candidate: '内容不满足长期记忆的保存条件',
+    }
+    const reason = memoryAdmitReasons.find((item) => item !== 'ignore') || 'no_candidate'
+    const error = `${rejectionText[reason] || '内容不满足长期记忆的保存条件'}，本次未写入长期记忆`
+    const rejectionEventId = `${savedUserMessage.id}:admission-rejected`
+    send({ type: 'memory_status', status: 'failed', workId, eventId: rejectionEventId, error })
+    broadcastSSE({ type: 'memory_status', status: 'failed', workId, eventId: rejectionEventId, error })
+  }
+
   chatLog.info(` sending res.end() for workId=${workId}`)
   broadcastSSE({ type: 'works_changed', workId })
   res.end()
+})
+
+// ── Long-term memory management (Renderer) ─────────────────────────────────
+
+/** /memory/records 单次返回上限。 */
+const MEMORY_RECORDS_LIMIT = 200
+const MEMORY_TYPE_FILTERS: MemoryBudgetKey[] = ['user_usage', 'task_execution', 'other', 'extension']
+
+function buildMemorySettingsResponse(): {
+  budgets: MemoryBudgets
+  defaults: MemoryBudgets
+  usage: Record<MemoryBudgetKey, MemoryBudgetUsage>
+} {
+  return {
+    budgets: normalizeMemoryBudgets(getSettings().memory_budgets),
+    defaults: { ...DEFAULT_MEMORY_BUDGETS },
+    usage: summarizeMemoryBudgetUsage(getMemoryStore()),
+  }
+}
+
+/**
+ * 记忆写入成功后的容量执行：① 融合近重复 → ② 按价值淘汰，全部用 supersede 保留审计。
+ * 任何异常都被吞掉并记日志，绝不能让记忆写入或聊天响应失败；
+ * 日志只记录数量与用量，不记录记忆正文。
+ */
+function enforceMemoryBudgetAfterWrite(
+  memoryStore: MemoryStore,
+  memoryType: string | undefined,
+  tag: string,
+): void {
+  enforceConfiguredMemoryBudget(memoryStore, memoryType, getSettings().memory_budgets, (payload) => {
+    chatLog.info(`${tag} memory_budget_enforced`, payload)
+  })
+}
+
+app.get('/memory/settings', (_req, res) => {
+  try {
+    res.json(buildMemorySettingsResponse())
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.post('/memory/settings', (req, res) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : null
+  const raw = body?.memory_budgets
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    res.status(400).json({ detail: 'memory_budgets must be an object' })
+    return
+  }
+  try {
+    updateSettings({ memory_budgets: normalizeMemoryBudgets(raw) })
+    res.json(buildMemorySettingsResponse())
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.get('/memory/records', (req, res) => {
+  const requested = typeof req.query.type === 'string' ? req.query.type.trim() : ''
+  if (requested && !MEMORY_TYPE_FILTERS.includes(requested as MemoryBudgetKey)) {
+    res.status(400).json({ detail: 'unsupported memory type' })
+    return
+  }
+  const filter = (requested || undefined) as MemoryBudgetKey | undefined
+  try {
+    const records = getMemoryStore().listActiveAll()
+      .filter((memory) => !filter || resolveMemoryBudgetKey(memory.type) === filter)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, MEMORY_RECORDS_LIMIT)
+      // 只返回公开字段：绝不暴露 facts 或任何内部字段。
+      .map((memory) => ({
+        id: memory.id,
+        type: memory.type,
+        key: memory.key,
+        content: memory.content,
+        confidence: memory.confidence,
+        status: memory.status,
+        createdAt: memory.createdAt,
+        updatedAt: memory.updatedAt,
+      }))
+    res.json({ records })
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.delete('/memory/records/:id', (req, res) => {
+  const id = String(req.params.id || '').trim()
+  try {
+    const memoryStore = getMemoryStore()
+    if (!id || !memoryStore.get(id)) {
+      res.status(404).json({ detail: 'memory not found' })
+      return
+    }
+    memoryStore.setStatus(id, 'superseded')
+    res.json({ ok: true })
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 // 鈹€鈹€ Logs 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
