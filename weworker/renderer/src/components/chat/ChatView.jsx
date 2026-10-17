@@ -19,6 +19,7 @@ import { applyAssistantStreamEvent } from '../../utils/chat-stream-events.js'
 import { applyTerminalEventToMessages } from '../../utils/terminal-chat-output.js'
 import { buildTodoWriteContextPrompt, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/user-choice.js'
+import { hideBrowserForNewTurn } from '../../utils/dedicated-browser.js'
 
 /**
  * @param {object} props
@@ -185,6 +186,8 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       created_at: new Date().toISOString(),
     })
     appendMessage(workId, { id: Date.now() + '-a', role: 'assistant', content: [], created_at: new Date().toISOString() })
+    // A new turn: WeWorker itself moves the browser back off-screen.
+    hideBrowserForNewTurn()
 
     try {
       await streamChat(workId, text, (event) => {

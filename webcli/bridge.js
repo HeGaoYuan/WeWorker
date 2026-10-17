@@ -5,6 +5,9 @@
  *
  * 架构：
  *   webcli call / service ---> ws://localhost:3711 <--- Chrome Extension (service worker)
+ *
+ * WeWorker 浏览器（默认模式）也由 Bridge 管理：需要浏览器时按需启动独立 profile 的
+ * Chrome（见 dedicated-browser.js），桌面端和 webcli 只通过 `browser_control` 消息控制它。
  */
 
 import { WebSocketServer } from "ws";
@@ -16,7 +19,8 @@ import os from "os";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
 import XLSX from "xlsx";
-import { resolveAdaptersDir, resolveAdapterPaths, resolveUserAdaptersDir } from "./paths.js";
+import { resolveAdaptersDir, resolveAdapterPaths, resolveExtensionDir, resolveUserAdaptersDir } from "./paths.js";
+import { BrowserHost } from "./dedicated-browser.js";
 import { watchAdapterState } from './adapter-state-watch.js';
 import { describeAdapterCatalog, readAdapterBundle, resolveAdapterCall } from './adapter-host.js';
 import { reportMetric, buildUploadConfig } from "./metrics.js";
@@ -666,6 +670,8 @@ export class WebSocketBridge extends EventEmitter {
               this._handleCancelGenerationRun(msg, ws);
             } else if (msg.type === 'publish_generation_run') {
               this._handlePublishGenerationRun(msg, ws);
+            } else if (msg.type === 'browser_control') {
+              this._handleBrowserControl(msg, ws);
             } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze') {
               // Local-only credential-bearing request; never forward this envelope.
               this._handleClientRequest(msg);
@@ -682,6 +688,8 @@ export class WebSocketBridge extends EventEmitter {
 
         ws.on("close", () => {
           this._clients.delete(ws);
+          this._browserControlClients?.delete(ws);
+          this._browserHost?.detach(ws);
           const wasActive = this._extensionWs === ws;
           this._extensionConnectionMap().delete(ws);
           if (wasActive) {
@@ -691,7 +699,10 @@ export class WebSocketBridge extends EventEmitter {
             process.stderr.write(`[${ts()}] [Bridge] Chrome extension disconnected #${connectionId}\n`);
             // Another browser's extension may still be connected: hand over to it.
             if (this._selectActiveExtension()) this._broadcastExtensionConnected();
-            else this._broadcast({ type: 'extension_disconnected' });
+            else {
+              this._broadcast({ type: 'extension_disconnected' });
+              this._notifyBrowserStatus();
+            }
           } else {
             process.stderr.write(`[${ts()}] [Bridge] Connection #${connectionId} closed\n`);
           }
@@ -834,6 +845,7 @@ export class WebSocketBridge extends EventEmitter {
           });
           captureRequest.analysisContextId = contextId;
         }
+        await this._ensureBrowser();
         if (!this._send(captureRequest)) throw new Error('浏览器扩展未连接');
       } catch (err) {
         this._deleteCaptureModelContext(contextId);
@@ -856,6 +868,7 @@ export class WebSocketBridge extends EventEmitter {
     } else if (msg.type === 'capture_screenshot') {
       // 直接转发给Chrome扩展
       process.stderr.write('[Bridge] Forwarding capture_screenshot to Chrome extension\n');
+      await this._ensureBrowserForForward(msg);
       this._send(msg);
     } else if (msg.type === 'reload_extension') {
       process.stderr.write('[Bridge] Forwarding reload_extension to Chrome extension\n');
@@ -869,7 +882,17 @@ export class WebSocketBridge extends EventEmitter {
       this._send(msg);
     } else if (msg.type === 'exploration_list_tabs' || msg.type === 'exploration_capture_passive' || msg.type === 'exploration_safe_actions_inspect' || msg.type === 'exploration_safe_probe_run' || msg.type === 'exploration_replay_candidate' || msg.type === 'exploration_action_capture_stop' || msg.type === 'exploration_action_capture_get' || msg.type === 'exploration_action_capture_select' || msg.type === 'exploration_action_capture_clear' || msg.type === 'refresh_adapter_tabs' || msg.type === 'browser_state' || msg.type === 'browser_network' || msg.type === 'browser_eval' || msg.type === 'browser_analyze' || msg.type === 'browser_explore_workflow' || msg.type === 'browser_action_capture_workflow') {
       process.stderr.write(`[${ts()}] [Bridge] Forwarding ${msg.type} to Chrome extension\n`);
+      await this._ensureBrowserForForward(msg);
       this._send(msg);
+    }
+  }
+
+  /** Forwarded requests keep their old "not connected" handling when the browser cannot start. */
+  async _ensureBrowserForForward(msg) {
+    try {
+      await this._ensureBrowser();
+    } catch (err) {
+      process.stderr.write(`[${ts()}] [Bridge] WeWorker browser unavailable for ${msg.type}: ${err.message}\n`);
     }
   }
 
@@ -1371,7 +1394,13 @@ export class WebSocketBridge extends EventEmitter {
     return String(++this._requestCounter);
   }
 
-  _request(msg, timeout = 120000, traceID = null) {
+  /** Every extension-bound request first makes sure WeWorker 浏览器 is up (dedicated mode only). */
+  async _request(msg, timeout = 120000, traceID = null) {
+    await this._ensureBrowser();
+    return this._requestNow(msg, timeout, traceID);
+  }
+
+  _requestNow(msg, timeout = 120000, traceID = null) {
     const id = this._nextId();
     return new Promise((resolve, reject) => {
       this._pendingRequests.set(id, { resolve, reject, traceID });
@@ -1548,7 +1577,12 @@ export class WebSocketBridge extends EventEmitter {
   }
 
   _dedicatedBrowserToken() {
-    return process.env.WEWORKER_DEDICATED_BROWSER_TOKEN || '';
+    try {
+      const host = this._browser();
+      return host.mode === 'dedicated' ? host.token : '';
+    } catch {
+      return '';
+    }
   }
 
   _activeExtensionInstance() {
@@ -1608,6 +1642,63 @@ export class WebSocketBridge extends EventEmitter {
       capabilities: this._extensionCapabilities,
       instance: this._activeExtensionInstance(),
     });
+    this._notifyBrowserStatus();
+  }
+
+  // ─── WeWorker 浏览器（由 Bridge 管理） ──────────────────────────────────────
+  // 桌面端和 webcli 都只发送 browser_control；浏览器进程归当前 Bridge 所有。
+
+  _browser() {
+    if (!this._browserHost) {
+      this._browserHost = new BrowserHost({
+        log: (line) => process.stderr.write(`[${ts()}] [Bridge] ${line}\n`),
+        resolveExtensionDir: () => resolveExtensionDir(),
+        isDedicatedConnected: () => this.isExtensionConnected() && this._activeExtensionInstance() === 'dedicated',
+      });
+    }
+    if (!this._browserStatusWired) {
+      this._browserStatusWired = true;
+      this._browserHost.onStatus((browser) => this._sendBrowserStatus(browser));
+    }
+    return this._browserHost;
+  }
+
+  _sendBrowserStatus(browser) {
+    const clients = this._browserControlClients;
+    if (!clients?.size) return;
+    const payload = JSON.stringify({ type: 'browser_status', browser });
+    for (const client of clients) {
+      if (client.readyState !== 1) continue;
+      try { client.send(payload); } catch {}
+    }
+  }
+
+  _notifyBrowserStatus() {
+    if (this._browserControlClients?.size) this._browserHost?.notify();
+  }
+
+  /** In WeWorker 浏览器 mode, start the browser on demand and wait for its extension. */
+  async _ensureBrowser() {
+    return this._browser().ensureReady();
+  }
+
+  async _handleBrowserControl(msg, ws) {
+    if (!this._browserControlClients) this._browserControlClients = new Set();
+    this._browserControlClients.add(ws);
+    const reply = (payload) => {
+      try { ws.send(JSON.stringify({ type: 'browser_control_result', id: msg.id, ...payload })); } catch {}
+    };
+    try {
+      const browser = await this._browser().control(String(msg.action || ''), { mode: msg.mode }, ws);
+      reply({ ok: true, browser });
+    } catch (err) {
+      reply({ ok: false, error: err.message, browser: this._browser().status() });
+    }
+  }
+
+  /** Stop the browser this Bridge started (service shutdown). */
+  async shutdownBrowser() {
+    await this._browserHost?.shutdown();
   }
 
   /**
@@ -1642,6 +1733,12 @@ export class WebSocketBridge extends EventEmitter {
     const allowedUrl = assertAllowedOpenBrowserUrl(url, allowedOrigins);
     url = allowedUrl;
 
+    // WeWorker 浏览器模式：Bridge 按需启动 WeWorker 浏览器并在其中打开，绝不打开用户自己的 Chrome。
+    if (this._browser().mode === 'dedicated') {
+      const result = await this._request({ type: "open_tab", url }, 5000);
+      return { success: true, method: "extension", message: `已在 WeWorker 浏览器中打开: ${url}`, tabId: result.tabId };
+    }
+
     // 方案1：如果Chrome扩展已连接，使用扩展API打开新tab
     if (this.isExtensionConnected()) {
       try {
@@ -1657,19 +1754,6 @@ export class WebSocketBridge extends EventEmitter {
         process.stderr.write(`[${ts()}] [Bridge] Failed to open via extension: ${err.message}\n`);
         // 失败则继续尝试系统命令
       }
-    }
-
-    // WeWorker 浏览器模式：桌面端负责启动浏览器，这里只等待扩展连接，绝不打开用户自己的 Chrome。
-    if (process.env.WEWORKER_BROWSER_MODE === 'dedicated') {
-      const deadline = Date.now() + 15000;
-      while (!this.isExtensionConnected() && Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      if (!this.isExtensionConnected()) {
-        throw new Error('WeWorker 浏览器尚未就绪，请稍后重试，或在 WeWorker 的浏览器扩展面板中重启 WeWorker 浏览器');
-      }
-      const result = await this._request({ type: "open_tab", url }, 5000);
-      return { success: true, method: "extension", message: `已在 WeWorker 浏览器中打开: ${url}`, tabId: result.tabId };
     }
 
     // 方案2：使用 execFile（非 shell）打开 Chrome，避免命令注入

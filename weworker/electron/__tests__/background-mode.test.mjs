@@ -68,17 +68,16 @@ const preventable = () => {
 }
 
 test('preferences default to close-to-tray and undecided launch at login, and persist', () => {
-  assert.deepEqual(normalizePreferences(null), { closeToTray: true, launchAtLogin: null, backgroundHintShown: false, browserMode: 'dedicated' })
-  assert.deepEqual(normalizePreferences({ closeToTray: false, launchAtLogin: 'yes', browserMode: 'other' }), { closeToTray: false, launchAtLogin: null, backgroundHintShown: false, browserMode: 'dedicated' })
-  assert.equal(normalizePreferences({ browserMode: 'system' }).browserMode, 'system')
+  assert.deepEqual(normalizePreferences(null), { closeToTray: true, launchAtLogin: null, backgroundHintShown: false })
+  assert.deepEqual(normalizePreferences({ closeToTray: false, launchAtLogin: 'yes' }), { closeToTray: false, launchAtLogin: null, backgroundHintShown: false })
 
   const dir = tempDir()
   try {
     const file = path.join(dir, 'app-settings.json')
     const store = createPreferenceStore(file)
     assert.equal(store.get().closeToTray, true)
-    store.update({ closeToTray: false, launchAtLogin: true, browserMode: 'system' })
-    assert.deepEqual(createPreferenceStore(file).get(), { closeToTray: false, launchAtLogin: true, backgroundHintShown: false, browserMode: 'system' })
+    store.update({ closeToTray: false, launchAtLogin: true })
+    assert.deepEqual(createPreferenceStore(file).get(), { closeToTray: false, launchAtLogin: true, backgroundHintShown: false })
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

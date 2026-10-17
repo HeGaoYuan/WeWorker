@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { BROWSER_MODE_OPTIONS, describeBrowserMode, describeDedicatedBrowserStatus } from '../utils/dedicated-browser.js'
+import { BROWSER_MODE_OPTIONS, describeBrowserMode, describeDedicatedBrowserStatus, hideBrowserForNewTurn } from '../utils/dedicated-browser.js'
 
 describe('WeWorker browser display', () => {
   it('offers both browser modes with WeWorker browser first', () => {
@@ -21,6 +21,28 @@ describe('WeWorker browser display', () => {
     assert.match(describeDedicatedBrowserStatus({ status: 'error', detail: 'extension rejected' }).text, /extension rejected/)
     assert.equal(describeDedicatedBrowserStatus({ status: 'profile_in_use' }).tone, 'warn')
     assert.equal(describeDedicatedBrowserStatus(null).canRestart, true)
+    const noBridge = describeDedicatedBrowserStatus({ status: 'bridge_unavailable', detail: 'Bridge 未运行' })
+    assert.deepEqual([noBridge.tone, noBridge.canShow, noBridge.canRestart], ['warn', false, false])
+    assert.match(noBridge.text, /Bridge 未运行/)
+  })
+
+  it('hides the browser for each new turn without blocking or failing the send', async () => {
+    let hides = 0
+    hideBrowserForNewTurn({ hideDedicatedBrowser: async () => { hides += 1 } })
+    assert.equal(hides, 1)
+    // Rejections and missing APIs (web build, older preload) are ignored.
+    hideBrowserForNewTurn({ hideDedicatedBrowser: async () => { throw new Error('Bridge 未连接') } })
+    hideBrowserForNewTurn({ hideDedicatedBrowser: () => { throw new Error('sync failure') } })
+    hideBrowserForNewTurn({})
+    hideBrowserForNewTurn(undefined)
+    await new Promise((resolve) => setImmediate(resolve))
+  })
+
+  it('the chat send path hides the browser before streaming', () => {
+    const source = fs.readFileSync(new URL('../components/chat/ChatView.jsx', import.meta.url), 'utf8')
+    const hide = source.indexOf('hideBrowserForNewTurn()')
+    assert.ok(hide > 0)
+    assert.ok(hide < source.indexOf('await streamChat(workId'))
   })
 
   it('never shows the source package name to users', () => {

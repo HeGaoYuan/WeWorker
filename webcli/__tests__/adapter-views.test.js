@@ -123,6 +123,7 @@ describe('effective Adapter CLI views and generated Skills', () => {
     install();
     const bridge = {
       isExtensionConnected: () => true,
+      _browser: () => ({ mode: 'system' }),
       _request: async () => ({ tabId: 7 }),
     };
     const result = await WebSocketBridge.prototype.openBrowser.call(bridge, 'https://example.com/');

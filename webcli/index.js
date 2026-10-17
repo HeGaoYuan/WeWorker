@@ -8,6 +8,8 @@
  *   webcli service status       Show service status
  *   webcli service logs [-f]    View service logs
  *
+ *   webcli browser <...>        WeWorker 浏览器 managed by the Bridge (status / show / hide / start / stop / restart / mode)
+ *
  *   webcli adapter <...>        Manage adapters (install / list / remove / refresh)
  *   webcli adapterhub <...>     Browse and install AdapterHub packages
  *   webcli call <tool_name>     Call an adapter tool (for debugging)
@@ -27,6 +29,7 @@ import { WebSocket } from "ws";
 import { randomUUID } from "crypto";
 import { resolveToolCallTimeout } from "./tool-timeouts.js";
 import { formatCallOutput, resolveOutputFormat } from "./output-format.js";
+import { readBrowserMode } from "./dedicated-browser.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -55,6 +58,13 @@ Service:
   service stop                   停止后台服务
   service status                 查看服务状态
   service logs [-f, --follow]    查看服务日志
+
+Browser（WeWorker 浏览器：Bridge 管理的独立 Chrome，窗口在屏幕外，不打扰你）:
+  browser status [--json]        查看 WeWorker 浏览器状态
+  browser show                   把窗口移到屏幕内（登录网站、查看页面）
+  browser hide                   把窗口移回屏幕外
+  browser start | stop | restart 启动 / 停止 / 重启（调用工具时会自动启动，空闲 30 分钟自动停止）
+  browser mode [dedicated|system] 查看或切换模式：dedicated=WeWorker 浏览器（默认），system=我自己的 Chrome
 
 Adapters:
   list                                     列出已安装的 adapter（adapter list 的简写）
@@ -165,6 +175,7 @@ async function printGlobalHelp({ json = false } = {}) {
         { name: "call <tool>", usage: "webcli call <tool_name> [--key=value ...]", description: "调用站点工具" },
         { name: "adapter", usage: "webcli adapter <command>", description: "管理网站适配器" },
         { name: "service", usage: "webcli service <start|stop|status|logs>", description: "管理 WebSocket bridge 服务" },
+        { name: "browser", usage: "webcli browser <status|show|hide|start|stop|restart|mode>", description: "管理 WeWorker 浏览器（需要登录时用 show 打开）" },
         { name: "stats", usage: "webcli stats", description: "调用频次统计" },
         { name: "install --skills", usage: "webcli install --skills [adapter-id]", description: "安装 adapter skills" },
         { name: "trace <id>", usage: "webcli trace <traceID>", description: "按 traceID 查日志" },
@@ -352,6 +363,121 @@ async function runServiceMode() {
   setInterval(() => {
     process.stderr.write(`[WebCLI] Alive — extension ${bridge.isExtensionConnected() ? 'connected' : 'disconnected'}\n`);
   }, 60_000);
+
+  // Close WeWorker 浏览器 cleanly where signals are delivered (POSIX, Ctrl+C).
+  // A force-killed Bridge closes the browser's CDP pipe, and Chrome then exits by itself.
+  let shuttingDown = false;
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[WebCLI] ${signal} — stopping WeWorker browser\n`);
+    const forceExit = setTimeout(() => process.exit(0), 8000);
+    forceExit.unref?.();
+    bridge.shutdownBrowser().catch(() => {}).finally(() => process.exit(0));
+  };
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+// ─── Command: browser <status|start|stop|show|hide|restart|mode> ─────────────
+
+/** One fixed `browser_control` action against the running Bridge. */
+async function browserControl(action, extra = {}, timeoutMs = 45_000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}`);
+    const id = `cli-browser-${Date.now()}`;
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("Bridge 未响应（可能是不支持 WeWorker 浏览器的旧版本）"));
+    }, timeoutMs);
+    ws.on("open", () => ws.send(JSON.stringify({ type: "browser_control", id, action, ...extra })));
+    ws.on("message", (data) => {
+      let msg;
+      try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg.type !== "browser_control_result" || msg.id !== id) return;
+      clearTimeout(timer);
+      ws.close();
+      if (msg.ok) resolve(msg.browser);
+      else reject(Object.assign(new Error(msg.error || "操作失败"), { browser: msg.browser }));
+    });
+    ws.on("error", (error) => { clearTimeout(timer); reject(error); });
+  });
+}
+
+const BROWSER_STATE_TEXT = {
+  running: "正在后台运行",
+  starting: "正在启动",
+  stopped: "未运行",
+  profile_in_use: "配置正被另一个浏览器进程使用，稍后自动重试",
+  unavailable: "无法启动",
+  error: "多次启动失败",
+};
+
+function describeBrowserStatus(browser) {
+  if (!browser) return "WeWorker 浏览器：未运行";
+  if (browser.mode === "system") return "浏览器模式：我自己的 Chrome（不使用 WeWorker 浏览器）";
+  const name = browser.browser ? `（${browser.browser}）` : "";
+  const state = BROWSER_STATE_TEXT[browser.status] || browser.status;
+  const extension = browser.status === "running" ? `，扩展${browser.extensionConnected ? "已连接" : "未连接"}` : "";
+  return `WeWorker 浏览器${name}：${state}${extension}${browser.detail ? `；${browser.detail}` : ""}`;
+}
+
+async function cmdBrowser(sub, value, { json = false } = {}) {
+  const { BROWSER_MODES, writeBrowserMode } = await import("./dedicated-browser.js");
+  const print = (browser, text) => {
+    if (json) console.log(JSON.stringify(browser ?? null, null, 2));
+    else console.log(text ?? describeBrowserStatus(browser));
+  };
+  const fail = (error) => {
+    if (json) console.log(JSON.stringify({ error: error.message, browser: error.browser ?? null }, null, 2));
+    else console.error(`Error: ${error.message}`);
+    process.exit(1);
+  };
+  const action = sub || "status";
+
+  try {
+    if (action === "mode") {
+      if (!value) {
+        const listening = await checkPortListening();
+        const browser = listening ? await browserControl("status") : { ...readBrowserMode(), status: "stopped" };
+        print(browser, `浏览器模式：${browser.mode}${browser.modeLocked || browser.locked ? "（由环境变量固定）" : ""}`);
+        return;
+      }
+      if (!BROWSER_MODES.includes(value)) throw new Error(`未知模式：${value}（可选：${BROWSER_MODES.join(" / ")}）`);
+      if (await checkPortListening()) {
+        const browser = await browserControl("set_mode", { mode: value });
+        print(browser, `✓ 浏览器模式已切换为 ${browser.mode}`);
+      } else {
+        if (readBrowserMode().locked) throw new Error("浏览器模式由环境变量 WEWORKER_BROWSER_MODE 固定，无法修改");
+        print({ mode: writeBrowserMode(value) }, `✓ 浏览器模式已切换为 ${value}`);
+      }
+      return;
+    }
+    if (!["status", "start", "stop", "show", "hide", "restart"].includes(action)) {
+      console.error(`Unknown browser subcommand: ${action}`);
+      console.log("Available: status, start, stop, show, hide, restart, mode [dedicated|system]");
+      process.exit(1);
+    }
+    // Reading, stopping or hiding never starts a Bridge.
+    if (["status", "stop", "hide"].includes(action) && !(await checkPortListening())) {
+      print({ ...readBrowserMode(), status: "stopped" });
+      return;
+    }
+    if (["start", "show", "restart"].includes(action)) await ensureBridgeRunning();
+    print(await browserControl(action));
+  } catch (error) {
+    fail(error);
+  }
+}
+
+/** Best effort: let the Bridge close WeWorker 浏览器 before the service stops. */
+async function stopBrowserBeforeService() {
+  if (!(await checkPortListening())) return;
+  try { await browserControl("stop", {}, 10_000); } catch { /* Older Bridge or already gone. */ }
+}
+
+function dedicatedBrowserHint() {
+  return readBrowserMode().mode === "dedicated" ? "；如需登录或查看页面，运行 webcli browser show 打开 WeWorker 浏览器" : "";
 }
 
 // ─── Command: call <tool_name> ────────────────────────────────────────────────
@@ -483,7 +609,7 @@ async function cmdCall(toolName, argsStr, options = {}) {
         ws.close();
         process.exit(0);
       } else if (msg.type === "call_tool_error") {
-        const output = { error: msg.error, trace_id: traceID, hint: `用 webcli trace ${traceID} 查看完整链路日志` };
+        const output = { error: msg.error, trace_id: traceID, hint: `用 webcli trace ${traceID} 查看完整链路日志${dedicatedBrowserHint()}` };
         console.log(formatCallOutput(output, outputFormat));
         await printVerboseTrace(traceID, verbose);
         ws.close();
@@ -893,6 +1019,7 @@ async function main() {
       const daemon = args.includes("-d") || args.includes("--daemon");
       await cmdServiceStart(daemon);
     } else if (sub === "stop") {
+      await stopBrowserBeforeService();
       await cmdServiceStop();
     } else if (sub === "status") {
       await cmdServiceStatus();
@@ -904,6 +1031,13 @@ async function main() {
       console.log('Available: start, stop, status, logs');
       process.exit(1);
     }
+    return;
+  }
+
+  // browser <status|start|stop|show|hide|restart|mode [dedicated|system]> [--json]
+  if (cmd === "browser") {
+    const positional = args.slice(1).filter((item) => !item.startsWith("-"));
+    await cmdBrowser(positional[0], positional[1], { json: args.includes("--json") });
     return;
   }
 

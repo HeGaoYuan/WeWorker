@@ -22,16 +22,41 @@ const { WebSocketBridge } = await import('../bridge.js')
 
 const TOKEN = 'fixture-dedicated-browser-token-0123456789'
 
-function createBridge() {
+/** Stand-in for BrowserHost: records control calls; `ready` decides what ensureReady does. */
+function fakeHost({ mode = 'dedicated', ready = async () => true } = {}) {
+  const listeners = new Set()
+  return {
+    mode,
+    token: TOKEN,
+    calls: [],
+    detached: [],
+    ensureReady: vi.fn(ready),
+    status: () => ({ mode, status: 'running', browser: 'Chrome', extensionLoaded: true, extensionConnected: true }),
+    onStatus: (listener) => { listeners.add(listener) },
+    notify() { for (const listener of listeners) listener(this.status()) },
+    async control(action, params, client) {
+      this.calls.push({ action, params, client })
+      if (action === 'open_url') throw new Error('Unknown browser action: open_url')
+      return this.status()
+    },
+    detach(client) { this.detached.push(client) },
+    shutdown: vi.fn(async () => {}),
+  }
+}
+
+function createBridge(host = fakeHost()) {
   const bridge = Object.create(WebSocketBridge.prototype)
   bridge._clients = new Set()
   bridge._extensionWs = null
   bridge._extensionVersion = null
   bridge._extensionCapabilities = []
+  bridge._pendingRequests = new Map()
+  bridge._requestCounter = 0
   bridge._broadcast = vi.fn()
   bridge._handleExtensionMessage = vi.fn()
   bridge._clearCaptureModelContexts = vi.fn()
   bridge._adapterStateWatcher = { snapshot: () => null }
+  bridge._browserHost = host
   bridge._startServer()
   return bridge
 }
@@ -47,11 +72,10 @@ function connect(bridge) {
 const hello = (ws, extra = {}) => ws.emit('message', JSON.stringify({ type: 'extension_hello', version: '1.1.0', capabilities: [], ...extra }))
 const close = (ws) => { ws.readyState = 3; ws.emit('close') }
 const connectedEvents = (bridge) => bridge._broadcast.mock.calls.map(([event]) => event).filter((event) => event.type.startsWith('extension_'))
+const sentTo = (ws) => ws.send.mock.calls.map(([value]) => JSON.parse(value))
+const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-beforeEach(() => {
-  vi.stubEnv('WEWORKER_DEDICATED_BROWSER_TOKEN', TOKEN)
-  mocks.execFile.mockReset()
-})
+beforeEach(() => { mocks.execFile.mockReset() })
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers() })
 
 describe('bridge with WeWorker browser and the user\'s Chrome', () => {
@@ -90,45 +114,84 @@ describe('bridge with WeWorker browser and the user\'s Chrome', () => {
     expect(connectedEvents(bridge).at(-1)).toEqual({ type: 'extension_disconnected' })
   })
 
-  it('treats a missing or wrong token as the user\'s Chrome', () => {
+  it('treats a wrong token, or any token in system mode, as the user\'s Chrome', () => {
     const bridge = createBridge()
-    const ws = connect(bridge)
-    hello(ws, { instanceToken: 'not-the-token' })
+    hello(connect(bridge), { instanceToken: 'not-the-token' })
     expect(bridge._activeExtensionInstance()).toBe('system')
-    vi.stubEnv('WEWORKER_DEDICATED_BROWSER_TOKEN', '')
-    const other = connect(bridge)
-    hello(other, { instanceToken: '' })
-    expect(bridge._activeExtensionInstance()).toBe('system')
+    const system = createBridge(fakeHost({ mode: 'system' }))
+    hello(connect(system), { instanceToken: TOKEN })
+    expect(system._activeExtensionInstance()).toBe('system')
   })
 
   it('reports the serving browser to consumers that connect later', () => {
     const bridge = createBridge()
     hello(connect(bridge), { instanceToken: TOKEN })
     const consumer = connect(bridge)
-    const sent = consumer.send.mock.calls.map(([value]) => JSON.parse(value))
-    expect(sent).toContainEqual(expect.objectContaining({ type: 'extension_connected', instance: 'dedicated' }))
+    expect(sentTo(consumer)).toContainEqual(expect.objectContaining({ type: 'extension_connected', instance: 'dedicated' }))
   })
 })
 
-describe('open_browser in WeWorker browser mode', () => {
-  it('never starts the user\'s Chrome and fails clearly when the browser is not ready', async () => {
-    vi.stubEnv('WEWORKER_BROWSER_MODE', 'dedicated')
-    vi.useFakeTimers()
-    const bridge = createBridge()
-    const opening = bridge.openBrowser('https://example.com/')
-    const outcome = expect(opening).rejects.toThrow('WeWorker 浏览器尚未就绪')
-    await vi.advanceTimersByTimeAsync(16_000)
-    await outcome
+describe('requests in WeWorker browser mode', () => {
+  it('makes sure the browser is ready before every extension request', async () => {
+    const host = fakeHost()
+    const bridge = createBridge(host)
+    const extension = connect(bridge)
+    hello(extension, { instanceToken: TOKEN })
+    const request = bridge._request({ type: 'get_active_tab' }, 1000)
+    await flush()
+    expect(host.ensureReady).toHaveBeenCalledTimes(1)
+    const sent = sentTo(extension).find((message) => message.type === 'get_active_tab')
+    expect(sent).toBeTruthy()
+    bridge._pendingRequests.get(sent.id).resolve(5)
+    await expect(request).resolves.toBe(5)
+  })
+
+  it('surfaces why the browser could not start and never opens the user\'s Chrome', async () => {
+    const host = fakeHost({ ready: async () => { throw new Error('WeWorker 浏览器未就绪：未找到 Chrome 或 Microsoft Edge') } })
+    const bridge = createBridge(host)
+    await expect(bridge.openBrowser('https://example.com/')).rejects.toThrow('未找到 Chrome')
     expect(mocks.execFile).not.toHaveBeenCalled()
   })
 
-  it('opens the tab through the connected extension', async () => {
-    vi.stubEnv('WEWORKER_BROWSER_MODE', 'dedicated')
+  it('opens the tab through the WeWorker browser extension', async () => {
     const bridge = createBridge()
     hello(connect(bridge), { instanceToken: TOKEN })
     bridge._request = vi.fn(async () => ({ tabId: 7 }))
     await expect(bridge.openBrowser('https://example.com/')).resolves.toMatchObject({ success: true, method: 'extension', tabId: 7 })
     expect(bridge._request).toHaveBeenCalledWith({ type: 'open_tab', url: 'https://example.com/' }, 5000)
     expect(mocks.execFile).not.toHaveBeenCalled()
+  })
+
+  it('keeps the old behaviour in system mode', async () => {
+    const host = fakeHost({ mode: 'system', ready: async () => false })
+    const bridge = createBridge(host)
+    hello(connect(bridge))
+    bridge._requestNow = vi.fn(async () => ({ tabId: 3 }))
+    await expect(bridge.openBrowser('https://example.com/')).resolves.toMatchObject({ method: 'extension', tabId: 3 })
+  })
+})
+
+describe('browser_control', () => {
+  it('answers the sender, publishes status changes to control clients only, and detaches on close', async () => {
+    const host = fakeHost()
+    const bridge = createBridge(host)
+    const desktop = connect(bridge)
+    const extension = connect(bridge)
+    hello(extension, { instanceToken: TOKEN })
+    desktop.emit('message', JSON.stringify({ type: 'browser_control', id: 'c1', action: 'attach' }))
+    await flush()
+    expect(host.calls).toEqual([{ action: 'attach', params: { mode: undefined }, client: desktop }])
+    expect(sentTo(desktop)).toContainEqual({ type: 'browser_control_result', id: 'c1', ok: true, browser: host.status() })
+
+    desktop.emit('message', JSON.stringify({ type: 'browser_control', id: 'c2', action: 'open_url', url: 'https://example.com/' }))
+    await flush()
+    expect(sentTo(desktop)).toContainEqual(expect.objectContaining({ type: 'browser_control_result', id: 'c2', ok: false, error: 'Unknown browser action: open_url' }))
+
+    host.notify()
+    expect(sentTo(desktop)).toContainEqual({ type: 'browser_status', browser: host.status() })
+    expect(sentTo(extension).some((message) => message.type === 'browser_status')).toBe(false)
+
+    close(desktop)
+    expect(host.detached).toEqual([desktop])
   })
 })

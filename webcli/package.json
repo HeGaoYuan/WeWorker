@@ -10,6 +10,7 @@
   "files": [
     "index.js",
     "bridge.js",
+    "dedicated-browser.js",
     "metrics.js",
     "stats.js",
     "adapter-cli.js",
