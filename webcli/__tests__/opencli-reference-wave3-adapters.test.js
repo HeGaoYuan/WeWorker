@@ -28,10 +28,15 @@ function setup(id, payload, response = {}) {
 describe('reference wave3 contracts',()=>{
   it.each(['wikipedia.org','github.com'])('%s loads all source commands and derived guidance',id=>{
     const s=setup(id,{}), originals=inventory.filter(x=>x.package===id);
-    expect(s.pkg.commands.map(c=>c.id).sort()).toEqual(originals.map(c=>c.name).sort());
+    // 台账只记录 wave3 迁移来源命令；包允许在台账之外继续增长（如 github.com
+    // 的 search/star 等新命令）。契约要求台账命令全部在场，不要求包停滞在台账。
+    const commandIds=s.pkg.commands.map(c=>c.id);
+    for(const original of originals) expect(commandIds).toContain(original.name);
     for(const cmd of s.pkg.commands){
+      const original=originals.find(x=>x.name===cmd.id);
+      if(!original) continue; // 非 wave3 来源命令不套用 wave3 的 read/background 契约
       expect(cmd.safety).toBe('read');expect(cmd.execution.runtime).toBe('background');
-      for(const arg of originals.find(x=>x.name===cmd.id).args){expect(cmd.schema.properties[arg.name]).toBeDefined();if(arg.default!==undefined)expect(cmd.schema.properties[arg.name].default).toEqual(arg.default);}
+      for(const arg of original.args){expect(cmd.schema.properties[arg.name]).toBeDefined();if(arg.default!==undefined)expect(cmd.schema.properties[arg.name].default).toEqual(arg.default);}
     }
     const guidance=readFileSync(resolve(root,'adapters',id,'guidance.md'),'utf8');
     const adapter={id,version:s.pkg.manifest.version,tools:[],guidance,match:s.pkg.manifest.match};
