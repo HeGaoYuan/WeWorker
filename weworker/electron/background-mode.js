@@ -9,6 +9,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { BACKEND_PORT } from './backend-availability.js'
+import { DEFAULT_BROWSER_MODE, normalizeBrowserMode } from './dedicated-browser.js'
 
 export const HIDDEN_LAUNCH_ARG = '--hidden'
 export const LOGIN_ITEM_NAME = 'WeWorker'
@@ -22,6 +23,8 @@ const DEFAULT_PREFERENCES = Object.freeze({
   launchAtLogin: null,
   /** The "still running in the background" hint is shown once. */
   backgroundHintShown: false,
+  /** 'dedicated': WeWorker 浏览器 (own Chrome profile); 'system': the user's own Chrome. */
+  browserMode: DEFAULT_BROWSER_MODE,
 })
 
 export function normalizePreferences(raw) {
@@ -30,6 +33,7 @@ export function normalizePreferences(raw) {
     closeToTray: source.closeToTray !== false,
     launchAtLogin: typeof source.launchAtLogin === 'boolean' ? source.launchAtLogin : null,
     backgroundHintShown: source.backgroundHintShown === true,
+    browserMode: normalizeBrowserMode(source.browserMode),
   }
 }
 

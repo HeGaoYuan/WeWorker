@@ -16,6 +16,8 @@ test('each app launch shares one fresh exploration identity between managers', (
       randomBytes, randomUUID, path, __dirname: path.resolve('electron'),
       log() {}, logFile: 'fixture.log', app: { isPackaged: false }, process: {},
       resolveWebwrightHome: () => 'fixture-home', readConfiguredUserFilesDir: () => 'fixture-files',
+      resolveBrowserHome: () => 'fixture-browser', loadInstanceToken: () => 'fixture-token',
+      resolveBundledExtensionDir: () => 'fixture-extension', DedicatedBrowserManager: class {},
       BridgeManager: class {},
       NodeManager: class { constructor(...args) { backendId = args[5] } },
       WebwrightManager: class { constructor(options) { serviceId = options.explorationInstanceId } },

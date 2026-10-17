@@ -7,6 +7,7 @@ import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTa
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from '../../background/managed-background-runtime.js'
 import { buildV2Bootstrap, v2InjectionFiles } from '../../background/v2-loader.js'
 import { injectAdapterSources } from '../../background/adapter-script-loader.js'
+import { browserInstanceBindings } from './service-worker-test-loader.mjs'
 
 import {
   selectCompatibleCaptureBoundEntry,
@@ -167,6 +168,7 @@ export function runServiceWorkerInContext(context, options = {}) {
   context.v2InjectionFiles = v2InjectionFiles
   context.injectAdapterSources = injectAdapterSources
   context.validateGenerationPreviewOutputV2 = validateGenerationPreviewOutputV2
+  Object.assign(context, browserInstanceBindings(context))
   vm.runInContext(source, context, {
     filename: 'service-worker.js',
     timeout: options.timeout || 5000,

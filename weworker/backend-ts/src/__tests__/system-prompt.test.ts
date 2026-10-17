@@ -364,6 +364,20 @@ describe('System Prompt - no per-adapter tool lists (Req 4.4)', () => {
     expect(prompt).toMatch(/logged_in: false/)
   })
 
+  it('asks the user to sign in inside WeWorker browser when it serves Adapter calls', async () => {
+    const mailAdapter = makeAuthAdapter()
+    mockAdapterMap.set(mailAdapter.id, mailAdapter)
+    enabledSites.add(mailAdapter.id)
+
+    const { buildSystemPrompt } = await import('../agent.js')
+    const dedicated = buildSystemPrompt({ browserInstance: 'dedicated' })
+    expect(dedicated).toContain('WeWorker 浏览器')
+    expect(dedicated).toContain('不要让用户去自己的 Chrome 登录')
+    const own = buildSystemPrompt({ browserInstance: 'system' })
+    expect(own).toContain('应立即告知用户需要先在浏览器中登录该网站')
+    expect(own).not.toContain('WeWorker 浏览器')
+  })
+
   it('does not include disabled auth adapters in login detection rules', async () => {
     const mailAdapter = makeAuthAdapter()
     mockAdapterMap.set(mailAdapter.id, mailAdapter)

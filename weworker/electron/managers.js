@@ -80,7 +80,9 @@ export function readConfiguredUserFilesDir() {
 }
 
 export class BridgeManager {
-  constructor(log, reportDir = '') {
+  /** `getExtraEnv` adds host settings (for example the browser mode) read at each start. */
+  constructor(log, reportDir = '', { getExtraEnv = () => ({}) } = {}) {
+    this._getExtraEnv = getExtraEnv
     this._process = null
     // 状态枚举：
     //   stopped       — 还没启动
@@ -122,6 +124,7 @@ export class BridgeManager {
       WEBCLI_GENERATION_REPORT_DIR: this._reportDir,
       WEWORKER_ALLOWED_OPEN_BROWSER_ORIGINS: readOpenBrowserAllowedOriginsEnv(),
       ...(process.platform === 'win32' ? { NODE_USE_SYSTEM_CA: '1' } : {}),
+      ...this._getExtraEnv(),
     }
     fs.mkdirSync(this._reportDir, { recursive: true })
     const bridgeExecArgv = [

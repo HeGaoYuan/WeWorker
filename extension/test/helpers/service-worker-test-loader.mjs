@@ -8,12 +8,27 @@ import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from '../../backg
 import { buildV2Bootstrap, v2InjectionFiles } from '../../background/v2-loader.js';
 import { injectAdapterSources } from '../../background/adapter-script-loader.js';
 import { selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 } from '../../background/generation-output-validator.js';
+import * as browserInstance from '../../background/browser-instance.js';
+
+/** browser-instance.js defaults to the global `chrome`; bind it to the sandbox's fake instead. */
+export function browserInstanceBindings(context) {
+  const noEvents = { onChanged: { addListener() {} } };
+  return {
+    browserInstanceHelloFields: browserInstance.browserInstanceHelloFields,
+    loadBrowserInstance: () => browserInstance.loadBrowserInstance(context.chrome?.storage?.local),
+    watchBrowserInstance: (onChange) => browserInstance.watchBrowserInstance(onChange, context.chrome?.storage?.onChanged ? context.chrome.storage : noEvents),
+    createBrowserTab: (props) => browserInstance.createBrowserTab(props, context.chrome),
+    focusBrowserWindow: (windowId) => browserInstance.focusBrowserWindow(windowId, context.chrome),
+    revealWindowOnUserFocus: () => browserInstance.revealWindowOnUserFocus(context.chrome),
+  };
+}
 
 export function runServiceWorkerInContext(context, { repoRoot = process.cwd() } = {}) {
   const source = readFileSync(join(repoRoot, 'extension/background/service-worker.js'), 'utf8')
     .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*/gm, '');
   Object.assign(context, { scopedGenerationPreviewScripts, createHostAdapterClient, createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab, buildV2Bootstrap,
     createManagedBackgroundRuntime, MANAGED_RUNNER_PATH,
-    v2InjectionFiles, injectAdapterSources, selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 });
+    v2InjectionFiles, injectAdapterSources, selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2,
+    ...browserInstanceBindings(context) });
   vm.runInContext(source, context, { filename: 'service-worker.js', timeout: 5000 });
 }

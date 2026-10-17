@@ -22,6 +22,13 @@ import {
   syncLaunchAtLogin,
 } from './background-mode.js'
 import { createTrayManager } from './tray-manager.js'
+import {
+  DedicatedBrowserManager,
+  loadInstanceToken,
+  normalizeBrowserMode,
+  resolveBrowserHome,
+  resolveBundledExtensionDir,
+} from './dedicated-browser.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -167,7 +174,27 @@ const webwrightModelToken = randomBytes(32).toString('base64url')
 const explorationInstanceId = randomUUID()
 const webwrightHome = resolveWebwrightHome()
 const userFilesDir = readConfiguredUserFilesDir()
-const bridgeManager = new BridgeManager(log, path.dirname(logFile))
+// WeWorker 浏览器: Chrome with WeWorker's own profile and the bundled extension.
+const browserHome = resolveBrowserHome()
+const browserInstanceToken = loadInstanceToken(browserHome)
+const dedicatedBrowser = new DedicatedBrowserManager({
+  log,
+  browserHome,
+  instanceToken: browserInstanceToken,
+  extensionDir: resolveBundledExtensionDir({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    repoRoot: path.resolve(__dirname, '../..'),
+  }),
+})
+// The bridge reads the mode at start: it prefers the extension that proves this token,
+// and in dedicated mode never opens the user's own Chrome as a fallback.
+const bridgeManager = new BridgeManager(log, path.dirname(logFile), {
+  getExtraEnv: () => ({
+    WEWORKER_BROWSER_MODE: preferences.get().browserMode,
+    WEWORKER_DEDICATED_BROWSER_TOKEN: browserInstanceToken,
+  }),
+})
 const pythonManager = new NodeManager(log, logFile, httpAuthToken, webwrightHome, webwrightModelToken, explorationInstanceId)
 const webwrightManager = new WebwrightManager({
   log,
@@ -186,7 +213,7 @@ const updateManager = new UpdateManager({
   beforeInstall: async () => {
     isInstallingUpdate = true
     background.allowQuitWithoutPrompt('update install')
-    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop()])
+    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop(), dedicatedBrowser.stop()])
   },
 })
 
@@ -236,6 +263,12 @@ const trayManager = createTrayManager({
   nativeImage,
   getAgentSummary,
   getLaunchAtLogin: () => launchAtLoginState,
+  getBrowser: () => (preferences.get().browserMode === 'dedicated'
+    ? {
+        available: dedicatedBrowser.getStatus().status === 'running',
+        onShow: () => { void dedicatedBrowser.show().catch((error) => log(`[browser] show failed: ${error.message}`)) },
+      }
+    : null),
   handlers: {
     onOpen: () => { background.showWindow() },
     onOpenAgents: showDedicatedAgentsFromTray,
@@ -256,18 +289,53 @@ function getAppSettings() {
     closeToTraySupported: process.platform === 'win32',
     launchAtLogin: launchAtLoginState.enabled,
     launchAtLoginSupported: launchAtLoginState.supported,
+    browserMode: preferences.get().browserMode,
   }
 }
 
+/** Start WeWorker 浏览器 without taking focus from the WeWorker window. */
+async function startDedicatedBrowser() {
+  const hadFocus = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()
+  const status = await dedicatedBrowser.start()
+  // Windows keeps focus (verified); on other platforms a launching browser may activate itself.
+  if (hadFocus && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.focus()
+  return status
+}
+
+/** Switch between WeWorker 浏览器 and the user's own Chrome. */
+async function applyBrowserMode(mode) {
+  if (mode === 'dedicated') void startDedicatedBrowser().catch((error) => log(`[browser] start failed: ${error.message}`))
+  else await dedicatedBrowser.stop()
+  // The bridge picks up the new mode only on start; extensions reconnect on their own.
+  await bridgeManager.stop()
+  await bridgeManager.start()
+}
+
 ipcMain.handle('app-settings:get', () => getAppSettings())
-ipcMain.handle('app-settings:set', (_event, patch = {}) => {
+ipcMain.handle('app-settings:set', async (_event, patch = {}) => {
+  const previousMode = preferences.get().browserMode
   const next = {}
   if (typeof patch.closeToTray === 'boolean') next.closeToTray = patch.closeToTray
   if (typeof patch.launchAtLogin === 'boolean') next.launchAtLogin = patch.launchAtLogin
+  if (typeof patch.browserMode === 'string') next.browserMode = normalizeBrowserMode(patch.browserMode)
   preferences.update(next)
   if ('launchAtLogin' in next) applyLaunchAtLogin()
+  if ('browserMode' in next && next.browserMode !== previousMode) await applyBrowserMode(next.browserMode)
   trayManager.render()
   return getAppSettings()
+})
+
+// Fixed actions only: the Renderer never passes URLs or paths to the browser.
+ipcMain.handle('dedicated-browser:get-status', () => ({ mode: preferences.get().browserMode, ...dedicatedBrowser.getStatus() }))
+ipcMain.handle('dedicated-browser:show', async () => {
+  if (preferences.get().browserMode !== 'dedicated') return { mode: 'system', ...dedicatedBrowser.getStatus() }
+  return { mode: 'dedicated', ...(await dedicatedBrowser.show()) }
+})
+ipcMain.handle('dedicated-browser:hide', async () => ({ mode: preferences.get().browserMode, ...(await dedicatedBrowser.hide()) }))
+ipcMain.handle('dedicated-browser:restart', async () => {
+  if (preferences.get().browserMode !== 'dedicated') return { mode: 'system', ...dedicatedBrowser.getStatus() }
+  await dedicatedBrowser.stop()
+  return { mode: 'dedicated', ...(await startDedicatedBrowser()) }
 })
 
 async function createWindow({ show = true } = {}) {
@@ -335,7 +403,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // mainWindow icon set below after creation
   }
 
-  registerIpcHandlers(bridgeManager, pythonManager, webwrightManager, httpAuthToken, updateManager)
+  registerIpcHandlers(bridgeManager, pythonManager, webwrightManager, httpAuthToken, updateManager, {
+    // "Open Chrome" in dedicated mode means showing WeWorker 浏览器, not the user's Chrome.
+    openBrowser: async () => {
+      if (preferences.get().browserMode !== 'dedicated') return false
+      await dedicatedBrowser.show()
+      return true
+    },
+  })
   registerLocalFileProtocol()
 
   // Webwright health checks must not delay the main window. Its status remains
@@ -354,6 +429,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   applyLaunchAtLogin()
   await createWindow({ show: !startHidden })
   if (startHidden) log('[main] started hidden (launched at login)')
+  // Off-screen and without focus; the extension inside connects to the bridge on its own.
+  if (preferences.get().browserMode === 'dedicated') {
+    void startDedicatedBrowser().catch((error) => log(`[browser] start failed: ${error.message}`))
+  }
   trayManager.create()
   updateManager.start()
 
@@ -386,7 +465,7 @@ app.on('before-quit', async (event) => {
   event.preventDefault()
   log('[main] before-quit — stopping subprocesses')
   try {
-    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop()])
+    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop(), dedicatedBrowser.stop()])
   } catch (err) {
     log(`[main] cleanup error: ${err?.message || err}`)
   }

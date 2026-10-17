@@ -607,27 +607,20 @@ export class WebSocketBridge extends EventEmitter {
 
             // 如果是extension_hello消息，说明这是Chrome扩展
             if (msg.type === 'extension_hello') {
-              const wasConnected = this._extensionWs !== null;
-              this._extensionWs = ws;
-              if (msg.version) this._extensionVersion = msg.version;
-              this._extensionCapabilities = Array.isArray(msg.capabilities)
-                ? [...new Set(msg.capabilities.filter((item) => typeof item === 'string' && item.trim()))]
-                : [];
-              process.stderr.write(`[${ts()}] [Bridge] Identified Chrome extension connection #${connectionId}${msg.version ? ` (v${msg.version})` : ''}\n`);
+              const firstHello = !this._extensionConnectionMap().has(ws);
+              const changed = this._registerExtensionConnection(ws, msg);
+              if (firstHello) {
+                const instance = this._extensionConnectionMap().get(ws)?.instance;
+                process.stderr.write(`[${ts()}] [Bridge] Identified Chrome extension connection #${connectionId}${msg.version ? ` (v${msg.version})` : ''}${instance === 'dedicated' ? ' in WeWorker browser' : ''}\n`);
+              }
               try {
                 ws.send(JSON.stringify({ type: 'extension_hello_ack', ts: Date.now(), capabilities: ['adapter_catalog_v1'] }));
               } catch (e) {
                 process.stderr.write(`[${ts()}] [Bridge] Failed to ack extension hello: ${e.message}\n`);
               }
               sendInitialState();
-              // 如果这是扩展首次被识别（之前未连接），通知所有其他客户端
-              if (!wasConnected) {
-                this._broadcast({
-                  type: 'extension_connected',
-                  version: this._extensionVersion,
-                  capabilities: this._extensionCapabilities,
-                });
-              }
+              // 当前服务的扩展发生变化（首次连接或切换到 WeWorker 浏览器）时通知其他客户端
+              if (changed) this._broadcastExtensionConnected();
             }
 
             // 根据消息类型判断来源并处理
@@ -689,12 +682,16 @@ export class WebSocketBridge extends EventEmitter {
 
         ws.on("close", () => {
           this._clients.delete(ws);
-          if (this._extensionWs === ws) {
+          const wasActive = this._extensionWs === ws;
+          this._extensionConnectionMap().delete(ws);
+          if (wasActive) {
             this._clearCaptureModelContexts();
             this._extensionWs = null;
             this._extensionCapabilities = [];
             process.stderr.write(`[${ts()}] [Bridge] Chrome extension disconnected #${connectionId}\n`);
-            this._broadcast({ type: 'extension_disconnected' });
+            // Another browser's extension may still be connected: hand over to it.
+            if (this._selectActiveExtension()) this._broadcastExtensionConnected();
+            else this._broadcast({ type: 'extension_disconnected' });
           } else {
             process.stderr.write(`[${ts()}] [Bridge] Connection #${connectionId} closed\n`);
           }
@@ -710,6 +707,7 @@ export class WebSocketBridge extends EventEmitter {
             type: 'extension_connected',
             version: this._extensionVersion,
             capabilities: this._extensionCapabilities,
+            instance: this._activeExtensionInstance(),
           }));
         }
       });
@@ -1539,6 +1537,79 @@ export class WebSocketBridge extends EventEmitter {
     return this._extensionWs && this._extensionWs.readyState === 1;
   }
 
+  // ─── 多个浏览器中的扩展 ───────────────────────────────────────────────────
+  // WeWorker 浏览器（桌面端管理的独立 Chrome）里的扩展在 hello 中带上实例 token；
+  // 用户自己的 Chrome 里也可能装了扩展。两者同时在线时优先使用 WeWorker 浏览器，
+  // 同类之间保持“最近连接者生效”的原有行为。
+
+  _extensionConnectionMap() {
+    if (!this._extensionConnections) this._extensionConnections = new Map();
+    return this._extensionConnections;
+  }
+
+  _dedicatedBrowserToken() {
+    return process.env.WEWORKER_DEDICATED_BROWSER_TOKEN || '';
+  }
+
+  _activeExtensionInstance() {
+    return this._extensionConnectionMap().get(this._extensionWs)?.instance || 'system';
+  }
+
+  /** Record a hello; returns true when the extension serving requests changed. */
+  _registerExtensionConnection(ws, msg) {
+    const token = this._dedicatedBrowserToken();
+    const instance = token && typeof msg.instanceToken === 'string' && msg.instanceToken === token ? 'dedicated' : 'system';
+    const connections = this._extensionConnectionMap();
+    const previous = connections.get(ws);
+    const capabilities = Array.isArray(msg.capabilities)
+      ? [...new Set(msg.capabilities.filter((item) => typeof item === 'string' && item.trim()))]
+      : [];
+    connections.set(ws, {
+      instance,
+      version: msg.version || previous?.version || null,
+      capabilities,
+      connectedAt: previous?.connectedAt ?? Date.now(),
+    });
+    const current = this._extensionWs;
+    const currentEntry = current && current !== ws && current.readyState === 1 ? connections.get(current) : null;
+    // Keep WeWorker 浏览器 when an extension in another browser says hello.
+    if (currentEntry?.instance === 'dedicated' && instance !== 'dedicated') return false;
+    this._applyActiveExtension(ws);
+    return current !== ws || previous?.instance !== instance;
+  }
+
+  /** After the active extension left, pick the best remaining one. */
+  _selectActiveExtension() {
+    let best = null;
+    for (const [ws, entry] of this._extensionConnectionMap()) {
+      if (ws.readyState !== 1) continue;
+      const better = !best
+        || (entry.instance === 'dedicated' && best.entry.instance !== 'dedicated')
+        || (entry.instance === best.entry.instance && entry.connectedAt > best.entry.connectedAt);
+      if (better) best = { ws, entry };
+    }
+    if (!best) return false;
+    this._applyActiveExtension(best.ws);
+    return true;
+  }
+
+  _applyActiveExtension(ws) {
+    const entry = this._extensionConnectionMap().get(ws);
+    // Same as before: switching the serving connection keeps pending capture contexts.
+    this._extensionWs = ws;
+    if (entry?.version) this._extensionVersion = entry.version;
+    this._extensionCapabilities = entry?.capabilities || [];
+  }
+
+  _broadcastExtensionConnected() {
+    this._broadcast({
+      type: 'extension_connected',
+      version: this._extensionVersion,
+      capabilities: this._extensionCapabilities,
+      instance: this._activeExtensionInstance(),
+    });
+  }
+
   /**
    * 截取当前浏览器标签页的屏幕截图
    * @param {boolean} fullPage - 是否截取整个页面（包括滚动区域）
@@ -1586,6 +1657,19 @@ export class WebSocketBridge extends EventEmitter {
         process.stderr.write(`[${ts()}] [Bridge] Failed to open via extension: ${err.message}\n`);
         // 失败则继续尝试系统命令
       }
+    }
+
+    // WeWorker 浏览器模式：桌面端负责启动浏览器，这里只等待扩展连接，绝不打开用户自己的 Chrome。
+    if (process.env.WEWORKER_BROWSER_MODE === 'dedicated') {
+      const deadline = Date.now() + 15000;
+      while (!this.isExtensionConnected() && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      if (!this.isExtensionConnected()) {
+        throw new Error('WeWorker 浏览器尚未就绪，请稍后重试，或在 WeWorker 的浏览器扩展面板中重启 WeWorker 浏览器');
+      }
+      const result = await this._request({ type: "open_tab", url }, 5000);
+      return { success: true, method: "extension", message: `已在 WeWorker 浏览器中打开: ${url}`, tabId: result.tabId };
     }
 
     // 方案2：使用 execFile（非 shell）打开 Chrome，避免命令注入

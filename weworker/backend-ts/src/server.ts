@@ -332,6 +332,7 @@ app.get('/status', (_req, res) => {
     bridge: bridgeStatus.isConnected() ? 'running' : 'disconnected',
     extension: bridgeStatus.isExtensionConnected() ? 'connected' : 'disconnected',
     extension_version: bridgeStatus.getExtensionVersion(),
+    extension_instance: bridgeStatus.getExtensionInstance(),
     external_write: store.getLastExternalWrite(),
     channels: channelManager.getStatuses(),
   })

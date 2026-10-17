@@ -68,16 +68,17 @@ const preventable = () => {
 }
 
 test('preferences default to close-to-tray and undecided launch at login, and persist', () => {
-  assert.deepEqual(normalizePreferences(null), { closeToTray: true, launchAtLogin: null, backgroundHintShown: false })
-  assert.deepEqual(normalizePreferences({ closeToTray: false, launchAtLogin: 'yes' }), { closeToTray: false, launchAtLogin: null, backgroundHintShown: false })
+  assert.deepEqual(normalizePreferences(null), { closeToTray: true, launchAtLogin: null, backgroundHintShown: false, browserMode: 'dedicated' })
+  assert.deepEqual(normalizePreferences({ closeToTray: false, launchAtLogin: 'yes', browserMode: 'other' }), { closeToTray: false, launchAtLogin: null, backgroundHintShown: false, browserMode: 'dedicated' })
+  assert.equal(normalizePreferences({ browserMode: 'system' }).browserMode, 'system')
 
   const dir = tempDir()
   try {
     const file = path.join(dir, 'app-settings.json')
     const store = createPreferenceStore(file)
     assert.equal(store.get().closeToTray, true)
-    store.update({ closeToTray: false, launchAtLogin: true })
-    assert.deepEqual(createPreferenceStore(file).get(), { closeToTray: false, launchAtLogin: true, backgroundHintShown: false })
+    store.update({ closeToTray: false, launchAtLogin: true, browserMode: 'system' })
+    assert.deepEqual(createPreferenceStore(file).get(), { closeToTray: false, launchAtLogin: true, backgroundHintShown: false, browserMode: 'system' })
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -224,6 +225,19 @@ test('showWindow restores the hidden window', () => {
   assert.deepEqual(win.calls, ['show', 'focus'])
   const gone = createBackgroundController({ platform: 'win32', preferences: memoryPreferences(), getWindow: () => null, getAgentSummary: async () => ({ total: 0 }), showQuitDialog: async () => 1, quitApp: () => {} })
   assert.equal(gone.showWindow(), false)
+})
+
+test('tray menu offers WeWorker browser only while it is running', () => {
+  const base = { summary: null, launchAtLogin: { supported: false, enabled: false }, onOpen() {}, onOpenAgents() {}, onToggleLaunchAtLogin() {}, onQuit() {} }
+  let shown = 0
+  const running = buildTrayMenuTemplate({ ...base, browser: { available: true, onShow: () => { shown += 1 } } })
+  const item = running.find((entry) => entry.label === '显示 WeWorker 浏览器')
+  assert.ok(item)
+  item.click()
+  assert.equal(shown, 1)
+  const has = (template) => template.some((entry) => entry.label === '显示 WeWorker 浏览器')
+  assert.equal(has(buildTrayMenuTemplate({ ...base, browser: { available: false, onShow() {} } })), false)
+  assert.equal(has(buildTrayMenuTemplate(base)), false)
 })
 
 test('tray menu lists agents, launch-at-login toggle and quit', () => {

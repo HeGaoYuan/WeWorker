@@ -4,6 +4,14 @@ import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+import {
+  browserInstanceHelloFields,
+  createBrowserTab,
+  focusBrowserWindow,
+  loadBrowserInstance,
+  revealWindowOnUserFocus,
+  watchBrowserInstance,
+} from './browser-instance.js';
 
 /**
  * Background Service Worker
@@ -40,6 +48,8 @@ function buildExtensionHello(extra = {}) {
     type: 'extension_hello',
     version: chrome.runtime.getManifest().version,
     capabilities: EXTENSION_CAPABILITIES,
+    // WeWorker 浏览器 proves itself with the token the desktop stored for it.
+    ...browserInstanceHelloFields(),
     ...extra,
   };
 }
@@ -1024,7 +1034,7 @@ async function runExploreWorkflow({ tabId = null, url = null } = {}) {
   let opened = null;
 
   if (!targetTabId && url) {
-    const created = await chrome.tabs.create({ url: 'about:blank', active: true });
+    const created = await createBrowserTab({ url: 'about:blank', active: true });
     targetTabId = created?.id ?? null;
     opened = { tabId: targetTabId, url };
   }
@@ -1268,7 +1278,7 @@ async function runLegacyActiveExploreWorkflow({ tabId = null, url = null } = {})
   let opened = null;
 
   if (!targetTabId && url) {
-    const created = await chrome.tabs.create({ url: 'about:blank', active: true });
+    const created = await createBrowserTab({ url: 'about:blank', active: true });
     targetTabId = created?.id ?? null;
     opened = { tabId: targetTabId, url };
   }
@@ -1842,7 +1852,7 @@ async function runActionCaptureWorkflow({
   let opened = null;
 
   if (!targetTabId && url) {
-    const created = await chrome.tabs.create({ url: 'about:blank', active: true });
+    const created = await createBrowserTab({ url: 'about:blank', active: true });
     targetTabId = created?.id ?? null;
     opened = { tabId: targetTabId, url };
   }
@@ -2491,8 +2501,11 @@ function connectToNativeHost() {
     isConnecting = false;
     lastNativeAckAt = Date.now();
 
-    // 先发送一个握手消息，让 Bridge 识别这是 Chrome 扩展（即使暂无工具）
-    sendToNative(buildExtensionHello());
+    // 先发送一个握手消息，让 Bridge 识别这是 Chrome 扩展（即使暂无工具）。
+    // 每次连接都重新读取 WeWorker 浏览器标记，避免启动时错过存储变更事件。
+    void loadBrowserInstance().finally(() => {
+      if (ws === socket) sendToNative(buildExtensionHello());
+    });
 
     chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
@@ -2675,7 +2688,7 @@ async function handleNativeMessage(msg) {
         });
         if (!tab?.id) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
-          tab = await chrome.tabs.create({ url: startUrl, active: false });
+          tab = await createBrowserTab({ url: startUrl, active: false });
         }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
           (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command);
@@ -3074,7 +3087,7 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === "open_tab") {
     try {
-      const tab = await chrome.tabs.create({ url: msg.url, active: true });
+      const tab = await createBrowserTab({ url: msg.url, active: true });
       sendToNative({ type: "call_tool_result", id: msg.id, result: { tabId: tab.id, url: tab.url } });
     } catch (err) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
@@ -4318,7 +4331,7 @@ async function findDirectRuntimeContextTab() {
 }
 
 async function createDirectBrowserFetchTab(traceID = null) {
-  const created = await chrome.tabs.create({ url: "about:blank", active: false });
+  const created = await createBrowserTab({ url: "about:blank", active: false });
   if (!Number.isInteger(created?.id)) {
     throw createRuntimeHelperError("BROWSER_FETCH_ERROR", "Failed to create direct browser fetch tab");
   }
@@ -4707,7 +4720,7 @@ async function findTabByDomain(domain, excludeTabDomain, requiredTabDomain) {
     try {
       await chrome.tabs.update(tab.id, { active: true });
       // 激活该tab所在的窗口
-      await chrome.windows.update(tab.windowId, { focused: true });
+      await focusBrowserWindow(tab.windowId);
     } catch {
       // Tab may have been closed between query and update — skip it
       domainData.tabIds.delete(tab.id);
@@ -4773,7 +4786,7 @@ async function waitForToolRegistry(domain, timeoutMs = 10000) {
 async function autoOpenHomepageTab(domain) {
   const homepageUrl = await getHomepageUrlForDomain(domain) || `http://${domain}/`;
   try {
-    const tab = await chrome.tabs.create({ url: homepageUrl, active: true });
+    const tab = await createBrowserTab({ url: homepageUrl, active: true });
     const ready = await waitForToolRegistry(domain, 10000);
     if (ready) return tab.id;
     // 即使未确认注入完成，也返回 tabId 让后续重试 findTabByDomain 判定
@@ -4946,7 +4959,7 @@ async function callToolInTab(tabId, toolName, args, traceID = null, allowTranspo
             tabUrlChanged = true;
           }
           if (tab.windowId) {
-            await chrome.windows.update(tab.windowId, { focused: true });
+            await focusBrowserWindow(tab.windowId);
           }
           await chrome.tabs.update(tabId, { active: true });
         } catch {
@@ -6120,7 +6133,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const { url, downloadPath } = msg;
 
         // 1. 创建新的诺诺网标签页（扩展创建，不会被拦截）
-        const nuonuoTab = await chrome.tabs.create({
+        const nuonuoTab = await createBrowserTab({
           url: url,
           active: false // 在后台打开
         });
@@ -8651,6 +8664,13 @@ initInstalledAdapterIds();
 // 预加载静态工具路由（fallback 用，避免短主机名路由错误）
 loadStaticToolRoutes();
 connectToNativeHost();
+// The desktop may write the WeWorker 浏览器 marker while this worker is already connected:
+// repeat the hello so the bridge can switch to this browser.
+watchBrowserInstance(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) sendToNative(buildExtensionHello());
+});
+// Clicking WeWorker 浏览器 in the taskbar must show the window, not an invisible off-screen one.
+revealWindowOnUserFocus();
 
 // Side panel: 点击扩展图标打开侧边栏
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });

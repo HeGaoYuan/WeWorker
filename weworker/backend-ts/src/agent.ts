@@ -23,6 +23,7 @@ import type { Message } from './works-store.js'
 import { buildMcpServer as _buildMcpServer, getMcpToolDefinitionSummary } from './tools.js'
 import { parseAllAdapters } from './adapter-parser.js'
 import { getDesktopAdapterCatalog, refreshDesktopAdapterSkillsIfStale } from './adapter-catalog-cache.js'
+import { bridgeStatus, type ExtensionInstance } from './bridge-status.js'
 import {
   ChatSession,
   PromptQueue,
@@ -282,6 +283,8 @@ export function buildSystemPrompt(opts?: {
   zcfMode?: string | null
   zcfCustomRoles?: import('./zcf-sync.js').ZcfCustomRole[]
   memoryProtocol?: string
+  /** Browser whose extension serves Adapter calls; 'dedicated' is WeWorker 浏览器. */
+  browserInstance?: ExtensionInstance
 }): string {
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
   const platform = opts?.platform ?? process.platform
@@ -373,7 +376,9 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
 ${authSites.join('\n')}
 
 对于这些网站，使用 open_browser 打开后（等待 5 秒后），必须先调用该网站的 check_login_status 工具检测登录状态。
-如果返回 \`logged_in: false\`，应立即告知用户需要先在浏览器中登录该网站。
+${opts?.browserInstance === 'dedicated'
+    ? '如果返回 `logged_in: false`，应立即告知用户：网站操作在「WeWorker 浏览器」中进行，需要先在其中登录该网站。打开方式：点击 WeWorker 左侧栏底部的浏览器图标，选择「显示 WeWorker 浏览器」（也可以在系统托盘菜单中选择，或直接点击任务栏上的 WeWorker 浏览器窗口）；登录完成后告诉你继续。不要让用户去自己的 Chrome 登录。'
+    : '如果返回 `logged_in: false`，应立即告知用户需要先在浏览器中登录该网站。'}
 ` : ''
   const base = `${renderPrompt('agent', {
     adapter_capability: adapterExecutionEnabled
@@ -1246,6 +1251,7 @@ async function* streamChatWithBaseUrl(
     zcfMode: opts.zcfMode,
     zcfCustomRoles: settings.zcf_custom_roles,
     memoryProtocol,
+    browserInstance: bridgeStatus.getExtensionInstance(),
   })
   const systemPrompt = opts.appendSystemPrompt?.trim()
     ? `${baseSystemPrompt}\n\n${opts.appendSystemPrompt.trim()}`
