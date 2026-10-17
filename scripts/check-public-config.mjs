@@ -83,7 +83,6 @@ export function validatePublicConfig(repoRoot) {
     'weworker/package.json',
     'weworker/renderer/package.json',
     'weworker/backend-ts/package.json',
-    'webcli/package.json',
     'officialWeb/package.json',
     'metrics-server/package.json',
     'extension/manifest.json',
@@ -102,6 +101,20 @@ export function validatePublicConfig(repoRoot) {
   const downloadConfig = fs.readFileSync(path.join(repoRoot, 'officialWeb', 'src', 'lib', 'downloadConfig.js'), 'utf8')
   if (!downloadConfig.includes(`APP_VERSION = '${publicVersion}'`)) {
     errors.push(`officialWeb APP_VERSION must be ${publicVersion}`)
+  }
+
+  // webcli ships to npm on its own release cadence, so its version is decoupled
+  // from the desktop app version; it only needs to stay consistent across the
+  // release ledger the webcli release script writes.
+  const webcliVersion = readJson(path.join(repoRoot, 'webcli', 'package.json')).version
+  const webcliLedgerFiles = ['webcli/version.json', 'webcli/.claude-plugin/plugin.json']
+  for (const relativePath of webcliLedgerFiles) {
+    const value = readJson(path.join(repoRoot, relativePath)).version
+    if (value !== webcliVersion) errors.push(`${relativePath} version is ${value}, expected ${webcliVersion}`)
+  }
+  const webcliSkill = fs.readFileSync(path.join(repoRoot, 'webcli', 'skills', 'webcli', 'SKILL.md'), 'utf8')
+  if (!webcliSkill.includes(`version: ${webcliVersion}`)) {
+    errors.push(`webcli/skills/webcli/SKILL.md version must be ${webcliVersion}`)
   }
 
   return errors
