@@ -10,7 +10,6 @@
     "sync:webwright": "uv sync --project ../components/webwright",
     "build:webwright": "node scripts/build-webwright.cjs",
     "test:webwright-integration": "node --test scripts/__tests__/webwright-scripts.test.cjs electron/__tests__/webwright-manager.test.mjs renderer/src/__tests__/webwright-status.test.js",
-    "sync:adapters-registry": "node scripts/sync-adapters-registry.cjs",
     "dev:renderer": "cd renderer && npm run dev",
     "dev:electron": "wait-on --timeout 30000 tcp:localhost:5173 && cross-env NODE_ENV=development electron .",
     "build:renderer": "cd renderer && npm run build",

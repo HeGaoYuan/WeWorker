@@ -37,14 +37,14 @@ function domainsOverlap(left, right) {
 
 function readBuiltinCatalogMetadata(root) {
   const metadataPath = join(root, '.profile.json');
-  if (!existsSync(metadataPath)) return { adapters: null, profile: null, legacy: null };
+  if (!existsSync(metadataPath)) return { adapters: null, profile: null };
   try {
     const stat = lstatSync(metadataPath);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('profile metadata is not a regular file');
     const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
     if (metadata?.schema_version !== 1 || typeof metadata.profile !== 'string'
       || !/^[a-z0-9][a-z0-9_-]*$/.test(metadata.profile) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(metadata.profile)
-      || !Array.isArray(metadata.adapters) || !Array.isArray(metadata.legacy)) throw new Error('invalid profile metadata');
+      || !Array.isArray(metadata.adapters)) throw new Error('invalid profile metadata');
     const adapters = new Map();
     const seen = new Set();
     for (const entry of metadata.adapters) {
@@ -56,15 +56,9 @@ function readBuiltinCatalogMetadata(root) {
       seen.add(folded);
       adapters.set(entry.name, entry);
     }
-    for (const name of metadata.legacy) {
-      assertAdapterIdentity(name);
-      const folded = name.toLowerCase();
-      if (seen.has(folded)) throw new Error('duplicate profile identity');
-      seen.add(folded);
-    }
-    return { adapters, profile: metadata.profile, legacy: metadata.legacy };
+    return { adapters, profile: metadata.profile };
   } catch {
-    return { adapters: new Map(), profile: null, legacy: null, error: 'INVALID_BUILTIN_PROFILE' };
+    return { adapters: new Map(), profile: null, error: 'INVALID_BUILTIN_PROFILE' };
   }
 }
 /** No implicit user override. Only an explicit, profile-bound selection is active. */

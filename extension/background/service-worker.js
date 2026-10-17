@@ -2670,9 +2670,22 @@ async function handleNativeMessage(msg) {
         }
         const tabs = await chrome.tabs.query({});
         const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        // 先精确匹配 hostname，再回退到 manifest.match 声明的页面主机（含 *.wildcard）。
+        // 回退必须限定在声明的主机内：runtime_allowed_hosts 里的辅助域（如 so.gitee.com）
+        // 不是页面主机，不得被选为执行页。语义与 assertAdapterNavigationUrl 的白名单一致。
         let tab = tabs.find(entry => {
           try { return new URL(entry.url).hostname === route; } catch { return false; }
         });
+        if (!tab?.id) {
+          const declaredHosts = selected.manifest.match || [];
+          tab = tabs.find(entry => {
+            try {
+              const hostname = new URL(entry.url).hostname;
+              return declaredHosts.some(host => hostname === host
+                || (host.startsWith('*.') && hostname.endsWith(host.slice(1))));
+            } catch { return false; }
+          });
+        }
         if (!tab?.id) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await chrome.tabs.create({ url: startUrl, active: false });

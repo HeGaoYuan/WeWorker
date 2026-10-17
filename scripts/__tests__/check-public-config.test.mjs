@@ -20,9 +20,7 @@ function buildFixtureRepo({ webcliVersion = '1.0.4', ledgerOverrides = {} } = {}
     fs.writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`)
   }
   const appVersion = '1.0.0'
-  fs.mkdirSync(path.join(root, 'extension', 'adapters'), { recursive: true })
   fs.mkdirSync(path.join(root, 'adapters'), { recursive: true })
-  writeJson('extension/adapters/index.json', [])
   writeJson('weworker/build-profile.json', { adapters: [] })
   for (const relativePath of [
     'weworker/package.json',

@@ -12,62 +12,19 @@ function duplicates(values) {
 
 export function validatePublicConfig(repoRoot) {
   const errors = []
-  const adaptersRoot = path.join(repoRoot, 'extension', 'adapters')
   const managedAdaptersRoot = path.join(repoRoot, 'adapters')
-  const registryPath = path.join(adaptersRoot, 'index.json')
   const profilePath = path.join(repoRoot, 'weworker', 'build-profile.json')
-  const registered = readJson(registryPath)
   const profile = readJson(profilePath)
 
-  if (!Array.isArray(registered)) errors.push('extension/adapters/index.json must be an array')
   if (!Array.isArray(profile.adapters)) errors.push('weworker/build-profile.json adapters must be an array')
   if (errors.length) return errors
 
-  for (const id of duplicates(registered)) errors.push(`duplicate registered Adapter: ${id}`)
   for (const id of duplicates(profile.adapters)) errors.push(`duplicate packaged Adapter: ${id}`)
 
-  const legacyManifestDirectories = fs.readdirSync(adaptersRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((id) => fs.existsSync(path.join(adaptersRoot, id, 'manifest.json')))
-    .sort()
-  const managedManifestDirectories = fs.readdirSync(managedAdaptersRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((id) => fs.existsSync(path.join(managedAdaptersRoot, id, 'manifest.json')))
-    .sort()
-  for (const id of legacyManifestDirectories) {
-    if (managedManifestDirectories.includes(id)) {
-      errors.push(`Adapter ${id} exists in both adapters/ and extension/adapters/`)
-    }
-  }
-
-  const sortedRegistered = [...registered].sort()
-  if (JSON.stringify(registered) !== JSON.stringify(sortedRegistered)) {
-    errors.push('extension/adapters/index.json must be sorted')
-  }
-  if (JSON.stringify(sortedRegistered) !== JSON.stringify(legacyManifestDirectories)) {
-    errors.push('extension/adapters/index.json must exactly match legacy directories containing manifest.json')
-  }
-
-  for (const id of registered) {
-    const adapterDir = path.join(adaptersRoot, id)
-    const manifestPath = path.join(adapterDir, 'manifest.json')
-    const entryPath = path.join(adapterDir, 'index.js')
-    if (!fs.existsSync(manifestPath)) {
-      errors.push(`missing manifest: extension/adapters/${id}/manifest.json`)
-      continue
-    }
-    const manifest = readJson(manifestPath)
-    if (manifest.id !== id) errors.push(`Adapter id mismatch in extension/adapters/${id}/manifest.json`)
-    if (!fs.existsSync(entryPath)) errors.push(`missing entrypoint: extension/adapters/${id}/index.js`)
-  }
-
   for (const id of profile.adapters) {
-    if (registered.includes(id)) continue
     const managedManifestPath = path.join(managedAdaptersRoot, id, 'manifest.json')
     if (!fs.existsSync(managedManifestPath)) {
-      errors.push(`build profile references unregistered Adapter: ${id}`)
+      errors.push(`build profile references missing Adapter: ${id}`)
       continue
     }
     const manifest = readJson(managedManifestPath)

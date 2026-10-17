@@ -232,6 +232,48 @@ test("adapter refresh waits for the active background call before closing offscr
   assert.deepEqual(events, ['started', 'result', 'close']);
 });
 
+test("managed foreground commands reuse an existing subdomain tab via suffix match", async () => {
+  const manifest = { name: 'fixture', match: ['example.com', 'www.example.com'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'read-page', runtime: 'extension', safety: 'read' }] };
+  const worker = loadServiceWorker({
+    tabs: [{ id: 7, url: 'https://www.example.com/list', status: 'complete' }],
+    managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] },
+  });
+  const executed = [];
+  worker.context.getHostAdapterRuntime = () => ({
+    execute: async (tabId, _manifest, tabUrl) => { executed.push({ tabId, tabUrl }); return 'fixture-result'; },
+  });
+  const result = await worker.callNativeTool('fixture.read-page', {});
+  assert.equal(result.result, 'fixture-result');
+  // route=example.com 精确匹配失败后按后缀复用 www.example.com 标签页，而不是新开（fake create 的 id 是 999）
+  assert.equal(executed.length, 1);
+  assert.equal(executed[0].tabId, 7);
+  assert.equal(executed[0].tabUrl, 'https://www.example.com/list');
+});
+
+test("managed foreground tab selection prefers an exact hostname match over suffix matches", async () => {
+  const manifest = { name: 'fixture', match: ['example.com', 'www.example.com'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'read-page', runtime: 'extension', safety: 'read', tabDomain: 'www.example.com' }] };
+  const worker = loadServiceWorker({
+    tabs: [
+      { id: 5, url: 'https://shop.example.com/item', status: 'complete' },
+      { id: 6, url: 'https://www.example.com/home', status: 'complete' },
+    ],
+    managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] },
+  });
+  const executed = [];
+  worker.context.getHostAdapterRuntime = () => ({
+    execute: async (tabId, _manifest, tabUrl) => { executed.push({ tabId, tabUrl }); return 'fixture-result'; },
+  });
+  const result = await worker.callNativeTool('fixture.read-page', {});
+  assert.equal(result.result, 'fixture-result');
+  assert.equal(executed.length, 1);
+  assert.equal(executed[0].tabId, 6);
+  assert.equal(executed[0].tabUrl, 'https://www.example.com/home');
+});
+
 test("managed background calls select the offscreen runner without opening a site tab", async () => {
   const manifest = { name: 'fixture', match: ['example.com'], runtime_allowed_hosts: ['api.example.org'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },

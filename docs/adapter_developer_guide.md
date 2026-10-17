@@ -1,5 +1,7 @@
 # WebMCP Adapter 开发者指南
 
+> **注意**：本指南描述的是旧版 v1 Adapter 架构（`registry.json` 注册 + `{domain}.js` 脚本注入），仅作历史参考。当前仓库的内置 Adapter 已全部迁移为 v2 host-managed 包，位于仓库根 `adapters/<domain>/`（`manifest.json` schema_version 2 + `extension/commands/`），由 `weworker/build-profile.json` 控制打包、经 Bridge 下发执行。新 Adapter 开发请参考 `EXTENSION_DEV_GUIDE.md` §7/§8 与 `adapters/` 下现有 v2 包。
+
 ## 1. 什么是 WebMCP Adapter？
 
 WebMCP Adapter 是一套允许 AI 大模型（通过 Model Context Protocol）与特定网站进行深度原生交互的机制。通过编写 Adapter，你可以让 AI 安全、稳定地操作网页 DOM，实现自动填表、数据抓取、点击导航等“拟人化”的复杂网页流程。
