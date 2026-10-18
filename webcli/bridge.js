@@ -21,6 +21,8 @@ import { createHash, randomUUID } from "crypto";
 import XLSX from "xlsx";
 import { resolveAdaptersDir, resolveAdapterPaths, resolveExtensionDir, resolveUserAdaptersDir } from "./paths.js";
 import { BrowserHost } from "./dedicated-browser.js";
+import { SiteLoginCoordinator, DEFAULT_LOGIN_WAIT_MS, MAX_LOGIN_WAIT_MS } from "./site-login.js";
+import { CredentialVault } from "./credential-vault.js";
 import { watchAdapterState } from './adapter-state-watch.js';
 import { describeAdapterCatalog, readAdapterBundle, resolveAdapterCall } from './adapter-host.js';
 import { reportMetric, buildUploadConfig } from "./metrics.js";
@@ -672,6 +674,8 @@ export class WebSocketBridge extends EventEmitter {
               this._handlePublishGenerationRun(msg, ws);
             } else if (msg.type === 'browser_control') {
               this._handleBrowserControl(msg, ws);
+            } else if (msg.type === 'auth_control') {
+              this._handleAuthControl(msg, ws);
             } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze') {
               // Local-only credential-bearing request; never forward this envelope.
               this._handleClientRequest(msg);
@@ -788,7 +792,12 @@ export class WebSocketBridge extends EventEmitter {
       if (msg.type === "call_tool_result") {
         pending.resolve(msg.result);
       } else if (msg.type === "call_tool_error") {
-        pending.reject(new Error(msg.error));
+        // Structured codes (AUTH_REQUIRED …) drive the login flow; keep them on the error.
+        const error = new Error(msg.error);
+        error.fromExtension = true;
+        if (typeof msg.code === 'string' && msg.code) error.code = msg.code;
+        if (msg.auth && typeof msg.auth === 'object') error.auth = msg.auth;
+        pending.reject(error);
       } else if (msg.type === "list_tools_result") {
         pending.resolve(msg.tools);
       } else if (msg.type === "get_active_tab_result") {
@@ -817,12 +826,16 @@ export class WebSocketBridge extends EventEmitter {
       process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 收到调用: ${toolName}\n`);
 
       try {
-        const result = await this.callTool(toolName, args, traceID, msg.adapterSnapshot);
+        const result = await this.callTool(toolName, args, traceID, msg.adapterSnapshot, { loginWaitMs: msg.loginWaitMs });
         this._broadcast({ type: 'call_tool_result', id, result, traceID });
         process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用成功: ${toolName}\n`);
       } catch (err) {
-        process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用失败: ${toolName} — ${err.message}\n`);
-        this._broadcast({ type: 'call_tool_error', id, error: err.message, traceID });
+        process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用失败: ${toolName} — ${err.message}${err.code ? ` (${err.code})` : ''}\n`);
+        this._broadcast({
+          type: 'call_tool_error', id, error: err.message, traceID,
+          ...(typeof err.code === 'string' && err.code ? { code: err.code } : {}),
+          ...(err.auth && typeof err.auth === 'object' ? { auth: err.auth } : {}),
+        });
       }
     } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze' || msg.type === 'exploration_action_capture_start') {
       const { modelConfig, analysisContextId: ignoredContextId, ...captureRequest } = msg;
@@ -1426,7 +1439,7 @@ export class WebSocketBridge extends EventEmitter {
     return this._request({ type: "get_active_tab" });
   }
 
-  async callTool(toolName, args, traceID = null, adapterSnapshot = null) {
+  async callTool(toolName, args, traceID = null, adapterSnapshot = null, options = {}) {
     if (isLegacyWecliHandlerName(toolName)) {
       throw new Error(`"${toolName}" is an internal handler name. Use the public WebCLI command name without "wecli_".`);
     }
@@ -1434,13 +1447,134 @@ export class WebSocketBridge extends EventEmitter {
     // 埋点只记元数据，绝不阻塞调用（reportMetric 内部 fire-and-forget 且静默失败）。
     const t0 = Date.now();
     try {
-      const result = await this._callToolInner(toolName, args, traceID, adapterSnapshot);
+      const result = await this._callToolWithLogin(toolName, args, traceID, adapterSnapshot, options);
       const transformed = this._extractQrcodeToFile(result);
       reportMetric(this._metricsCfg, toolName, true, Date.now() - t0, traceID, null);
       return transformed;
     } catch (err) {
       reportMetric(this._metricsCfg, toolName, false, Date.now() - t0, traceID, err);
       throw err;
+    }
+  }
+
+  /**
+   * 网站登录由宿主处理：命令报告 AUTH_REQUIRED（或失败后声明的登录检查确认未登录）时，
+   * Bridge 打开登录页、等待用户完成、再自动重试一次读命令（见 site-login.js）。
+   * 模型不需要预先检测登录。
+   */
+  async _callToolWithLogin(toolName, args, traceID, adapterSnapshot, options = {}) {
+    const run = () => this._callToolInner(toolName, args, traceID, adapterSnapshot);
+    try {
+      return await run();
+    } catch (err) {
+      let selected = null;
+      try { selected = resolveAdapterCall(toolName); } catch { selected = null; }
+      if (!selected || selected.command.runtime !== 'extension') throw err;
+      const loginWaitMs = Number.isFinite(Number(options.loginWaitMs))
+        ? Math.max(0, Math.min(MAX_LOGIN_WAIT_MS, Number(options.loginWaitMs)))
+        : DEFAULT_LOGIN_WAIT_MS;
+      return this._siteLogin().handleFailure(err, {
+        site: selected.adapter.name, command: selected.command, retry: run, loginWaitMs,
+      });
+    }
+  }
+
+  _siteManifest(site) {
+    try {
+      return describeAdapterCatalog().adapters.find((entry) => entry.name === site) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _siteLogin() {
+    if (!this._siteLoginCoordinator) {
+      const host = this._browser();
+      this._siteLoginCoordinator = new SiteLoginCoordinator({
+        log: (line) => process.stderr.write(`[${ts()}] [Bridge] ${line}\n`),
+        broadcast: (event) => this._broadcastToClients(event),
+        extension: (type, payload, timeoutMs) => this._request({ type, ...payload }, timeoutMs),
+        manifestFor: (site) => this._siteManifest(site),
+        runCheckCommand: async (site, commandId) => {
+          try {
+            const result = await this._callToolInner(`${site}.${commandId}`, {}, null, null);
+            return !(result && typeof result === 'object' && result.logged_in === false);
+          } catch (error) {
+            return error?.code === 'AUTH_REQUIRED' ? false : null;
+          }
+        },
+        browser: {
+          mode: () => host.mode,
+          showPage: (url) => host.showPage(url),
+          hideWindows: () => host.hideWindows(),
+          screenshot: (url) => host.screenshot(url),
+          attachPage: (url) => host.attachPage(url),
+        },
+        vault: new CredentialVault({ browserHome: host.browserHome }),
+      });
+    }
+    return this._siteLoginCoordinator;
+  }
+
+  /** Events for desktop and CLI clients; extensions never receive them. */
+  _broadcastToClients(event) {
+    if (!this._wss) return;
+    const extensions = this._extensionConnectionMap();
+    const payload = JSON.stringify(event);
+    for (const client of this._wss.clients) {
+      if (client.readyState !== 1 || extensions.has(client)) continue;
+      try { client.send(payload); } catch {}
+    }
+  }
+
+  /** Fixed login actions; credentials are only ever written, never returned. */
+  async _handleAuthControl(msg, ws) {
+    const reply = (payload) => {
+      try { ws.send(JSON.stringify({ type: 'auth_control_result', id: msg.id, ...payload })); } catch {}
+    };
+    try {
+      const action = String(msg.action || '');
+      const site = typeof msg.site === 'string' ? msg.site : '';
+      const login = this._siteLogin();
+      const requireSite = () => {
+        const manifest = this._siteManifest(site);
+        if (!manifest?.auth) throw new Error(`Adapter "${site}" does not declare a login.`);
+        return manifest;
+      };
+      let result;
+      if (action === 'status') {
+        let sites = [];
+        try { sites = describeAdapterCatalog().adapters; } catch { sites = []; }
+        result = await login.status({ sites, refresh: msg.refresh === true });
+      } else if (action === 'check') {
+        requireSite();
+        result = await login.check(site);
+      } else if (action === 'login') {
+        requireSite();
+        const waitMs = Number.isFinite(Number(msg.waitMs)) ? Number(msg.waitMs) : DEFAULT_LOGIN_WAIT_MS;
+        result = await login.login(site, { waitMs });
+      } else if (action === 'cancel') {
+        result = { cancelled: login.cancel(site) };
+      } else if (action === 'set_autologin') {
+        requireSite();
+        const vault = login.vault;
+        if (msg.enabled === true && !vault.hasCredential(site)) throw new Error('请先保存该网站的账号密码。');
+        result = vault.updateSite(site, {
+          enabled: msg.enabled === true,
+          ...(msg.dismissed === true ? { dismissed: true } : {}),
+        });
+      } else if (action === 'save_credential') {
+        requireSite();
+        result = await login.vault.save(site, { username: msg.username, password: msg.password });
+      } else if (action === 'forget_credential') {
+        requireSite();
+        result = { removed: login.vault.remove(site) };
+      } else {
+        throw new Error(`Unknown login action: ${action}`);
+      }
+      reply({ ok: true, result });
+    } catch (err) {
+      reply({ ok: false, error: err.message });
     }
   }
 
@@ -1689,6 +1823,11 @@ export class WebSocketBridge extends EventEmitter {
       try { ws.send(JSON.stringify({ type: 'browser_control_result', id: msg.id, ...payload })); } catch {}
     };
     try {
+      // A per-turn ("soft") hide leaves a login page that waits for the user on screen.
+      if (msg.action === 'hide' && msg.soft === true && this._siteLoginCoordinator?.hasWaitingFlow()) {
+        reply({ ok: true, browser: this._browser().status(), skipped: 'login_waiting' });
+        return;
+      }
       const browser = await this._browser().control(String(msg.action || ''), { mode: msg.mode }, ws);
       reply({ ok: true, browser });
     } catch (err) {

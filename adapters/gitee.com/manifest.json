@@ -18,6 +18,12 @@
     "www.gitee.com",
     "so.gitee.com"
   ],
+  "auth": {
+    "login_url": "https://gitee.com/login",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "scenarios": [
     {
       "id": "repo-search",

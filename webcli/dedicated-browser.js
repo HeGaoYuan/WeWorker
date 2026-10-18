@@ -16,6 +16,10 @@
  *   --remote-debugging-pipe and --enable-unsafe-extension-debugging.
  * - Chrome 136+ honours remote debugging only for a non-default
  *   --user-data-dir, which the dedicated profile is.
+ * - In a persistent profile Chrome keeps running the service worker it first
+ *   registered for an unpacked extension, across restarts and version changes.
+ *   A changed extension build is therefore reinstalled once on start
+ *   (`refreshChangedExtension`), carrying chrome.storage.local over.
  * - CDP runs over the inherited pipe (fd 3/4); no debugging port is opened.
  *   Chrome exits when that pipe closes, so a Bridge that dies (even when
  *   force-killed) leaves no browser behind.
@@ -29,7 +33,7 @@
  * never killed.
  */
 import { spawn as nodeSpawn, spawnSync } from 'child_process';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -119,6 +123,8 @@ export function buildBrowserArgs({ userDataDir }) {
   return [
     `--user-data-dir=${userDataDir}`,
     '--remote-debugging-pipe',
+    // The pipe alone makes navigator.webdriver true, which sites such as jd.com treat as a bot.
+    '--disable-blink-features=AutomationControlled',
     '--enable-unsafe-extension-debugging',
     '--no-first-run',
     '--no-default-browser-check',
@@ -234,8 +240,8 @@ async function withTimeout(promise, ms, message) {
   }
 }
 
-/** Write the instance marker from inside the extension's service worker (no browser-context CDP API needed). */
-export async function markExtensionInstance(cdp, extensionId, marker, { timeoutMs = EXTENSION_WORKER_TIMEOUT_MS, pollMs = 250 } = {}) {
+/** Evaluate in the extension's service worker; returns the value, or throws with `label`. */
+async function evaluateInExtensionWorker(cdp, extensionId, expression, label, { timeoutMs = EXTENSION_WORKER_TIMEOUT_MS, pollMs = 250 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let worker;
   while (!worker) {
@@ -248,20 +254,86 @@ export async function markExtensionInstance(cdp, extensionId, marker, { timeoutM
   }
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: worker.targetId, flatten: true });
   try {
-    const expression = `chrome.storage.local.set(${JSON.stringify({ [BROWSER_INSTANCE_STORAGE_KEY]: marker })}).then(() => 'ok')`;
     for (;;) {
       const response = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId);
-      if (response?.result?.value === 'ok') return;
+      if (!response?.exceptionDetails && response?.result?.value !== undefined) return response.result.value;
       const description = response?.exceptionDetails?.exception?.description || '';
       // The worker's extension APIs are bound shortly after the target appears.
       if (!description.includes('chrome is not defined') || Date.now() > deadline) {
-        throw new Error(`Failed to mark the extension instance: ${description || 'no result'}`);
+        throw new Error(`${label}: ${description || 'no result'}`);
       }
       await wait(pollMs);
     }
   } finally {
     await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
   }
+}
+
+/** Write the instance marker from inside the extension's service worker (no browser-context CDP API needed). */
+export async function markExtensionInstance(cdp, extensionId, marker, options = {}) {
+  const expression = `chrome.storage.local.set(${JSON.stringify({ [BROWSER_INSTANCE_STORAGE_KEY]: marker })}).then(() => 'ok')`;
+  const value = await evaluateInExtensionWorker(cdp, extensionId, expression, 'Failed to mark the extension instance', options);
+  if (value !== 'ok') throw new Error('Failed to mark the extension instance: no result');
+}
+
+/** Content digest of the extension directory (paths and bytes). */
+export function extensionBuildDigest(extensionDir, fileSystem = fs) {
+  const hash = createHash('sha256');
+  const visit = (dir, prefix) => {
+    for (const entry of fileSystem.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const rel = prefix + entry.name;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(full, rel + '/');
+      else if (entry.isFile()) {
+        const bytes = fileSystem.readFileSync(full);
+        hash.update(rel).update('\0').update(String(bytes.length)).update('\0').update(bytes);
+      }
+    }
+  };
+  visit(extensionDir, '');
+  return hash.digest('hex');
+}
+
+const EXTENSION_BUILD_FILE = 'extension-build.json';
+
+export function readLoadedExtensionBuild(browserHome, fileSystem = fs) {
+  try {
+    const digest = JSON.parse(fileSystem.readFileSync(path.join(browserHome, EXTENSION_BUILD_FILE), 'utf8'))?.digest;
+    return typeof digest === 'string' ? digest : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLoadedExtensionBuild(browserHome, digest, fileSystem = fs) {
+  fileSystem.mkdirSync(browserHome, { recursive: true });
+  fileSystem.writeFileSync(path.join(browserHome, EXTENSION_BUILD_FILE), JSON.stringify({ digest }, null, 2));
+}
+
+/**
+ * Chrome keeps running the service worker it first registered for an unpacked
+ * extension in a persistent profile, across restarts and even after a version
+ * change; only a reinstall picks up new files. When the extension build differs
+ * from the one last loaded, reinstall it and carry chrome.storage.local over
+ * (a reinstall clears it). Returns the extension id to use.
+ */
+export async function refreshChangedExtension(cdp, { extensionDir, extensionId, digest, loadedDigest, log = () => {}, workerOptions } = {}) {
+  if (!digest || digest === loadedDigest) return { extensionId, refreshed: false };
+  let saved = null;
+  try {
+    saved = await evaluateInExtensionWorker(cdp, extensionId, 'chrome.storage.local.get(null).then((items) => JSON.stringify(items))', 'Failed to read extension storage', workerOptions);
+  } catch (error) {
+    log(`[browser] extension storage not carried over: ${error.message}`);
+  }
+  await cdp.send('Extensions.uninstall', { id: extensionId });
+  const { id } = await cdp.send('Extensions.loadUnpacked', { path: extensionDir });
+  if (typeof saved === 'string' && saved !== '{}') {
+    // `saved` is JSON produced by the worker itself, so it is a valid object literal.
+    await evaluateInExtensionWorker(cdp, id, `chrome.storage.local.set(${saved}).then(() => 'ok')`, 'Failed to restore extension storage', workerOptions)
+      .catch((error) => log(`[browser] ${error.message}`));
+  }
+  log('[browser] extension updated to the current build');
+  return { extensionId: id, refreshed: true };
 }
 
 // ── Manager: one browser process ────────────────────────────────────────────
@@ -295,9 +367,12 @@ export class DedicatedBrowserManager {
     profileInUseRetryMs = PROFILE_IN_USE_RETRY_MS,
     now = () => Date.now(),
     onStatusChange = () => {},
+    /** Tests: () => digest of the extension build (default: hash the directory). */
+    extensionDigest = null,
   } = {}) {
     this._log = log;
     this._extensionDir = extensionDir;
+    this._extensionDigestOverride = extensionDigest;
     this._browserHome = browserHome;
     this._userDataDir = path.join(browserHome, 'profile');
     this._instanceToken = instanceToken;
@@ -343,6 +418,15 @@ export class DedicatedBrowserManager {
     return this._starting;
   }
 
+  /** Digest of the extension build on disk; null when it cannot be read (no refresh). */
+  _extensionDigest() {
+    try {
+      return this._extensionDigestOverride ? this._extensionDigestOverride() : extensionBuildDigest(this._extensionDir);
+    } catch {
+      return null;
+    }
+  }
+
   async _startInternal() {
     if (!this._extensionDir) return this._setStatus('unavailable', '找不到 WeWorker 扩展文件');
     const executable = this._findExecutable();
@@ -367,13 +451,26 @@ export class DedicatedBrowserManager {
 
     try {
       const version = await withTimeout(cdp.send('Browser.getVersion'), READY_TIMEOUT_MS, 'Browser did not respond');
-      const { id: extensionId } = await cdp.send('Extensions.loadUnpacked', { path: this._extensionDir });
+      let { id: extensionId } = await cdp.send('Extensions.loadUnpacked', { path: this._extensionDir });
+      let digest = this._extensionDigest();
+      try {
+        ({ extensionId } = await refreshChangedExtension(cdp, {
+          extensionDir: this._extensionDir, extensionId, digest,
+          loadedDigest: readLoadedExtensionBuild(this._browserHome), log: this._log,
+        }));
+      } catch (error) {
+        // An older browser without Extensions.uninstall keeps the cached worker; retried next start.
+        this._log(`[browser] could not update the extension: ${error.message}`);
+        digest = null;
+        ({ id: extensionId } = await cdp.send('Extensions.loadUnpacked', { path: this._extensionDir }));
+      }
       this._extensionId = extensionId;
       // One off-screen window: tabs opened by the extension land here, later windows inherit its position.
       const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true });
       const { windowId } = await cdp.send('Browser.getWindowForTarget', { targetId });
       this._windowId = windowId;
       await markExtensionInstance(cdp, extensionId, { kind: 'dedicated', token: this._instanceToken });
+      if (digest) writeLoadedExtensionBuild(this._browserHome, digest);
       run.ready = true;
       this._readyAt = this._now();
       this._setStatus('running');
@@ -514,14 +611,64 @@ export class DedicatedBrowserManager {
     }
   }
 
+  /** The page target showing `url`: same URL, else same origin and path. */
+  async findPageTarget(url) {
+    if (!this.isRunning || !url) return null;
+    let wanted;
+    try { wanted = new URL(url); } catch { return null; }
+    const { targetInfos = [] } = await this._cdp.send('Target.getTargets');
+    const pages = targetInfos.filter((target) => target.type === 'page');
+    const samePath = (target) => {
+      try {
+        const actual = new URL(target.url);
+        return actual.origin === wanted.origin && actual.pathname === wanted.pathname;
+      } catch { return false; }
+    };
+    return pages.find((target) => target.url === wanted.href) || pages.find(samePath) || null;
+  }
+
+  /** CDP session on one page (login autofill, screenshots). Caller must `detach()`. */
+  async attachPage(url) {
+    const target = await this.findPageTarget(url);
+    if (!target) return null;
+    const cdp = this._cdp;
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
+    return {
+      targetId: target.targetId,
+      url: target.url,
+      send: (method, params = {}) => cdp.send(method, params, sessionId),
+      detach: () => cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {}),
+    };
+  }
+
+  /** JPEG of a page, for example a login QR code for a user who is not at this screen. */
+  async screenshot(url) {
+    const page = await this.attachPage(url).catch(() => null);
+    if (!page) return null;
+    try {
+      const { data } = await page.send('Page.captureScreenshot', { format: 'jpeg', quality: 70 });
+      return typeof data === 'string' && data ? data : null;
+    } catch {
+      return null;
+    } finally {
+      await page.detach();
+    }
+  }
+
   /** Bring the browser on-screen, for example so the user can sign in to a website. */
-  async show() {
+  async show({ url } = {}) {
     if (!this.isRunning) {
       await this.start();
       if (!this.isRunning) return this.getStatus();
     }
     const cdp = this._cdp;
-    let [target] = await this._pageWindows();
+    const preferred = url ? await this.findPageTarget(url).catch(() => null) : null;
+    let target = null;
+    if (preferred) {
+      const { windowId, bounds } = await cdp.send('Browser.getWindowForTarget', { targetId: preferred.targetId });
+      target = { windowId, bounds, targetId: preferred.targetId };
+    }
+    if (!target) [target] = await this._pageWindows();
     if (!target) {
       const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true });
       const { windowId, bounds } = await cdp.send('Browser.getWindowForTarget', { targetId });
@@ -600,6 +747,7 @@ export class BrowserHost {
   }
 
   get mode() { return this._modeState.mode; }
+  get browserHome() { return this._browserHome; }
   get token() {
     if (!this._token) this._token = loadInstanceToken(this._browserHome);
     return this._token;
@@ -745,6 +893,31 @@ export class BrowserHost {
     if (this._idleTimer) clearTimeout(this._idleTimer);
     this._idleTimer = null;
     await this._manager?.stop();
+  }
+
+  // Page-level helpers for the login flow; all are no-ops outside a running WeWorker 浏览器.
+
+  get pageControl() {
+    return this.mode === 'dedicated' && !!this._manager?.isRunning;
+  }
+
+  async showPage(url) {
+    if (this.mode !== 'dedicated') return false;
+    this.touch();
+    await this.manager.show({ url });
+    return true;
+  }
+
+  async hideWindows() {
+    if (this._manager?.isRunning) await this._manager.hide();
+  }
+
+  async screenshot(url) {
+    return this.pageControl ? this._manager.screenshot(url) : null;
+  }
+
+  async attachPage(url) {
+    return this.pageControl ? this._manager.attachPage(url) : null;
   }
 }
 

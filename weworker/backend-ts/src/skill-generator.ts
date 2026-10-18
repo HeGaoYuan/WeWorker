@@ -173,16 +173,14 @@ export function generateSkillContent(adapter: ParsedAdapter): string {
   // Authentication (conditional)
   if (adapter.requiresAuth) {
     lines.push('## Authentication')
+    lines.push('This website requires login. WeWorker handles it: when a tool reports that login is needed, WeWorker opens the login page in WeWorker 浏览器, waits for the user (QR code, SMS code or password) and retries the tool. Call tools directly; do not check login first.')
     if (hasDirectTools) {
-      lines.push('Direct tools reuse the browser\'s existing session and must be tried before opening the website or checking login.')
-      if (adapter.authCheckTool) {
-        lines.push(`For page/DOM flows, call \`${adapter.authCheckTool}\` only after opening the website. A direct tool login failure may also use it for diagnosis.`)
-      }
-    } else if (adapter.authCheckTool) {
-      lines.push(`This website requires login. After opening the website, call \`${adapter.authCheckTool}\` first to verify login state. If not logged in, inform the user to log in in Chrome before proceeding.`)
-    } else {
-      lines.push('This website requires login. After opening the website, verify the user is logged in before proceeding. If not logged in, inform the user to log in in Chrome before proceeding.')
+      lines.push('Direct tools reuse the browser\'s existing session; do not open the website before calling them.')
     }
+    if (adapter.authCheckTool) {
+      lines.push(`\`${adapter.authCheckTool}\` is only for diagnosing a login problem the user reports; WeWorker runs its own check.`)
+    }
+    lines.push('If a tool returns `code: AUTH_REQUIRED` with `auth.status: waiting_user`, ask the user to finish signing in on the opened page, then run the tool again.')
     lines.push('')
   }
 

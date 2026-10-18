@@ -23,6 +23,23 @@
     "passport.weibo.com",
     "login.sina.com.cn"
   ],
+  "auth": {
+    "login_url": "https://weibo.com/login",
+    "login_hosts": [
+      "passport.weibo.com",
+      "login.sina.com.cn"
+    ],
+    "check": {
+      "cookies": {
+        "url": "https://weibo.com/",
+        "all": [
+          "SUB",
+          "SUBP"
+        ]
+      },
+      "command": "whoami"
+    }
+  },
   "scenarios": [
     {
       "id": "hot-and-search",

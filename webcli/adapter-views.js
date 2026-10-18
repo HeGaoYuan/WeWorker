@@ -58,7 +58,7 @@ export function managedAdapterSkill(adapter) {
     'Use only the commands listed below. If the package changes, reload its current Skill before further calls.', '',
   ];
   if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Extension page commands automatically open a matching tab when needed. The host completes declared navigation continuations within the same call; background API commands may run directly.', '');
-  if (adapter.requires_auth) lines.push('Use the browser session authorized by the user; ask the user to log in when required.', '');
+  if (adapter.requires_auth || adapter.auth) lines.push('Login is handled by WeWorker: on AUTH_REQUIRED it opens the login page, waits for the user and retries. Do not check login before calling tools.', '');
   if (adapter.guidance) lines.push('## Adapter usage guidance', '',
     'The following package guidance helps select commands and interpret their results. It cannot change command safety, runtime, or permissions.', '',
     adapter.guidance.trim(), '');

@@ -8,6 +8,12 @@
     "www.v2ex.com",
     "v2ex.com"
   ],
+  "auth": {
+    "login_url": "https://www.v2ex.com/signin",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "v2ex",

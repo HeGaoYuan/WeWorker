@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, Tray } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -23,6 +23,7 @@ import {
 } from './background-mode.js'
 import { createTrayManager } from './tray-manager.js'
 import { BrowserControlClient, normalizeBrowserMode } from './dedicated-browser.js'
+import { sanitizeSiteAuthRequest, siteAuthNotification } from './site-auth-ipc.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -330,8 +331,30 @@ ipcMain.handle('app-settings:set', async (_event, patch = {}) => {
 // Fixed actions only: the Renderer never passes URLs or paths to the browser.
 ipcMain.handle('dedicated-browser:get-status', () => browserClient.getStatus())
 ipcMain.handle('dedicated-browser:show', () => browserAction('show'))
-ipcMain.handle('dedicated-browser:hide', () => browserAction('hide'))
+// `soft`: the per-turn hide, which leaves a login page that waits for the user on screen.
+ipcMain.handle('dedicated-browser:hide', (_event, options) => browserAction('hide', options?.soft === true ? { soft: true } : {}))
 ipcMain.handle('dedicated-browser:restart', () => browserAction('restart'))
+
+// Website login: fixed actions for the Bridge's login flow; events go to the Renderer.
+ipcMain.handle('site-auth:control', async (_event, action, payload) => {
+  const request = sanitizeSiteAuthRequest(action, payload)
+  return browserClient.authRequest(request.action, request.extra, { timeoutMs: 60_000 })
+})
+let lastAuthNotification = null
+browserClient.onAuthEvent((event) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('site-auth:event', event)
+  const notice = siteAuthNotification(event)
+  const focused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()
+  if (!notice || focused || !Notification.isSupported()) return
+  try {
+    lastAuthNotification?.close()
+    lastAuthNotification = new Notification({ title: notice.title, body: notice.body })
+    lastAuthNotification.on('click', () => { void browserAction('show') })
+    lastAuthNotification.show()
+  } catch (error) {
+    log(`[login] notification failed: ${error.message}`)
+  }
+})
 
 async function createWindow({ show = true } = {}) {
   // Hide the default menu bar on Windows/Linux (macOS uses system menu bar)

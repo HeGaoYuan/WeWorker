@@ -21,7 +21,8 @@ export function describeBrowserMode(mode) {
 export function hideBrowserForNewTurn(api = typeof window === 'undefined' ? undefined : window.electronAPI) {
   if (typeof api?.hideDedicatedBrowser !== 'function') return
   try {
-    void Promise.resolve(api.hideDedicatedBrowser()).catch(() => {})
+    // Soft: a login page that is waiting for the user stays on screen.
+    void Promise.resolve(api.hideDedicatedBrowser({ soft: true })).catch(() => {})
   } catch {
     // Sending must not depend on the browser.
   }

@@ -1,9 +1,21 @@
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
-import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
+import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
+import { createPackagedAdapterMatcher, injectPackagedAdapter } from './packaged-adapter-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+import {
+  authErrorFields,
+  authRequiredError,
+  cookieFingerprint,
+  declaredHosts as authDeclaredHosts,
+  displayUrl as authDisplayUrl,
+  evaluateCookieCheck,
+  isLoginPageUrl,
+  loginStartUrl,
+  siteAuth,
+} from './site-auth.js';
 import {
   browserInstanceHelloFields,
   createBrowserTab,
@@ -2666,8 +2678,10 @@ async function handleNativeMessage(msg) {
     const tracePrefix = traceID ? `[${traceID}] ` : '';
     console.log(`${tracePrefix}[WebMCP] <- native: call_tool ${toolName}`);
     traceLog(traceID, `[ServiceWorker] 收到 call_tool: ${toolName}`);
+    let selectedManifest = null;
     try {
       const selected = await getHostAdapterClient().tool(toolName);
+      if (selected.managed) selectedManifest = selected.manifest;
       if (msg.adapterSnapshot && (!selected.managed || msg.adapterSnapshot.name !== selected.manifest.name
         || msg.adapterSnapshot.digest !== selected.manifest._hostSnapshot.digest
         || msg.adapterSnapshot.profile !== selected.manifest._hostSnapshot.profile)) {
@@ -2682,10 +2696,14 @@ async function handleNativeMessage(msg) {
           return;
         }
         const tabs = await chrome.tabs.query({});
-        const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        const declaredRoute = selected.command.tabDomain || selected.command.routeDomain;
+        const route = declaredRoute || selected.manifest.match[0];
         let tab = tabs.find(entry => {
           try { return new URL(entry.url).hostname === route; } catch { return false; }
         });
+        // A command without a declared route runs on any page of its package: a page
+        // command may have moved its tab to another declared host (search.*, order.* …).
+        if (!tab && !declaredRoute) tab = recentPackageTab(tabs, selected.manifest, selected.command.excludeTabDomain);
         if (!tab?.id) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await createBrowserTab({ url: startUrl, active: false });
@@ -2789,9 +2807,33 @@ async function handleNativeMessage(msg) {
       if (resultError) throw new Error(resultError);
       sendToNative({ type: "call_tool_result", id: msg.id, result, traceID });
       traceLog(traceID, `[ServiceWorker] call_tool 完成: ${toolName}`);
+    } catch (caught) {
+      // An HTTP 401 from Adapter helpers means the session is missing or expired.
+      const err = caught?.code === 'HTTP_ERROR' && Number(caught?.details?.status) === 401
+        ? authRequiredError({ site: selectedManifest?.name, phase: 'handler', message: caught.message })
+        : caught;
+      const auth = authErrorFields(err, selectedManifest);
+      sendToNative({
+        type: "call_tool_error", id: msg.id, error: err.message,
+        ...(typeof err?.code === 'string' && err.code ? { code: err.code } : {}),
+        ...(auth ? { auth } : {}),
+        traceID,
+      });
+      traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}${err?.code ? ` (${err.code})` : ''}`);
+    }
+
+  } else if (msg.type === 'auth_open_login') {
+    try {
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: await openSiteLoginTab(msg) });
     } catch (err) {
-      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
-      traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}`);
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'auth_check') {
+    try {
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: await checkSiteLogin(msg) });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
   } else if (msg.type === 'exploration_list_tabs') {
@@ -4907,7 +4949,13 @@ async function callToolInTab(tabId, toolName, args, traceID = null, allowTranspo
         ...(Number.isFinite(timeoutMs) ? [new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter command timed out; execution was not replayed.')), timeoutMs); })] : []),
       ]).finally(() => clearTimeout(timer));
       // 成功 —— 继续处理响应
-      if (response?.error) throw createAdapterError(response.error);
+      if (response?.error) {
+        const adapterError = createAdapterError(response.error);
+        // Codes such as AUTH_REQUIRED drive host behaviour (login flow); keep them.
+        if (typeof response.code === 'string' && response.code) adapterError.code = response.code;
+        if (response.details && typeof response.details === 'object') adapterError.details = response.details;
+        throw adapterError;
+      }
 
       const result = response?.result;
 
@@ -6937,13 +6985,39 @@ async function callManagedBackgroundTool(manifest, command, args, traceID) {
   return runtime.execute(manifest, command, args, context);
 }
 
+/** Most recently used tab on one of the package's declared page hosts. */
+function recentPackageTab(tabs, manifest, excludeTabDomain = '') {
+  const hostMatches = (host, pattern) => {
+    const value = String(pattern || '').toLowerCase();
+    return value.startsWith('*.') ? host === value.slice(2) || host.endsWith(value.slice(1)) : host === value;
+  };
+  return tabs
+    .filter((entry) => {
+      let host;
+      try { host = new URL(entry.url).hostname.toLowerCase(); } catch { return false; }
+      if (excludeTabDomain && hostMatches(host, excludeTabDomain)) return false;
+      return Number.isInteger(entry.id) && (manifest.match || []).some((pattern) => hostMatches(host, pattern));
+    })
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
+}
+
+/** A read step that lands on a login page (redirect or SSO) has not run Adapter code yet. */
+function assertNotOnLoginPage(manifest, url) {
+  if (isLoginPageUrl(manifest, url)) {
+    throw authRequiredError({ site: manifest.name, pageUrl: authDisplayUrl(url), phase: 'navigation' });
+  }
+}
+
 async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let stableUrl = null;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab) throw new Error('Adapter tab was closed.');
-    if (tab.status === 'complete' && stableUrl === tab.url) return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    if (tab.status === 'complete' && stableUrl === tab.url) {
+      if (resume) assertNotOnLoginPage(manifest, tab.url);
+      return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    }
     stableUrl = tab.status === 'complete' ? tab.url : null;
     await new Promise(resolve => setTimeout(resolve, 150));
   }
@@ -6961,8 +7035,98 @@ function getHostAdapterRuntime() {
     },
     inject: injectV2AdapterWithCode,
     ready: (tabId, manifest, timeoutMs) => waitForManagedPageReady(tabId, manifest, true, timeoutMs),
-    navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
+    navigate: async (tabId, url, manifest, resume, timeoutMs) => {
+      try {
+        return await navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs);
+      } catch (error) {
+        // A read continuation redirected to an undeclared login host (SSO).
+        if (resume) {
+          const tab = await chrome.tabs.get(tabId).catch(() => null);
+          if (tab?.url) assertNotOnLoginPage(manifest, tab.url);
+        }
+        throw error;
+      }
+    },
   });
+}
+
+// ─── Website login (driven by the Bridge's login flow) ───────────────────────
+
+/** Login tabs opened per site; reused while the user signs in. */
+const siteLoginTabs = new Map();
+
+function isDeclaredHostUrl(manifest, value) {
+  let url;
+  try { url = new URL(String(value)); } catch { return false; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  const host = url.hostname.toLowerCase();
+  return authDeclaredHosts(manifest).some((pattern) => {
+    const entry = String(pattern).toLowerCase();
+    return entry.startsWith('*.') ? host === entry.slice(2) || host.endsWith(entry.slice(1)) : host === entry;
+  });
+}
+
+async function managedSiteManifest(site) {
+  if (typeof site !== 'string' || !SAFE_ADAPTER_ID_RE.test(site)) throw new Error('Invalid site.');
+  const { managed, manifest } = await getHostAdapterClient().manifest(site);
+  if (!managed || !manifest) throw new Error(`Adapter "${site}" is not available.`);
+  return manifest;
+}
+
+async function findSiteLoginTab(manifest) {
+  // A tab from an earlier login has usually moved on to the site; only a tab that is
+  // on a login page now is reused.
+  siteLoginTabs.delete(manifest.name);
+  const tabs = await chrome.tabs.query({});
+  return tabs.find((tab) => tab?.id && isLoginPageUrl(manifest, tab.url || tab.pendingUrl, { root: true })) || null;
+}
+
+/** Open (or reuse) the login page. Only declared hosts or recognised login pages are opened. */
+async function openSiteLoginTab(msg) {
+  const manifest = await managedSiteManifest(msg.site);
+  let tab = await findSiteLoginTab(manifest);
+  if (!tab) {
+    // Only declared hosts are opened from a request; an undeclared SSO page is used only
+    // when the site itself redirected a tab there (found above).
+    const requested = typeof msg.url === 'string' && isDeclaredHostUrl(manifest, msg.url) ? msg.url : null;
+    const url = requested || loginStartUrl(manifest);
+    if (!url) throw new Error('This Adapter declares no login page.');
+    tab = await createBrowserTab({ url, active: true });
+  } else if (!tab.active) {
+    tab = await chrome.tabs.update(tab.id, { active: true }) || tab;
+  }
+  siteLoginTabs.set(manifest.name, tab.id);
+  // The user's own Chrome: bring the login tab forward (WeWorker 浏览器 is shown by the Bridge).
+  if (msg.focus === true && Number.isInteger(tab.windowId)) await focusBrowserWindow(tab.windowId).catch(() => {});
+  return { tabId: tab.id, url: tab.url || tab.pendingUrl || '' };
+}
+
+/** Where the login tab is, and the declared cookie check. Commands are checked by the Bridge. */
+async function checkSiteLogin(msg) {
+  const manifest = await managedSiteManifest(msg.site);
+  const auth = siteAuth(manifest);
+  let loginTab = { open: false, url: '', onLoginPage: false };
+  const known = siteLoginTabs.get(manifest.name);
+  if (Number.isInteger(known)) {
+    const tab = await chrome.tabs.get(known).catch(() => null);
+    if (tab?.id) {
+      const url = tab.url || tab.pendingUrl || '';
+      // A page that is still loading (for example right after submitting the form) counts as the login page.
+      loginTab = { open: true, url, onLoginPage: tab.status !== 'complete' || isLoginPageUrl(manifest, url, { root: true }) };
+    } else {
+      siteLoginTabs.delete(manifest.name);
+    }
+  }
+  let cookies = null;
+  let fingerprint = null;
+  const spec = auth?.check?.cookies;
+  if (spec && chrome.cookies?.getAll) {
+    if (!isDeclaredHostUrl(manifest, spec.url)) throw new Error('Login cookie check host is not declared.');
+    const jar = await chrome.cookies.getAll({ url: new URL(String(spec.url)).href });
+    cookies = evaluateCookieCheck(spec, jar);
+    fingerprint = cookieFingerprint(spec, jar);
+  }
+  return { loginTab, cookies, ...(fingerprint ? { fingerprint } : {}) };
 }
 
 // ─── 用户 adapter 目录访问（经 bridge 代理）─────────────────────────────────
@@ -8014,9 +8178,23 @@ async function injectAdapters(tabId, url, selection = null) {
  * @param {string} adapterId
  * @param {string[]} supportFiles 已归一化为 adapters/<id>/... 的包内路径（仅用于内置；用户 adapter 需转回相对路径）
  */
+// Built-in page scripts shipped with this Extension (see packaged-adapter-loader.js).
+const packagedAdapterFiles = createPackagedAdapterMatcher({
+  read: async (path) => {
+    const response = await fetch(chrome.runtime.getURL(path));
+    return response.ok ? response.text() : null;
+  },
+});
+
 async function injectV2AdapterWithCode(tabId, manifest, expectedUrl, suppliedBundle = null) {
   const bundle = suppliedBundle || await getHostAdapterClient().bundle(manifest);
   const { internal, commands } = v2InjectionFiles(bundle.manifest, Object.keys(bundle.files));
+  // Identical built-in copy: inject without attaching chrome.debugger to the page.
+  const packaged = await packagedAdapterFiles(bundle, [...internal, ...commands]).catch(() => null);
+  if (packaged) {
+    const modules = Object.fromEntries((bundle.manifest.commands || []).map((command) => [command.id, command.module]));
+    return injectPackagedAdapter({ tabId, expectedUrl, defs: v2CommandDefs(bundle.manifest), files: packaged, modules });
+  }
   const scripts = [{ path: 'bootstrap.js', source: buildV2Bootstrap(bundle.manifest) }];
   for (const relPath of [...internal, ...commands]) {
     const source = bundle.files[relPath];

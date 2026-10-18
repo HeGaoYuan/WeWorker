@@ -24,6 +24,7 @@ import { fetchProviderModels } from '../../api/provider-models.js'
 import { getAnthropicUrlHint, getOpenAiUrlHint } from '../../utils/provider-url.js'
 import { showConfirm } from '../../store/dialog.js'
 import { BROWSER_MODE_OPTIONS, describeBrowserMode } from '../../utils/dedicated-browser.js'
+import SiteLoginSettings from '../site-login/SiteLoginSettings.jsx'
 
 const API = 'http://127.0.0.1:8765'
 const OFFICIAL_URL = 'http://weworker.weoa.com'
@@ -428,6 +429,8 @@ function AboutTab({ appVersion, commitHash }) {
       <BackgroundSettingsGroup />
 
       <BrowserSettingsGroup />
+
+      <SiteLoginSettings />
 
       <div className="settings-group">
         <SettingRow

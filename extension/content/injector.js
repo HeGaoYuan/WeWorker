@@ -303,6 +303,11 @@ function createWecliRuntime() {
     return requestPrivileged('set_file_input', { selector, files });
   }
 
+  /** Report "not logged in"; WeWorker then runs the login flow and retries reads. */
+  function authRequired(message = 'Login required') {
+    throw createRuntimeError('AUTH_REQUIRED', message, { phase: 'handler' });
+  }
+
   return {
     createRuntimeError,
     validateArgs,
@@ -310,7 +315,20 @@ function createWecliRuntime() {
     fetchJson,
     requestPrivileged,
     setFileInput,
+    authRequired,
   };
+}
+
+/** Error fields the service worker acts on; values never include page data. */
+function errorResponseFields(err) {
+  const code = typeof err?.code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(err.code) ? err.code : '';
+  if (!code) return {};
+  const details = err.details && typeof err.details === 'object' ? err.details : {};
+  if (code === 'AUTH_REQUIRED') {
+    return { code, details: { phase: details.phase === 'navigation' ? 'navigation' : 'handler' } };
+  }
+  if (code === 'HTTP_ERROR' && Number.isInteger(details.status)) return { code, details: { status: details.status } };
+  return { code };
 }
 
 // ─── Trace 日志存储 ──────────────────────────────────────────────────────────
@@ -1179,7 +1197,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         Promise.resolve()
           .then(() => runHandlerWithTrace(h, args, traceID))
           .then(result => { sendResponse({ result: JSON.parse(JSON.stringify(result ?? null)) }); })
-          .catch(err => { sendResponse({ error: err.message ?? String(err) }); });
+          .catch(err => { sendResponse({ error: err.message ?? String(err), ...errorResponseFields(err) }); });
         return;
       }
       if (Date.now() >= deadline) {
@@ -1214,7 +1232,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     .catch(err => {
       console.error(`${tracePrefix}[WebMCP] call_tool error: ${toolName} — ${err.message}`);
       traceLog(traceID, `[ContentScript] call_tool 错误: ${toolName} — ${err.message}`);
-      sendResponse({ error: err.message ?? String(err) });
+      sendResponse({ error: err.message ?? String(err), ...errorResponseFields(err) });
     });
 
   return true;

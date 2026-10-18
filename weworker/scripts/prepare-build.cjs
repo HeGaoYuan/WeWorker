@@ -55,7 +55,7 @@ function copyTreeSync(src, dest) {
 }
 
 async function main() {
-  const { selectBuiltinAdapters, validateBuiltinOutput, writeBuiltinAdapters } = await import(BUILTIN_BUILD_MODULE);
+  const { selectBuiltinAdapters, validateBuiltinOutput, writeBuiltinAdapters, writeExtensionPageScripts } = await import(BUILTIN_BUILD_MODULE);
 
   // ── Task 2.1: 读取、合并并校验 profile ──
 
@@ -90,7 +90,8 @@ async function main() {
   const requestedIds = profile.adapters;
   const selection = selectBuiltinAdapters({ names: requestedIds, builtinDir: BUILTIN_SRC_DIR, legacyDir: ADAPTERS_SRC_DIR });
   const filteredAdapters = selection.legacy.map(({ manifest }) => manifest);
-  // Separate resources for host-managed packages. Never copy these into Extension.
+  // Separate resources for host-managed packages; the host selects from these. The
+  // Extension only receives byte-identical page-script copies (Task 2.4) for debugger-free injection.
   if (fs.existsSync(BUILTIN_DIST_DIR)) fs.rmSync(BUILTIN_DIST_DIR, { recursive: true, force: true });
   writeBuiltinAdapters({ selection, outputDir: BUILTIN_DIST_DIR, profile: options.profileName });
   validateBuiltinOutput(BUILTIN_DIST_DIR);
@@ -170,6 +171,8 @@ async function main() {
   const extensionAdaptersDir = path.resolve(EXTENSION_DIST_DIR, 'adapters');
   if (fs.existsSync(extensionAdaptersDir)) fs.rmSync(extensionAdaptersDir, { recursive: true, force: true });
   copyTreeSync(ADAPTERS_DIST_DIR, extensionAdaptersDir);
+  const pageScriptCount = writeExtensionPageScripts({ builtinDir: BUILTIN_DIST_DIR, extensionDir: EXTENSION_DIST_DIR });
+  console.log(`[prepare-build] ${pageScriptCount} built-in page script(s) packaged for debugger-free injection.`);
   fs.writeFileSync(
     path.resolve(EXTENSION_DIST_DIR, 'manifest.json'),
     JSON.stringify(generatedManifest, null, 2) + '\n',

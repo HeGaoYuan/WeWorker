@@ -6,6 +6,12 @@
   "match": [
     "kyfw.12306.cn"
   ],
+  "auth": {
+    "login_url": "https://kyfw.12306.cn/otn/resources/login.html",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "12306",

@@ -66,6 +66,15 @@ Browser（WeWorker 浏览器：Bridge 管理的独立 Chrome，窗口在屏幕�
   browser start | stop | restart 启动 / 停止 / 重启（调用工具时会自动启动，空闲 30 分钟自动停止）
   browser mode [dedicated|system] 查看或切换模式：dedicated=WeWorker 浏览器（默认），system=我自己的 Chrome
 
+Login（网站登录由 WeWorker 自动处理：命令遇到未登录时打开登录页、等待你完成、再自动重试）:
+  login <网站> [--login-wait=<秒>]  主动登录（已登录则直接返回）；支持扫码、短信验证码或账号密码
+  auth status [--json]           各网站登录状态与自动登录设置
+  auth check <网站>              检查当前是否已登录
+  auth save <网站>               保存账号密码并开启自动登录（需确认；Windows 系统密钥加密）
+  auth autologin <网站> on|off   开启或暂停自动登录
+  auth forget <网站>             删除保存的账号密码
+  call ... --login-wait=<秒>     本次调用最多等待登录的时间（终端默认 300 秒，脚本/AI 默认 75 秒）
+
 Adapters:
   list                                     列出已安装的 adapter（adapter list 的简写）
   help                                     已安装 adapter 摘要（渐进式 help 第一级）
@@ -176,6 +185,8 @@ async function printGlobalHelp({ json = false } = {}) {
         { name: "adapter", usage: "webcli adapter <command>", description: "管理网站适配器" },
         { name: "service", usage: "webcli service <start|stop|status|logs>", description: "管理 WebSocket bridge 服务" },
         { name: "browser", usage: "webcli browser <status|show|hide|start|stop|restart|mode>", description: "管理 WeWorker 浏览器（需要登录时用 show 打开）" },
+        { name: "login <site>", usage: "webcli login <site>", description: "主动登录网站（工具遇到未登录时也会自动发起）" },
+        { name: "auth", usage: "webcli auth <status|check|save|forget|autologin>", description: "网站登录状态与自动登录" },
         { name: "stats", usage: "webcli stats", description: "调用频次统计" },
         { name: "install --skills", usage: "webcli install --skills [adapter-id]", description: "安装 adapter skills" },
         { name: "trace <id>", usage: "webcli trace <traceID>", description: "按 traceID 查日志" },
@@ -382,26 +393,8 @@ async function runServiceMode() {
 // ─── Command: browser <status|start|stop|show|hide|restart|mode> ─────────────
 
 /** One fixed `browser_control` action against the running Bridge. */
-async function browserControl(action, extra = {}, timeoutMs = 45_000) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${WS_PORT}`);
-    const id = `cli-browser-${Date.now()}`;
-    const timer = setTimeout(() => {
-      ws.terminate();
-      reject(new Error("Bridge 未响应（可能是不支持 WeWorker 浏览器的旧版本）"));
-    }, timeoutMs);
-    ws.on("open", () => ws.send(JSON.stringify({ type: "browser_control", id, action, ...extra })));
-    ws.on("message", (data) => {
-      let msg;
-      try { msg = JSON.parse(data.toString()); } catch { return; }
-      if (msg.type !== "browser_control_result" || msg.id !== id) return;
-      clearTimeout(timer);
-      ws.close();
-      if (msg.ok) resolve(msg.browser);
-      else reject(Object.assign(new Error(msg.error || "操作失败"), { browser: msg.browser }));
-    });
-    ws.on("error", (error) => { clearTimeout(timer); reject(error); });
-  });
+function browserControl(action, extra = {}, timeoutMs = 45_000) {
+  return bridgeControl("browser_control", action, extra, timeoutMs);
 }
 
 const BROWSER_STATE_TEXT = {
@@ -474,6 +467,169 @@ async function cmdBrowser(sub, value, { json = false } = {}) {
 async function stopBrowserBeforeService() {
   if (!(await checkPortListening())) return;
   try { await browserControl("stop", {}, 10_000); } catch { /* Older Bridge or already gone. */ }
+}
+
+// ─── Website login ───────────────────────────────────────────────────────────
+
+/** A person at a terminal gets 5 minutes to sign in; scripts and agents 75 seconds (under a 2-minute tool timeout). */
+function resolveLoginWaitMs(seconds) {
+  if (Number.isFinite(seconds)) return Math.max(0, Math.min(15 * 60, seconds)) * 1000;
+  return process.stdin.isTTY && process.stderr.isTTY ? 300_000 : 75_000;
+}
+
+const AUTH_EVENT_TEXT = {
+  waiting_user: (e) => `需要登录 ${e.name}：已在 WeWorker 浏览器中打开登录页（支持扫码、短信验证码或账号密码），登录完成后自动继续…${e.screenshot ? `\n  登录页截图（可用于扫码）：${e.screenshot}` : ""}`,
+  autologin_started: (e) => `正在自动登录 ${e.name}…`,
+  autologin_failed: (e) => `自动登录 ${e.name} 未成功：${e.message || "原因未知"}；请在浏览器中手动完成登录`,
+  logged_in: (e) => `已登录 ${e.name}${e.autologin ? "（自动登录）" : ""}，继续执行`,
+  cancelled: (e) => `已取消 ${e.name} 登录`,
+  timeout: (e) => `${e.name} 登录等待超时`,
+  failed: (e) => `无法打开 ${e.name} 登录页：${e.message || "原因未知"}`,
+};
+
+function printAuthEvent(event) {
+  const text = AUTH_EVENT_TEXT[event.status]?.(event);
+  if (text) process.stderr.write(`[WebCLI] ${text}\n`);
+}
+
+/** One fixed control action against the running Bridge (`browser_control` / `auth_control`). */
+async function bridgeControl(type, action, extra = {}, timeoutMs = 45_000, onEvent = null) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}`);
+    const id = `cli-${type}-${Date.now()}`;
+    const timer = setTimeout(() => { ws.terminate(); reject(new Error("Bridge 未响应（可能是旧版本）")); }, timeoutMs);
+    ws.on("open", () => ws.send(JSON.stringify({ type, id, action, ...extra })));
+    ws.on("message", (data) => {
+      let msg;
+      try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg.type === "auth_event" && onEvent) { onEvent(msg); return; }
+      if (msg.type !== `${type}_result` || msg.id !== id) return;
+      clearTimeout(timer);
+      ws.close();
+      if (msg.ok) resolve(msg.result ?? msg.browser);
+      else reject(Object.assign(new Error(msg.error || "操作失败"), { browser: msg.browser }));
+    });
+    ws.on("error", (error) => { clearTimeout(timer); reject(error); });
+  });
+}
+
+async function loadLoginSites() {
+  const { describeAdapterCatalog } = await import("./adapter-host.js");
+  return describeAdapterCatalog().adapters.filter((adapter) => adapter.auth);
+}
+
+async function requireLoginSite(site) {
+  if (!site) throw new Error("请指定网站，例如 webcli login ctrip.com");
+  const manifest = (await loadLoginSites()).find((adapter) => adapter.name === site);
+  if (!manifest) throw new Error(`"${site}" 没有声明登录（manifest auth）；可用 webcli auth status 查看支持登录管理的网站`);
+  return manifest;
+}
+
+const LOGIN_STATE_TEXT = { logged_in: "已登录", logged_out: "未登录", unknown: "未知" };
+
+async function cmdLogin(site, { json = false, loginWaitSeconds } = {}) {
+  try {
+    await requireLoginSite(site);
+    await ensureBridgeRunning();
+    const waitMs = resolveLoginWaitMs(loginWaitSeconds);
+    const result = await bridgeControl("auth_control", "login", { site, waitMs }, waitMs + 60_000, json ? null : printAuthEvent);
+    if (json) console.log(JSON.stringify(result, null, 2));
+    else if (result.status === "already_logged_in") console.log(`✓ ${site} 已登录`);
+    else if (result.status === "logged_in") console.log(`✓ ${site} 登录完成`);
+    else if (result.status === "waiting_user") console.log(`登录页仍在 WeWorker 浏览器中等待；完成后无需再次运行此命令${result.screenshot ? `\n登录页截图：${result.screenshot}` : ""}`);
+    else console.log(`${site} 登录未完成（${result.status}）`);
+    if (!["already_logged_in", "logged_in", "waiting_user"].includes(result.status)) process.exitCode = 1;
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+async function readVisibleLine(prompt) {
+  const { createInterface } = await import("readline");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try { return await new Promise((resolve) => rl.question(prompt, resolve)); } finally { rl.close(); }
+}
+
+const AUTOLOGIN_NOTICE = [
+  "开启「自动登录」后，该网站需要登录时，WeWorker 会在 WeWorker 浏览器中替你填写账号密码并点击登录。",
+  "  · 密码用本机系统密钥（Windows DPAPI）加密保存在 ~/.weworker/browser/credentials/，只有本机当前用户能解密；",
+  "  · WeWorker 的 AI、网站适配器和扩展都读不到明文密码，日志中也不会出现；",
+  "  · 只在该网站声明的 HTTPS 登录页上填写；遇到验证码、短信、扫码或登录失败会交给你处理；",
+  "  · 随时可用 webcli auth forget <网站> 删除，或 webcli auth autologin <网站> off 暂停。",
+].join("\n");
+
+async function cmdAuth(sub, rest = [], { json = false } = {}) {
+  const { CredentialVault } = await import("./credential-vault.js");
+  const vault = new CredentialVault();
+  const site = rest[0];
+  try {
+    if (!sub || sub === "status") {
+      let status;
+      if (await checkPortListening()) {
+        status = await bridgeControl("auth_control", "status", { refresh: true }, 60_000);
+      } else {
+        const sites = await loadLoginSites();
+        status = {
+          autologinSupported: vault.supported,
+          sites: sites.map((manifest) => ({
+            site: manifest.name, name: manifest.auth.display_name || manifest.i18n?.zh?.name || manifest.name,
+            state: "unknown", autologin: { supported: vault.supported, ...vault.site(manifest.name) },
+          })),
+        };
+      }
+      if (json) { console.log(JSON.stringify(status, null, 2)); return; }
+      for (const entry of status.sites) {
+        const auto = entry.autologin?.enabled ? `自动登录：开（${entry.autologin.username}）` : entry.autologin?.configured ? "自动登录：已暂停" : "自动登录：关";
+        console.log(`${entry.site.padEnd(18)} ${entry.name.padEnd(10)} ${(LOGIN_STATE_TEXT[entry.state] || entry.state).padEnd(4)} ${auto}${entry.flow ? `  登录中（${entry.flow}）` : ""}`);
+      }
+      if (!status.autologinSupported) console.log("\n当前系统暂不支持安全保存密码（目前支持 Windows），自动登录不可用。");
+      return;
+    }
+    if (sub === "check") {
+      await requireLoginSite(site);
+      await ensureBridgeRunning();
+      const result = await bridgeControl("auth_control", "check", { site }, 60_000);
+      if (json) console.log(JSON.stringify(result, null, 2));
+      else console.log(`${site}：${result.logged_in === true ? "已登录" : result.logged_in === false ? "未登录" : "无法确定"}（检查方式：${result.method}）`);
+      return;
+    }
+    if (sub === "save") {
+      await requireLoginSite(site);
+      if (!vault.supported) throw new Error("当前系统暂不支持安全保存密码（目前支持 Windows）。");
+      if (!process.stdin.isTTY || !process.stderr.isTTY) throw new Error("保存密码需要在本机交互式终端中运行。");
+      process.stderr.write(`${AUTOLOGIN_NOTICE}\n\n`);
+      const confirm = (await readVisibleLine(`为 ${site} 保存账号密码并开启自动登录？[y/N] `)).trim().toLowerCase();
+      if (confirm !== "y" && confirm !== "yes") { console.log("已取消，未保存任何内容。"); return; }
+      const username = (await readVisibleLine("账号（手机号/邮箱/用户名）: ")).trim();
+      const { readHiddenToken } = await import("./adapterhub-credentials.js");
+      const password = await readHiddenToken("密码（输入不显示）: ");
+      const saved = await vault.save(site, { username, password });
+      console.log(`✓ 已为 ${site} 开启自动登录（${saved.username}）`);
+      return;
+    }
+    if (sub === "forget") {
+      await requireLoginSite(site);
+      console.log(vault.remove(site) ? `✓ 已删除 ${site} 保存的账号密码` : `${site} 没有保存的账号密码`);
+      return;
+    }
+    if (sub === "autologin") {
+      await requireLoginSite(site);
+      const value = rest[1];
+      if (!["on", "off"].includes(value)) throw new Error("用法：webcli auth autologin <网站> on|off");
+      if (value === "on" && !vault.hasCredential(site)) throw new Error(`请先运行 webcli auth save ${site} 保存账号密码`);
+      vault.updateSite(site, { enabled: value === "on" });
+      console.log(`✓ ${site} 自动登录已${value === "on" ? "开启" : "关闭"}`);
+      return;
+    }
+    console.error(`Unknown auth subcommand: ${sub}`);
+    console.log("Available: status, check <site>, save <site>, forget <site>, autologin <site> on|off");
+    process.exit(1);
+  } catch (error) {
+    if (json) console.log(JSON.stringify({ error: error.message }, null, 2));
+    else console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
 }
 
 function dedicatedBrowserHint() {
@@ -583,20 +739,32 @@ async function cmdCall(toolName, argsStr, options = {}) {
   const ws = new WebSocket(`ws://localhost:${WS_PORT}`);
 
   const callTimeoutMs = resolveToolCallTimeout(toolName);
+  const loginWaitMs = resolveLoginWaitMs(options.loginWaitSeconds);
+  const site = v2Match?.adapter?.name || "";
 
-  const timeout = setTimeout(() => {
+  const onTimeout = () => {
     console.log(formatCallOutput({ error: "工具调用超时", trace_id: null }, outputFormat));
     ws.terminate();
     process.exit(1);
-  }, callTimeoutMs);
+  };
+  let timeout = setTimeout(onTimeout, callTimeoutMs);
 
   ws.on("open", () => {
     const id = "cli-" + Date.now();
     const traceID = randomUUID().replace(/-/g, "").slice(0, 12);
-    ws.send(JSON.stringify({ type: "call_tool", toolName, args, id, traceID, adapterSnapshot: v2Match?.snapshot }));
+    ws.send(JSON.stringify({ type: "call_tool", toolName, args, id, traceID, adapterSnapshot: v2Match?.snapshot, loginWaitMs }));
 
     ws.on("message", async (data) => {
       const msg = JSON.parse(data.toString());
+      // The Bridge runs the login flow for this site: report progress, and allow the login time.
+      if (msg.type === "auth_event" && site && msg.site === site) {
+        printAuthEvent(msg);
+        if (msg.status === "login_required") {
+          clearTimeout(timeout);
+          timeout = setTimeout(onTimeout, loginWaitMs + callTimeoutMs + 10_000);
+        }
+        return;
+      }
       if (msg.id !== id) return;
       clearTimeout(timeout);
       if (msg.type === "call_tool_result") {
@@ -609,7 +777,13 @@ async function cmdCall(toolName, argsStr, options = {}) {
         ws.close();
         process.exit(0);
       } else if (msg.type === "call_tool_error") {
-        const output = { error: msg.error, trace_id: traceID, hint: `用 webcli trace ${traceID} 查看完整链路日志${dedicatedBrowserHint()}` };
+        const output = {
+          error: msg.error,
+          ...(msg.code ? { code: msg.code } : {}),
+          ...(msg.auth ? { auth: msg.auth } : {}),
+          trace_id: traceID,
+          hint: `用 webcli trace ${traceID} 查看完整链路日志${dedicatedBrowserHint()}`,
+        };
         console.log(formatCallOutput(output, outputFormat));
         await printVerboseTrace(traceID, verbose);
         ws.close();
@@ -713,7 +887,7 @@ function readRecentLogFile(filePath, maxBytes) {
 const BUILTIN_COMMANDS = new Set([
   "--version", "-v", "--help", "-h", "-help", "--service",
   "extension-path", "adapter", "service", "call", "trace", "install",
-  "list", "mcp", "mcp-logs",
+  "list", "mcp", "mcp-logs", "browser", "login", "auth",
 ]);
 // 渐进式 help 不拦截的顶层命令（其 <sub> help 属于自身命令域）
 const BUILTIN_HELP_EXEMPT = new Set(["adapterhub", "stats"]);
@@ -800,10 +974,17 @@ function extractRuntimeFlags(args) {
   const rest = [];
   let verbose = false;
   let outputFormat;
+  let loginWaitSeconds;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--verbose" || (arg === "-v" && !(i === 0 && args.length === 1))) {
       verbose = true;
+      continue;
+    }
+    // 登录等待秒数（Bridge 打开登录页后最多等待用户完成登录的时间），不作为业务参数传给工具
+    const loginWait = arg.match(/^--login-wait=(\d+)$/);
+    if (loginWait) {
+      loginWaitSeconds = Number(loginWait[1]);
       continue;
     }
     // 输出格式用 --output-format，避免与业务参数 --format（如发票下载 format=pdf）冲突
@@ -824,7 +1005,7 @@ function extractRuntimeFlags(args) {
     }
     rest.push(arg);
   }
-  return { args: rest, verbose, outputFormat };
+  return { args: rest, verbose, outputFormat, ...(loginWaitSeconds !== undefined ? { loginWaitSeconds } : {}) };
 }
 
 function normalizeCliExecutionPath(filePath, realpath = realpathSync) {
@@ -945,7 +1126,7 @@ async function runProgressiveHelp(args) {
 }
 
 async function main() {
-  const { args, verbose, outputFormat } = extractRuntimeFlags(process.argv.slice(2));
+  const { args, verbose, outputFormat, loginWaitSeconds } = extractRuntimeFlags(process.argv.slice(2));
   const cmd  = args[0];
   const sub  = args[1];
   const invocation = resolveCliInvocation(args);
@@ -1052,7 +1233,20 @@ async function main() {
     }
     const argsIdx = args.indexOf("--args");
     const argsJson = argsIdx !== -1 ? args[argsIdx + 1] : undefined;
-    await cmdCall(toolName, argsJson, { verbose, flagArgs, outputFormat });
+    await cmdCall(toolName, argsJson, { verbose, flagArgs, outputFormat, loginWaitSeconds });
+    return;
+  }
+
+  // login <site> [--login-wait=<秒>]
+  if (cmd === "login") {
+    await cmdLogin(sub, { json: args.includes("--json"), loginWaitSeconds });
+    return;
+  }
+
+  // auth <status|check|save|forget|autologin> ...
+  if (cmd === "auth") {
+    const positional = args.slice(1).filter((item) => !item.startsWith("-"));
+    await cmdAuth(positional[0], positional.slice(1), { json: args.includes("--json") });
     return;
   }
 
@@ -1135,7 +1329,7 @@ async function main() {
   }
 
   if (invocation.type === "shorthand") {
-    await cmdCall(invocation.toolName, invocation.argsJson, { verbose, flagArgs: invocation.flagArgs || {}, outputFormat });
+    await cmdCall(invocation.toolName, invocation.argsJson, { verbose, flagArgs: invocation.flagArgs || {}, outputFormat, loginWaitSeconds });
     return;
   }
 

@@ -70,7 +70,12 @@ export function assertAdapterNavigationUrl(manifest, value, resume = true) {
   const hosts = [...(manifest.match || []), ...(resume ? [] : (manifest.runtime_allowed_hosts || []))];
   const allowed = hosts.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))));
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !allowed) {
-    throw new Error('Adapter navigation host is not allowed.');
+    // Name the host (never the full URL): the caller must see that this is a package
+    // declaration problem that retrying cannot fix.
+    const host = ['http:', 'https:'].includes(url.protocol) ? url.hostname : url.protocol;
+    throw Object.assign(new Error(`Adapter navigation host is not allowed: ${host}（页面跳转到了该 Adapter 未声明的网站，这是 Adapter 配置问题，重试无效）`), {
+      code: 'ADAPTER_HOST_NOT_ALLOWED',
+    });
   }
   return url.href;
 }

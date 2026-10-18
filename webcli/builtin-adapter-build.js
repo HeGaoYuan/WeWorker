@@ -80,6 +80,33 @@ export function writeBuiltinAdapters({ selection, outputDir, profile }) {
   return metadata;
 }
 
+/**
+ * Copy the page scripts (`extension/**`) of the prepared built-in packages into the
+ * generated Extension under managed-adapters/<name>/. The host still selects what runs:
+ * the Extension injects a copy only when it is byte-identical to the host's bundle, and
+ * then needs no chrome.debugger session on the page. Returns the number of files written.
+ */
+export function writeExtensionPageScripts({ builtinDir, extensionDir }) {
+  const metadata = validateBuiltinOutput(builtinDir);
+  assertManagedDirectory(extensionDir);
+  const outputDir = path.join(extensionDir, 'managed-adapters');
+  assertManagedDirectory(outputDir);
+  if (fs.existsSync(outputDir)) fs.rmSync(outputDir, { recursive: true, force: true });
+  let written = 0;
+  for (const entry of metadata.adapters) {
+    const pkg = readPackageDirectory(path.join(builtinDir, entry.name));
+    const root = path.join(outputDir, entry.name);
+    for (const [name, bytes] of pkg.files) {
+      if (!name.startsWith('extension/')) continue;
+      const file = assertManagedFile(root, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, bytes, { flag: 'wx' });
+      written++;
+    }
+  }
+  return written;
+}
+
 export function validateBuiltinOutput(outputDir) {
   assertManagedDirectory(outputDir);
   const metadataPath = path.join(outputDir, '.profile.json');

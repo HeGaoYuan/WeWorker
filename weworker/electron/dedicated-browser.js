@@ -42,6 +42,7 @@ export class BrowserControlClient {
     this._pending = new Map()
     this._nextId = 0
     this._listeners = new Set()
+    this._authListeners = new Set()
     this._status = disconnected(DEFAULT_BROWSER_MODE, '正在连接 Bridge')
   }
 
@@ -53,6 +54,17 @@ export class BrowserControlClient {
   onStatus(listener) {
     this._listeners.add(listener)
     return () => this._listeners.delete(listener)
+  }
+
+  /** Website login progress published by the Bridge (`auth_event`). */
+  onAuthEvent(listener) {
+    this._authListeners.add(listener)
+    return () => this._authListeners.delete(listener)
+  }
+
+  /** One fixed website-login action (`auth_control`); resolves with its result. */
+  authRequest(action, extra = {}, options = {}) {
+    return this._send('auth_control', action, extra, options)
   }
 
   get connected() {
@@ -77,7 +89,11 @@ export class BrowserControlClient {
   }
 
   /** One fixed action; resolves with the Bridge's browser status. */
-  request(action, extra = {}, { timeoutMs = this._requestTimeoutMs } = {}) {
+  request(action, extra = {}, options = {}) {
+    return this._send('browser_control', action, extra, options)
+  }
+
+  _send(type, action, extra, { timeoutMs = this._requestTimeoutMs } = {}) {
     if (!this.connected) return Promise.reject(new Error('Bridge 未连接，WeWorker 浏览器暂不可用'))
     const id = `desktop-${++this._nextId}`
     return new Promise((resolve, reject) => {
@@ -88,7 +104,7 @@ export class BrowserControlClient {
       timer.unref?.()
       this._pending.set(id, { resolve, reject, timer })
       try {
-        this._ws.send(JSON.stringify({ type: 'browser_control', id, action, ...extra }))
+        this._ws.send(JSON.stringify({ type, id, action, ...extra }))
       } catch (error) {
         clearTimeout(timer)
         this._pending.delete(id)
@@ -122,16 +138,20 @@ export class BrowserControlClient {
       if (this._ws !== ws) return
       let msg
       try { msg = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)) } catch { return }
-      if (msg?.type === 'browser_control_result') {
+      if (msg?.type === 'browser_control_result' || msg?.type === 'auth_control_result') {
         if (msg.browser) this._setStatus(msg.browser)
         const entry = this._pending.get(msg.id)
         if (!entry) return
         this._pending.delete(msg.id)
         clearTimeout(entry.timer)
-        if (msg.ok) entry.resolve(msg.browser)
+        if (msg.ok) entry.resolve(msg.type === 'auth_control_result' ? msg.result : msg.browser)
         else entry.reject(new Error(msg.error || '操作失败'))
       } else if (msg?.type === 'browser_status' && msg.browser) {
         this._setStatus(msg.browser)
+      } else if (msg?.type === 'auth_event' && typeof msg.site === 'string') {
+        for (const listener of this._authListeners) {
+          try { listener(msg) } catch {}
+        }
       }
     })
     ws.addEventListener('close', () => {

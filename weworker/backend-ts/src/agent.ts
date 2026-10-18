@@ -337,24 +337,6 @@ WeWorker Shell 在当前平台默认使用 ${defaultShell}。
 WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用户可见执行过程。
 `
 
-  const authSites: string[] = []
-  for (const [adapterId, adapter] of allAdapters) {
-    if (!getSiteEnabled(adapterId, adapter.defaultEnabled, adapter.managed?.enabled)) continue
-    if (adapter.requiresAuth) {
-      const backgroundApiTools = Object.entries(adapter.toolExecution || {})
-        .filter(([, execution]) => execution?.type === 'api' && execution?.runtime === 'background')
-        .map(([toolName]) => toolName)
-      const directToolSummary = backgroundApiTools.length <= 4
-        ? backgroundApiTools.map((name) => `\`${name}\``).join('、')
-        : `共 ${backgroundApiTools.length} 个（以该站点 Skill 中的 Execution 标记为准）`
-      const authCheckTool = adapter.authCheckTool || `${adapterId}.check_login_status`
-      authSites.push(
-        backgroundApiTools.length > 0
-          ? `- ${adapter.name}（${adapter.match[0]}）：API direct 工具 ${directToolSummary}，必须先直接调用`
-          : `- ${adapter.name}（${adapter.match[0]}） -> 检测：\`webcli call ${authCheckTool}\``,
-      )
-    }
-  }
 
   const windowsEncryptionRules = process.platform === 'win32' ? `
 ## 文件加密处理规则
@@ -368,17 +350,15 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
 4. 如果未加密，直接继续原定操作。
 5. 如果加密检查失败或解密失败（包含未找到 sd_decrypt.exe），当前环境可能为非 OA 环境；直接按原定操作继续，不要阻塞或等待用户确认；在回复中简要说明已跳过加密检查。
 ` : ''
-  const loginDetectionRules = adapterExecutionEnabled && authSites.length > 0 ? `
-## 登录检测规则
+  // Login is handled by WeWorker itself (webcli/site-login.js): no pre-checks by the model.
+  const browserLabel = opts?.browserInstance === 'dedicated' ? '「WeWorker 浏览器」' : '浏览器'
+  const loginDetectionRules = adapterExecutionEnabled ? `
+## 网站登录
 
-以下网站需要用户登录后才能操作：
-
-${authSites.join('\n')}
-
-对于这些网站，使用 open_browser 打开后（等待 5 秒后），必须先调用该网站的 check_login_status 工具检测登录状态。
-${opts?.browserInstance === 'dedicated'
-    ? '如果返回 `logged_in: false`，应立即告知用户：网站操作在「WeWorker 浏览器」中进行，需要先在其中登录该网站。打开方式：点击 WeWorker 左侧栏底部的浏览器图标，选择「显示 WeWorker 浏览器」（也可以在系统托盘菜单中选择，或直接点击任务栏上的 WeWorker 浏览器窗口）；登录完成后告诉你继续。不要让用户去自己的 Chrome 登录。'
-    : '如果返回 `logged_in: false`，应立即告知用户需要先在浏览器中登录该网站。'}
+网站工具会自动处理登录：遇到未登录时，WeWorker 会在${browserLabel}中打开该网站的登录页，等待用户完成（扫码、短信验证码或账号密码均可），然后自动重试原命令。
+- 不要预先打开网站检测登录，也不要为了检测登录调用 check_login_status、check-login-status、whoami 或 login 命令；直接调用要用的工具。
+- 工具返回 \`code: AUTH_REQUIRED\` 且 \`auth.status\` 为 \`waiting_user\` 时：告诉用户需要在${browserLabel}中登录该网站（登录页已打开${opts?.browserInstance === 'dedicated' ? '，也可点击 WeWorker 左侧栏底部的浏览器图标显示' : ''}），用户完成后再执行一次原命令。\`auth.screenshot\` 是登录页截图路径，可直接展示给用户扫码。${opts?.browserInstance === 'dedicated' ? '不要让用户去自己的 Chrome 登录。' : ''}
+- \`AUTH_CANCELLED\` 表示用户取消了登录；\`AUTH_RETRY_REQUIRED\` 表示写操作因登录中断、登录已完成，需向用户确认后再执行。
 ` : ''
   const base = `${renderPrompt('agent', {
     adapter_capability: adapterExecutionEnabled
@@ -394,7 +374,7 @@ ${opts?.browserInstance === 'dedicated'
       : '2. 当前权限模式不能执行 Adapter；需要执行时明确说明需要 full 权限。',
     native_command_capability: bashCapabilityNotice,
     open_browser_guidance: adapterExecutionEnabled
-      ? '只有页面/DOM 工具需要先打开网站。`type=api, runtime=background` + `mode=direct` 的 API 工具不要预先打开网站或检测登录；如果这类工具返回需要登录或需要页面上下文，再打开 Skill 文档中的 Homepage URL。'
+      ? '只有页面/DOM 工具需要先打开网站。`type=api, runtime=background` + `mode=direct` 的 API 工具不要预先打开网站或检测登录（登录由 WeWorker 自动处理）；如果这类工具返回需要页面上下文，再打开 Skill 文档中的 Homepage URL。'
       : '本节仅在 full 权限可执行；当前不要打开网站或调用 Adapter。',
     open_browser_wait_rule: adapterExecutionEnabled
       ? `${openBrowserRule} 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。`

@@ -920,5 +920,11 @@
     "xiaohongshu.com",
     "xhscdn.com",
     "xhslink.com"
-  ]
+  ],
+  "auth": {
+    "login_url": "https://www.xiaohongshu.com/login",
+    "check": {
+      "command": "check-login-status"
+    }
+  }
 }

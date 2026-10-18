@@ -614,5 +614,11 @@
     "picx.zhimg.com",
     "picy.zhimg.com",
     "picx1.zhimg.com"
-  ]
+  ],
+  "auth": {
+    "login_url": "https://www.zhihu.com/signin",
+    "check": {
+      "command": "whoami"
+    }
+  }
 }

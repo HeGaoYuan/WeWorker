@@ -13,7 +13,9 @@ import {
   browserExecutableCandidates,
   buildBrowserArgs,
   createCdpPipe,
+  extensionBuildDigest,
   findBrowserExecutable,
+  readLoadedExtensionBuild,
   loadInstanceToken,
   markExtensionInstance,
   normalizeBrowserMode,
@@ -165,6 +167,13 @@ test('launch flags use a private profile, the CDP pipe and an off-screen window'
   assert.equal(args.some((arg) => arg.startsWith('--remote-debugging-port') || arg.startsWith('--load-extension')), false)
 })
 
+test('launch flags keep navigator.webdriver false despite the CDP pipe', () => {
+  const args = buildBrowserArgs({ userDataDir: 'C:/weworker-fixtures/profile' })
+  assert.ok(args.includes('--disable-blink-features=AutomationControlled'))
+  // These flags make Chrome announce automation to pages and users.
+  assert.equal(args.some((arg) => arg === '--enable-automation' || arg.startsWith('--headless')), false)
+})
+
 test('the instance token is stable for a profile and replaced when invalid', () => {
   const dir = tempDir()
   const first = loadInstanceToken(dir)
@@ -249,6 +258,64 @@ test('starts the browser off-screen with the extension and its instance marker, 
   assert.deepEqual(killed, [])
   assert.equal(launches.length, 1)
   assert.deepEqual(statuses, ['starting', 'running', 'stopped'])
+})
+
+/** Fake worker storage: answers the read, restore and marker evaluations. */
+function storageHandlers(stored) {
+  const evaluated = []
+  return {
+    evaluated,
+    'Runtime.evaluate': (params) => {
+      evaluated.push(params.expression)
+      if (params.expression.includes('chrome.storage.local.get(null)')) return { result: { type: 'string', value: JSON.stringify(stored) } }
+      return { result: { type: 'string', value: 'ok' } }
+    },
+  }
+}
+
+test('a changed extension build is reinstalled once, keeping its local storage', async () => {
+  const browserHome = tempDir()
+  const handlers = storageHandlers({ siteMemories: { 'example.com': { captureCount: 2 } } })
+  const first = fakeBrowser({ handlers })
+  const { instance } = manager({ browserHome, browsers: [first], overrides: { extensionDigest: () => 'build-1' } })
+  await instance.start()
+  // Chrome keeps the worker it registered first; only a reinstall picks up new files.
+  assert.deepEqual(first.methods().slice(0, 4), ['Browser.getVersion', 'Extensions.loadUnpacked', 'Target.getTargets', 'Target.attachToTarget'])
+  assert.ok(first.methods().indexOf('Extensions.uninstall') < first.methods().lastIndexOf('Extensions.loadUnpacked'))
+  assert.equal(first.methods().filter((method) => method === 'Extensions.loadUnpacked').length, 2)
+  assert.ok(handlers.evaluated.some((expression) => expression === 'chrome.storage.local.set({"siteMemories":{"example.com":{"captureCount":2}}}).then(() => \'ok\')'))
+  assert.equal(readLoadedExtensionBuild(browserHome), 'build-1')
+  await instance.stop()
+
+  const second = fakeBrowser()
+  const again = manager({ browserHome, browsers: [second], overrides: { extensionDigest: () => 'build-1' } })
+  await again.instance.start()
+  assert.equal(second.methods().includes('Extensions.uninstall'), false)
+  assert.equal(second.methods().filter((method) => method === 'Extensions.loadUnpacked').length, 1)
+  await again.instance.stop()
+})
+
+test('a browser that cannot reinstall the extension still starts and retries next time', async () => {
+  const browserHome = tempDir()
+  const logs = []
+  const browser = fakeBrowser({ handlers: { 'Extensions.uninstall': () => { throw new Error("'Extensions.uninstall' wasn't found") } } })
+  const { instance } = manager({ browserHome, browsers: [browser], overrides: { extensionDigest: () => 'build-2', log: (line) => logs.push(line) } })
+  const status = await instance.start()
+  assert.equal(status.status, 'running')
+  assert.ok(logs.some((line) => line.includes('could not update the extension')))
+  assert.equal(readLoadedExtensionBuild(browserHome), null)
+  await instance.stop()
+})
+
+test('the extension build digest covers file paths and contents', () => {
+  const dir = tempDir()
+  fs.mkdirSync(path.join(dir, 'background'))
+  fs.writeFileSync(path.join(dir, 'manifest.json'), '{}')
+  fs.writeFileSync(path.join(dir, 'background', 'service-worker.js'), 'v1')
+  const first = extensionBuildDigest(dir)
+  assert.equal(extensionBuildDigest(dir), first)
+  fs.writeFileSync(path.join(dir, 'background', 'service-worker.js'), 'v2')
+  assert.notEqual(extensionBuildDigest(dir), first)
 })
 
 test('shows the window on-screen for sign-in and hides it again', async () => {

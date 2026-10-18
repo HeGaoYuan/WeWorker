@@ -195,8 +195,107 @@ export function validateV2Manifest(manifest, directoryName = "?") {
   } else if (match != null && (!Array.isArray(match) || match.length > 0)) {
     fail(adapterName, "match is forbidden for pure wewright adapters.");
   }
+  for (const command of commands) {
+    if (command.auth !== undefined && !["required", "optional", "none"].includes(command.auth)) {
+      fail(adapterName, `command "${command.id}": auth must be required|optional|none.`);
+    }
+  }
+  if (manifest.auth !== undefined) validateAuth(adapterName, manifest, commands, hasExtension);
 
   return { name: manifest.name, manifest, commands };
+}
+
+const AUTH_FIELDS = new Set(["login_url", "login_hosts", "check", "autologin", "display_name"]);
+const AUTH_HOST_RE = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$/;
+
+function authHostMatches(host, pattern) {
+  const value = String(pattern || "").toLowerCase();
+  return value.startsWith("*.") ? host === value.slice(2) || host.endsWith(value.slice(1)) : host === value;
+}
+
+function authUrl(adapterName, value, field, hosts) {
+  let url;
+  try { url = new URL(String(value)); } catch { fail(adapterName, `auth.${field} must be an absolute URL.`); }
+  const local = url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !local) || url.username || url.password) {
+    fail(adapterName, `auth.${field} must be an https URL without credentials.`);
+  }
+  if (!hosts.some((pattern) => authHostMatches(url.hostname.toLowerCase(), pattern))) {
+    fail(adapterName, `auth.${field} host must be declared in match, runtime_allowed_hosts or auth.login_hosts.`);
+  }
+  return url;
+}
+
+function validateCookieNames(adapterName, value, field) {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > 16 || value.some((name) => typeof name !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/.test(name))) {
+    fail(adapterName, `auth.check.cookies.${field} must be at most 16 cookie names.`);
+  }
+}
+
+function validateCookieValues(adapterName, value, field) {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 16
+    || Object.entries(value).some(([name, expected]) => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/.test(name) || typeof expected !== "string" || expected.length > 256)) {
+    fail(adapterName, `auth.check.cookies.${field} must map at most 16 cookie names to string values.`);
+  }
+}
+
+/**
+ * `auth` declares the login page and how to tell that the user is signed in.
+ * The host runs the login flow; Adapters never write login or check commands for it.
+ */
+function validateAuth(adapterName, manifest, commands, hasExtension) {
+  const auth = manifest.auth;
+  if (!hasExtension) fail(adapterName, "auth requires extension commands.");
+  if (!auth || typeof auth !== "object" || Array.isArray(auth)) fail(adapterName, "auth must be an object.");
+  for (const key of Object.keys(auth)) if (!AUTH_FIELDS.has(key)) fail(adapterName, `unknown auth field "${key}".`);
+  const loginHosts = auth.login_hosts ?? [];
+  if (!Array.isArray(loginHosts) || loginHosts.length > 16 || loginHosts.some((host) => typeof host !== "string" || !AUTH_HOST_RE.test(host))) {
+    fail(adapterName, "auth.login_hosts must contain at most 16 host names (optionally *.domain).");
+  }
+  const hosts = [...(manifest.match || []), ...(manifest.runtime_allowed_hosts || []), ...loginHosts];
+  if (typeof auth.login_url !== "string") fail(adapterName, "auth.login_url is required.");
+  authUrl(adapterName, auth.login_url, "login_url", hosts);
+  if (auth.display_name !== undefined && (typeof auth.display_name !== "string" || !auth.display_name.trim() || auth.display_name.length > 40)) {
+    fail(adapterName, "auth.display_name must be a short name.");
+  }
+  if (auth.check !== undefined) {
+    const check = auth.check;
+    if (!check || typeof check !== "object" || Array.isArray(check) || Object.keys(check).some((key) => !["cookies", "command"].includes(key))) {
+      fail(adapterName, "auth.check may only declare cookies and command.");
+    }
+    if (!check.cookies && !check.command) fail(adapterName, "auth.check must declare cookies or command.");
+    if (check.cookies !== undefined) {
+      const cookies = check.cookies;
+      if (!cookies || typeof cookies !== "object" || Array.isArray(cookies)
+        || Object.keys(cookies).some((key) => !["url", "all", "any", "equals", "not"].includes(key))) {
+        fail(adapterName, "auth.check.cookies may only declare url, all, any, equals and not.");
+      }
+      authUrl(adapterName, cookies.url, "check.cookies.url", hosts);
+      validateCookieNames(adapterName, cookies.all, "all");
+      validateCookieNames(adapterName, cookies.any, "any");
+      validateCookieValues(adapterName, cookies.equals, "equals");
+      validateCookieValues(adapterName, cookies.not, "not");
+      if (!cookies.all?.length && !cookies.any?.length && !Object.keys(cookies.equals || {}).length) {
+        fail(adapterName, "auth.check.cookies must require at least one cookie.");
+      }
+    }
+    if (check.command !== undefined) {
+      const command = commands.find((entry) => entry.id === check.command);
+      if (!command || command.runtime !== "extension" || command.safety !== "read") {
+        fail(adapterName, "auth.check.command must name a read Extension command of this package.");
+      }
+    }
+  }
+  if (auth.autologin !== undefined) {
+    const autologin = auth.autologin;
+    if (!autologin || typeof autologin !== "object" || Array.isArray(autologin)
+      || Object.entries(autologin).some(([key, value]) => !["switch", "username", "password", "submit"].includes(key)
+        || typeof value !== "string" || !value.trim() || value.length > 200)) {
+      fail(adapterName, "auth.autologin may only declare switch, username, password and submit CSS selectors.");
+    }
+  }
 }
 
 function walkFiles(root, relative = "", out = []) {

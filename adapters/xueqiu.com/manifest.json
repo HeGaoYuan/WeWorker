@@ -22,6 +22,12 @@
     "danjuanfunds.com",
     "www.danjuanfunds.com"
   ],
+  "auth": {
+    "login_url": "https://xueqiu.com/",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "scenarios": [
     {
       "id": "stock-search",
