@@ -15,18 +15,19 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 - `weworker/renderer/`：React Renderer，负责桌面端用户界面和交互。
 - `weworker/electron/`：Electron 主进程、窗口生命周期、IPC、资源路径和应用退出清理。
 - `weworker/scripts/`：构建、打包、配置生成、校验和开发辅助脚本。
-- `extension/`：浏览器扩展、页面注入、Bridge、扩展权限配置和构建后 Adapter 运行资源。
-- `adapters/`：内置公开 Adapter v2 包源码；新增或修改 Adapter 时必须同步 build profile、能力文档和对应验证。
+- `extension/`：浏览器扩展、页面注入、Bridge 和扩展权限配置。
+- `adapters/`：仓库根目录的内置 Adapter v2 包（host-managed）定义与站点能力描述；新增或修改 Adapter 时必须同步构建 profile、权限、文档和对应验证。构建时由 `weworker/scripts/prepare-build.cjs` 打包为 host-managed 包，经 Bridge 下发，不随扩展内置。
 - `webcli/`：WebCLI 命令入口与 Adapter 调用层；统一对外提供 `webcli call <adapter-id>.<tool-id>`。
 - `components/webwright/`：网站探索agent实现源码目录。源码中可以沿用既有包名和路径，用户侧文案、UI、文档统一使用「网站探索agent」。
+- `officialWeb/`：产品官网、文档站与下载页（Vite + React）。
 - `docs/`：设计、构建、贡献、工作流和维护文档。
 - `.github/`：Issue/PR 模板与公开自动化流程。
 
 ## 关键配置与依赖关系
 
 - `weworker/build-profile.json` 是桌面端构建 profile 基线；新增 Provider、Adapter 打包范围或构建元数据时必须同步验证。
-- `extension/manifest.json` 是浏览器扩展 manifest 基线；新增权限、host 权限或扩展能力时必须确认不会引入私有域名、非公开网络地址或过宽权限。
-- `extension/adapters/index.json` 仅保留旧版兼容清单；公开内置 Adapter 源码应放在根 `adapters/<domain>/`，不得同时在根 `adapters/` 与 `extension/adapters/` 维护同名 Adapter。
+- `extension/manifest.json` 是浏览器扩展 manifest 基线；新增权限、host 权限或扩展能力时必须确认不会引入私有域名、私网 IP 或过宽权限。
+- 扩展内置的 `adapters/index.json` 与 `adapters/registry.json` 由 `weworker/scripts/prepare-build.cjs` 构建时生成（当前恒为空清单），不得手工维护或提交生成产物；新增、删除或重命名 Adapter 时只需更新 `adapters/<id>/manifest.json` 与 `weworker/build-profile.json` 的打包范围。
 - `weworker/scripts/build-profile-overlay.cjs` 负责按 profile/overlay 生成构建配置；修改构建配置时必须验证生成结果和最终构建入口一致。
 - 构建产物、本地配置、缓存、真实用户数据和运行时临时文件不得提交。
 - 修改依赖时必须同步 lockfile，并说明新增依赖的用途。
@@ -36,6 +37,8 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 - 保持现有模块边界：UI 改动优先放在 Renderer；窗口、生命周期、资源路径和 IPC 放在 Electron；模型调用、文件访问、安全校验和 Adapter 桥接放在 Backend。
 - `webcli/` 与 `extension/` 维持独立边界；除任务明确要求外，不改其协议和运行逻辑。
 - WebCLI 统一对外提供 Adapter 概念与 `webcli call` 命令入口；Extension Adapter 通过 Bridge/Chrome 扩展执行，Toolkit Adapter 通过同一安装包内的 embedded Toolkit Runtime 执行，两类 Adapter 不共享底层 Runner。
+- 开源与内部仓库保持通用架构、运行时和探索流程一致，差异限于 Adapter 内容与对应打包范围。通用改进不得引入内部业务信息或另建内部专用执行链路。
+- 探索、生成和修复前核对已有 Adapter 的 runtime、execution、鉴权来源及真实页面依赖；需要浏览器登录态不等于需要打开业务页。保留已有后台 API 能力，禁止因生成、修复或同步将其退化为页面调用。声称无需业务页时，必须验证后台运行器和关闭任务自有业务页后的普通调用；不得为验收关闭用户已有页面。
 - Node.js 代码使用现有 ESM/CommonJS 风格，不为一次性逻辑新增框架或大型依赖。
 - 网站探索agent Python 环境由 `uv` 管理，不使用系统 `pip` 修改环境。
 - 开发态从 `components/webwright/` 源码启动网站探索agent；正式构建只打包该目录提供的 embedded `onedir`。
@@ -47,10 +50,9 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 
 ## 敏感信息约束
 
-- 不得提交真实密码、Token、API Key、Cookie、个人账号、真实用户数据、真实会话数据、非公开系统名称、私有域名或非公开网络地址。
-- 示例地址使用 `example.com`、`example.org` 或 `localhost`。
+- 不得提交真实密码、Token、API Key、Cookie、个人账号、真实用户数据、真实会话数据、非公开系统名称、私有域名或私网 IP。
+- 示例地址使用 `example.com`、`example.org`、`localhost` 或 `127.0.0.1`。
 - 测试中的密钥、Token、账号必须使用明显占位值。
-- 测试、Fixture、示例和文档中的本地路径不得包含真实用户名、真实组织名或真实机器路径。需要覆盖 Windows 绝对路径逻辑时，使用中性虚构路径，例如 `C:/weworker-fixtures/user-files` 或 `C:/Users/weworker-test/.weworker/user-files`；不得使用来自开发者电脑的 `C:/Users/<真实用户名>/...`、`D:/workspace/<真实项目>/...` 等路径。
 - 不在日志记录模型 Key、Token、密钥或用户数据路径。
 - 敏感信息扫描不放入公开自动化流程；合并前在受控环境进行检查。
 - 特殊情况：内置模型的真实api key允许写死进入代码，但不提供UI展示，该部分api key默认可服务端进行控制，与客户端完全隔离。

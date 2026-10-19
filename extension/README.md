@@ -11,14 +11,15 @@ extension/
 │   └── service-worker.js  Service Worker：后台进程
 ├── content/
 │   └── injector.js        Content Script：页面注入脚本
-├── adapters/              构建后运行资源目录
-│   └── index.json         旧版兼容 Adapter 清单
+├── adapters/              构建产物目录（构建时生成，源码中不存在）
+│   ├── index.json         扩展启动初始化用 Adapter ID 清单（恒为空）
+│   └── registry.json      旧版兼容清单（恒为空）
 ├── popup/                 扩展弹窗 UI
 ├── sidepanel/             侧边栏 UI
 └── icons/                 扩展图标
 ```
 
-当前内置 Adapter 包源码位于仓库根目录 `adapters/<domain>/`，并由 `weworker/build-profile.json` 控制是否进入默认构建。构建时会生成扩展运行所需的 Adapter 资源；不要在根 `adapters/` 与 `extension/adapters/` 同时维护同名 Adapter。
+当前内置 Adapter 包源码位于仓库根目录 `adapters/<domain>/`，并由 `weworker/build-profile.json` 控制是否进入默认构建。构建时 Adapter 以 host-managed 包形式经 Bridge 下发，不随扩展内置；扩展内的 `adapters/index.json` 与 `adapters/registry.json` 由 `weworker/scripts/prepare-build.cjs` 构建时生成（恒为空清单），不要手工维护。
 
 ## Chrome 扩展的运行模型
 

@@ -23,6 +23,17 @@ export function adapterPermissions(manifest) {
     ...(manifest.match || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...(manifest.runtime_allowed_hosts || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...manifest.commands.map((command) => 'runtime:' + command.runtime),
+    ...manifest.commands.flatMap(command => command.pageRoute?.navigation ? ['page-navigation:' + JSON.stringify(command.pageRoute)] : []),
+    ...manifest.commands.flatMap(command => command.pageRoute?.workflow ? ['page-workflow:' + JSON.stringify(command.pageRoute)] : []),
+    ...manifest.commands.flatMap(command => command.uiWrite ? ['ui-write:' + JSON.stringify({ route: command.pageRoute, submission: command.uiWrite })] : []),
+    ...manifest.commands.flatMap(command => command.pageWrite ? ['page-write:' + JSON.stringify({ route: command.pageRoute, request: command.pageWrite })] : []),
+    ...manifest.commands.flatMap(command => (command.http?.origins || []).map(origin => 'http-origin:' + origin)),
+    ...manifest.commands.flatMap(command => command.http?.auth ? ['http-auth:' + JSON.stringify(command.http.auth)] : []),
+    ...manifest.commands.flatMap(command => command.http?.cookies ? [
+      ...command.http.cookies.names.map(name => 'http-cookie:' + command.http.cookies.origin + ':' + name),
+      ...(command.http.cookies.csrf ? ['http-csrf:' + JSON.stringify(command.http.cookies.csrf)] : []),
+      ...(command.http.version === 2 ? ['http-cookie-scope:' + JSON.stringify(command.http.cookies)] : []),
+    ] : []),
     ...manifest.commands.filter((command) => command.execution?.runtime === 'background').map(() => 'execution:background'),
     ...manifest.commands.filter((command) => command.safety === 'write').map((command) => 'write:' + command.id),
     ...manifest.commands.filter((command) => command.safety === 'write' && command.requires_confirmation === false).map((command) => 'unconfirmed-write:' + command.id),
@@ -37,14 +48,14 @@ function domainsOverlap(left, right) {
 
 function readBuiltinCatalogMetadata(root) {
   const metadataPath = join(root, '.profile.json');
-  if (!existsSync(metadataPath)) return { adapters: null, profile: null, legacy: null };
+  if (!existsSync(metadataPath)) return { adapters: null, profile: null };
   try {
     const stat = lstatSync(metadataPath);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('profile metadata is not a regular file');
     const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
     if (metadata?.schema_version !== 1 || typeof metadata.profile !== 'string'
       || !/^[a-z0-9][a-z0-9_-]*$/.test(metadata.profile) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(metadata.profile)
-      || !Array.isArray(metadata.adapters) || !Array.isArray(metadata.legacy)) throw new Error('invalid profile metadata');
+      || !Array.isArray(metadata.adapters)) throw new Error('invalid profile metadata');
     const adapters = new Map();
     const seen = new Set();
     for (const entry of metadata.adapters) {
@@ -56,15 +67,9 @@ function readBuiltinCatalogMetadata(root) {
       seen.add(folded);
       adapters.set(entry.name, entry);
     }
-    for (const name of metadata.legacy) {
-      assertAdapterIdentity(name);
-      const folded = name.toLowerCase();
-      if (seen.has(folded)) throw new Error('duplicate profile identity');
-      seen.add(folded);
-    }
-    return { adapters, profile: metadata.profile, legacy: metadata.legacy };
+    return { adapters, profile: metadata.profile };
   } catch {
-    return { adapters: new Map(), profile: null, legacy: null, error: 'INVALID_BUILTIN_PROFILE' };
+    return { adapters: new Map(), profile: null, error: 'INVALID_BUILTIN_PROFILE' };
   }
 }
 /** No implicit user override. Only an explicit, profile-bound selection is active. */
@@ -167,7 +172,7 @@ export function buildAdapterCatalog(options = {}) {
   }
   const selected = [];
   for (const [name, selection] of Object.entries(state.selections)) {
-    if (!byName.has(name)) diagnostics.push({ name, source: selection?.source, code: 'ADAPTER_NOT_SELECTED' });
+    if (!byName.has(name) && selection?.source !== 'disabled') diagnostics.push({ name, source: selection?.source, code: 'ADAPTER_NOT_SELECTED' });
   }
   for (const [name, choices] of byName) {
     if (blockedNames.has(name)) continue;

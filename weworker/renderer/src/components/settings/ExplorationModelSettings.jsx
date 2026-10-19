@@ -57,9 +57,11 @@ export default function ExplorationModelSettings() {
       setResult(data)
       if (data.ok) {
         setStored(data)
-        setForm(explorationForm(data))
-        setOpen(false)
-        if (save) useSettingsStore.setState(state => ({ explorationModelRevision: state.explorationModelRevision + 1 }))
+        if (save) {
+          setForm(explorationForm(data))
+          setOpen(false)
+          useSettingsStore.setState(state => ({ explorationModelRevision: state.explorationModelRevision + 1 }))
+        }
       } else setOpen(true)
     } catch (error) {
       if (id !== requestId.current) return
@@ -68,10 +70,17 @@ export default function ExplorationModelSettings() {
     } finally { if (id === requestId.current) setBusy(false) }
   }
 
-  const status = busy ? '正在检测…' : result && !result.ok ? '连接待修复' : ['connected', 'independent'].includes(stored?.status) ? '已连接' : '待验证'
+  const status = busy ? '正在检测…' : loadError || (result && !result.ok) ? '连接待修复' : ['connected', 'independent'].includes(stored?.status) ? '已连接' : '待验证'
   return <section className="exploration-model-settings" aria-label="网站探索模型">
     <button type="button" className="exploration-model-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <strong>网站探索模型</strong><span>{status} · {open ? '收起' : '配置'}</span>
+      <strong>网站探索模型</strong>
+      <span className="exploration-model-toggle-meta">
+        <span className={`exploration-model-status${status === '已连接' ? ' is-connected' : ''}`}>
+          {status === '已连接' && <span className="exploration-model-status-dot" aria-hidden="true" />}
+          {status}
+        </span>
+        <span>· {open ? '收起' : '配置'}</span>
+      </span>
     </button>
     {open && <div className="exploration-model-body">
       <p>确认服务地址，验证后保存。不影响主任务使用。</p>
@@ -88,7 +97,7 @@ export default function ExplorationModelSettings() {
       </form>}
       {!form && <button type="button" disabled={busy} onClick={() => run(false)}>重新检测</button>}
       {loadError && <p role="alert">{loadError}</p>}
-      {result && <div role="status"><p>{connectionMessage(result)}</p>{!result.ok && result.detail && <details><summary>查看详情</summary><pre>{result.detail}</pre></details>}</div>}
+      {result && <div role="status" className={`exploration-model-result${result.ok ? ' is-success' : ''}`}><p>{connectionMessage(result)}</p>{!result.ok && result.detail && <details><summary>查看详情</summary><pre>{result.detail}</pre></details>}</div>}
     </div>}
   </section>
 }

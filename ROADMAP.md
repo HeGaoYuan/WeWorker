@@ -1,5 +1,143 @@
 # WeWorker Roadmap
 
+- 2026-10-18（授权提交完整功能 PR）：用户明确授权推送 `codex/api-exploration-cli` 与原始集成基线 `codex/api-exploration-base`，创建前者到后者的 PR。基线保持 `baf9f98`，交付覆盖截至 `ea61385` 的全部 59 个功能/测试/文档提交，另补本次交付记录及验收脚本行尾空白清理；不先合入基线，便于完整审查。客户端简单查询演示已完成，OpenCLI 全面对齐仍暂停，完整余项保留；本次不改变最终发布目标。远端提交与 PR 状态以 GitHub 实际结果为准，历史“未推送/未建 PR”仅描述各自当时状态。
+
+- 2026-10-18（客户端简单查询演示目标完成）：开发客户端在空目录以一句自然语言完成 GLM 观察、编写、真实验证和安装，耗时 8 分 14 秒；后续由客户端修复时间格式并通过默认/all/5h/week 四组真实 cases。显式页面准备、关闭任务页后的四次聊天查询、后续聊天发现、最终 Bridge 重启后新聊天两次查询通过，零业务页/无页面回退。最终生成包 13 项公开占位审查、静态校验、持久目录真实调用、随包 Skill 4 项和资源一致性通过；默认环境已恢复，8766 占位已释放。演示说明见 docs/client_webcli_demo_runbook.md，早期失败和跨环境限制保留。原全面 OpenCLI 对齐仍暂停，完整 W/B/A/U/E、frame 与 1194 欠账不变；仅本地提交，无 push/PR。
+
+- 2026-10-18（客户端业务契约重验）：新聊天从空安装目录生成页面准备和后台查询并通过 5 组真实 cases，但多出月度窗口、舍入精度和旧参数别名未满足需求；业务纠正后仍未完全符合，保留候选，不计最终通过。共享 Skill 前置本轮参数/默认范围/精度/缺失值逐项复核，随包 4 项（zvDuRf）及客户端三份 Skill 一致性通过，已在另一空目录进行单句重验。
+
+- 2026-10-18（准备命令验证语义修复）：后台预览不再把显式 storage 刷新悄悄改成缓存读取，改为返回公开分类 BACKGROUND_PREPARATION_REQUIRES_PAGE；共享 Skill 前置页面准备→后台查询的顺序。聚焦 49 项与 CLI＋Bridge 双打包后台 9 项通过，覆盖拒绝时零请求/零新页；客户端最终生成仍待重验，不能将候选或自动化回归算作目标完成。
+
+- 2026-10-18（客户端候选闭环与最终重验）：客户端已自行生成并安装后台额度查询，真实 cases 与普通调用通过；审查发现准备命令只读旧缓存、范围多出月度额度，不计目标完成。补共享 Skill 的页面准备、同名修复和 session 冲突指引，候选保留；已切到新的空 Adapter/任务目录进行最终单句验收。随包 Skill 4 项和实际客户端资源一致性通过，全面对齐仍暂停。
+
+- 2026-10-18（客户端实测阻塞修复）：修复网络 all 列表中的明确请求 key 在 detail 时被默认业务过滤误判过期；扩展 network/events 11 项、Chromium 1217 CLI＋Bridge 双打包专项 3 项通过。实测再补后台 helper 准确契约、仅固定公开分类的失败诊断，聚焦 45 项/helper 11 项及双打包后台 8 项通过。用户重载后客户端已成功读取原先失败的额度详情，生成验收继续；完整闭环仍未完成，全面 OpenCLI 目标保持暂停。
+
+- 2026-10-18（客户端共享 WebCLI 演示接入进行中）：普通聊天移除旧探索工具竞争，按 full 权限使用共享探索/browser Skill 和 `exploration.*`；同步同分发 Skill 并按内容刷新 SDK 会话，后台执行指引保持无业务页。修复开发构建 profile 缺省 legacy 字段与纯用户包 disabled 后桌面回退；补 ZIP 类型依赖。Backend 最终聚焦 13 文件/96 项、typecheck、双打包后台专项 8 项、随包 Skill 4 项及相关构建通过。开发客户端真实生成暴露模型凭据误用，已停止失败轮次并前置通用凭据/服务归属指引，正在用干净验收目录重跑；尚未标记客户端闭环完成。全面 OpenCLI 目标仍暂停，W/B/A/U/E、frame 和 1194 欠账完整保留；无 push/PR。
+
+- 2026-10-18（优先准备客户端自然语言演示，目标待新对话启动）：用户明确继续暂停 OpenCLI 全面对齐，先完成客户端聊天复用同一套 WebCLI 探索与 Skill。已核对 bf3b22d 干净检查点、GLM 无页证据与已知欠账；简单查询演示无需等待 frame/多步写/外部 CDP 等能力。新目标、客户端入口/指引差异、验收条件和边界见 docs/client_webcli_demo_goal.md；本轮只整理交接，客户端尚未实现或验收，完整 W/B/A/U/E 保留，无 push/PR。
+
+- 2026-10-18（GLM 删除重建与无页验收完成）：按授权清理旧页面版生成物，经 WebCLI 重新观察、显式准备组织/项目上下文、生成并安装后台 `bigmodel.cn@1.0.2`。全部 GLM 标签关闭后 4 组真实验证、4 次普通调用、Bridge 重启后 4 次查询通过，零新页；首次登录/上下文切换仍需一次 prepare-context。修复纯用户 Adapter 卸载后无法重新探索，同时保留禁用旧 legacy 回退；更新生成 Skill。WebCLI 130 文件/1465 项、GLM 离线 11 项、源码/打包真实隔离 CLI 各 4 项通过。详见 docs/glm_quota_adapter_validation.md 和交接末尾。新机器/浏览器冷启动/真实登录恢复/独立 Agent/内部同步仍欠验，整体目标继续暂停；无 push/PR。
+
+- 2026-10-18（后台 API 通用流程改进）：新增 EXTENSION_API 探索策略，复用既有后台 Runner，保留 execution 元数据；按运行时验证、后台 repair 拒绝页面退化，更新共架构约束与两份 WebCLI Skill。最终单测 130 文件/1464 项、扩展相关 53 项、源码后台 7 项、双打包后台 8 项和独立 HTTP 双打包 24 项通过；完整 Chromium 1217 CLI＋Bridge 双打包 **114 项**通过（76lB8i），最终后台专项 **8 项** agzD9n 补齐实际 401/更严格无页断言。当时 GLM 仍为页面版；现已由顶部删除重建专项完成后台实测，整体对齐目标继续暂停。详见 docs/background_api_exploration.md 与交接末尾；无 push/PR。
+
+- 2026-10-18（GLM 额度实站演示验证）：按用户授权生成并本地安装 `bigmodel.cn.get-quota`，支持 `all/5h/week`，读取当前成员已用/剩余百分比和重置时间。四组探索真实 cases、六次安装后普通调用、前台页面对照、非法参数零额度请求、十项离线错误分支和安装包静态检查通过。处理网站鉴权与后台百分比动画初始值问题；不导出凭据、不保存真实额度到仓库。当前分支完成生成，全局 npm 1.0.4 完成普通调用；从零生成的发布入口仍需演示前准备。详见 `docs/glm_quota_adapter_validation.md`。整体对齐目标继续暂停，本项不改变其余能力欠账；无 push/PR。
+
+- 2026-10-18（本阶段完成，按用户要求暂停整体目标）：hash、有界循环/分支和显式跨源主文档读取已验证；导航竞态修复 f2f54d8、验收隔离 a4052b3/c26226a，最终 Chromium 1217 CLI＋Bridge 完整双打包 **109 项** 9ccf6Q 通过；**6291 文件/28 私有绑定**隐私通过。连续 102 次跨源 workflow、跨源→共享修复组合 12 项、WebCLI 1439 项、扩展 64 项、构建/配置/Skill/npm pack 634 文件通过。frame 1c4d8a9 仅未接入基础，替换后解析探针超时仍开放；完整 W/B/A/U/E 余项见台账。整体未完成；不再展开下一阶段，未 push/PR，日常浏览器与 Python 网站探索agent未动。
+
+- 2026-10-18（跨源阶段收尾，之后按用户要求暂停）：导航快照竞态已复现并修复 f2f54d8，WebCLI 1439 项、扩展 64 项和连续 102 次跨源 workflow 调用通过。完整双打包 tBXyDE 前 108 项通过，最后共享修复夹具因 localhost 已属于跨源包而失败；仅以隔离浏览器精确映射的公开占位 host 修正夹具，组合与完整回归重新验证中。frame 基础 1c4d8a9 未接入，替换后解析探针 LufBqx 超时并正常收尾，不能计为完成。收尾后暂停，全部余项保留。
+
+- 2026-10-18（B01 跨源主文档进行中）：固定 resultOrigin/step.origin、任务 allowedOrigins、完整安装权限与精确路由、固定 tab 预览和旧 profile 拒绝已实现。源码与双打包跨源专项各 11 项通过（2zWcqF/r9KzgD），含 hash/往返/作者取消、12 次 workflow 调用；HTTP 24 项、WebCLI 1436 项、扩展 60 项通过。完整双打包回归继续，早期一次无详细错误的偶发失败保留未知原因，未计整体完成。frame 与 W/B/A/U/E 全部剩余项保持。
+
+- 2026-10-18（hash/有界读取阶段已验证）：本地代码检查点 d0e8ea9，Chromium 1217 CLI＋Bridge 完整双打包 **99 项** XoGPDg 通过；5370 产品文件/28 私有绑定隐私检查通过。最终控制专项 8 项、HTTP 24 项、WebCLI 1427 项、扩展 53 项、构建/配置/Skill/npm pack 630 文件证据齐全。整体 active；B01 跨源主文档声明进入下一实现，当前未提交、未实机验证，frame 及完整余项保留。
+
+- 2026-10-18（B01 有界读取控制进行中）：新增 when/repeat/until/collect、每轮身份与全局预算、去重/冲突/无进展/限额拒绝；源码 Chromium 1217 专项 7 项、WebCLI 127 文件/1427 项、扩展 53 项通过。hash 完整回归发现断线期间缺失 manifest 被当作旧 Adapter 导致五页重载，已收紧为只有明确 legacy 才重载；完整双打包复跑中，不提前计通过。双打包 HTTP 24 项、配置/Skill/npm pack 630 文件与一致性通过。整体 active，跨源/frame 和全部余项保留。
+
+- 2026-10-18（B01 hash 进行中）：独立片段 path/query、全部参数业务关联/刷新标记、同目标明确重载与旧 profile 拒绝已实现；源码 Chromium 1217 专项 8 项、WebCLI 127 文件/1424 项、聚焦 69 项、扩展 16 项通过。补齐单步 hash 取消与逐 case 预览；57 文件隐私、构建/配置/Skill/npm pack 628 文件通过。最终双打包完整浏览器/HTTP 回归运行中，整体 active，不提前计通过。
+
+- 2026-10-18（恢复持续目标）：498ba61 干净工作区与分支已核对，V/R 已验证项复用，完整 W/B/A/U/E 余项保持开放。B01 hash 已完成当前与上游源码核对，采用独立片段契约、业务参数关联/刷新标记、同目标明确重载；实现与测试进行中，不计已完成。
+
+- 2026-10-18（查询导航阶段完成，按用户请求暂停）：代码检查点 53acae7；queryParameters 的纯查询/路径组合/workflow、精确 URL/新文档/不重放/修复闭环已验。WebCLI 127 文件/1416 项、源码 Chromium 导航专项 8 项、双打包 HTTP 24 项和最终双打包 Chromium 1217 完整 87 项通过；4450 文件/28 私有绑定隐私扫描通过。U04/U05/U06 审计与全部余项保留，hash 实现尚未开始。用户将新开对话继续，整体未完成；最新证据与恢复入口见交接顶部/末尾。
+
+- 2026-10-18（B01 查询导航进行中）：navigate 支持显式 queryParameters，与 path/workflow 组合，完整 URL/新文档/不重放/逐参数两组作者值及旧 profile 拒绝保持。源码 Chromium 1217 导航专项 8 项通过（ma1h9k），最终双打包完整回归运行中；不提前计通过。U06 已补固定 1.8.8 tag 扩展源码审计，区分 Worker/流式正文/命令结果复用与统一诊断导出，未关闭实机欠账。整体目标 active。
+
+- 2026-10-18（U01 规范审计）：新增 adapter convention-audit，复用 v2 来源/摘要校验和只编译语法，七类配置/启发式提示不执行 Adapter。源码/最终打包各 3 项、聚焦 7 项、WebCLI 127 文件/1409 项通过，npm pack 625 文件含新模块。显示报告避免表格只展示包信息而丢提示；动态/helper/Toolkit/legacy 及统一 verify/evidence 仍开放。整体目标 active。
+
+
+- 2026-10-18（共享修复已验证）：R02 新增显式 sharedFiles 和服务绑定的全包影响范围，所有读/写命令重新验证；修复辅助命令被固定跳过的实际缺口。WebCLI 126 文件/1406 项、源码/双打包 HTTP 各 24 项、源码 Chromium 共享专项 3 项通过，最终双打包 Chromium 1217 完整 83 项及 3867 文件/28 私有绑定隐私扫描通过。U05 完成实际源码审计，确认 external CLI 注册/安装/透传为独立差距；整体目标 active，未改变 Python 网站探索agent或受限范围。
+
+
+- 2026-10-18（Adapter 导出编辑流程）：U01 新增 `adapter eject <id> --directory <new-dir>`，完整复制有效 builtin v2 包，禁止覆盖/managed 目录，不执行或激活；复用 develop/use 显式选择，切回保留编辑文件。源码/打包真实隔离 HTTP 各 3 项、聚焦 26 项、WebCLI 125 文件/1401 项、npm pack 624 文件通过。只修改 CLI/文档/Skill，未重新跑浏览器全量；U01 其他差距和整体目标保持 active，继续 R02 共享修复影响范围审计。
+
+- 2026-10-18（持续目标接续，整体进行中）：R01 PAGE_FETCH/UI 契约 repair、R03 有证据知识修订已实现并隔离验证；managed v2 目录刷新改为 clear/reinject，保留页面与不重放边界。WebCLI 124 文件/1398 项、扩展 59 项、Chromium 1217 双打包完整 82 项、UI 专项 12 项、最终修复专项 6 项、HTTP 双打包 22 项通过。U01 新增随包 Skill 原文读取（含 BOM）和 v2 status/静态 validate；U02 六格式/补全及 AdapterHub 输出接通，源码/打包 Skill 各 4、管理各 5、输出各 5、补全各 4 项通过。npm pack 623 文件；完整浏览器 3822 文件隐私检查通过。U03 建立 1366 命令/179 分组逐项候选映射，150 名称候选、36 同包未匹配、1180 历史无映射，全部仍需行为审计，不计为对齐。失败、快照差异与全部剩余边界见交接末尾；整体 active，Python 网站探索agent未动。
+
+- 2026-10-18（HTTP 写命令定向修复）：从 `35cd7f8` 接续，repair 支持已安装 HTTP 单请求写模块，保持 runtime/safety、完整鉴权/权限/共享文件和其他命令；历史 fixture 只作待复验数据，摘要/kind/新来源不匹配明确跳过，不继承执行、实际 ID 或授权。修复审阅绑定任务/范围，派发前复核安装基线，复用数字 ID、有界 GET 轮询和持久消费。WebCLI 117 文件/1355 项、聚焦 139 项、扩展 20 项、源码/双打包 HTTP 各 21 项、构建/配置/语法/npm pack 620 文件通过；Chromium 1217 双打包完整 77 项通过，最终 3238 个日志/任务/安装文件隐私检查通过。修正动态详情证据等待和 pending 夹具时间依赖，失败与复跑证据均保留。PAGE_FETCH/UI 写契约修复、共享文件、多步写及台账欠账保持；Python 网站探索agent未动，未推送/PR，整体目标未完成。
+
+- 2026-10-18（UI 新回执 ID）：从 `05b4b44` 接续，原生 UI 可声明同节点公开新 ID、显式 string/integer、旧值拒绝、最小 ID 先落盘，复用固定/实际资源 GET、全部输入关联、严格身份和有界 pending 轮询。旧扩展拒绝新契约，取消/重启不重放，恢复不认证 uncertain，普通 call 返回 resultId/effectVerified:false。WebCLI 117 文件/1341 项、聚焦 152 项、扩展 16 项、源码 UI 11 项、双打包 HTTP 18 项及构建/配置/语法/npm pack 620 文件通过；Chromium 1217 双打包完整 77 项通过，最终 3238 个日志/任务/安装文件隐私检查通过。复杂 UI、多步写/修复、其他 ID 来源及全量台账欠账保持；1194/平台/真实账户未补验。Python 网站探索agent未动，未推送/PR，整体目标未完成。
+
+- 2026-10-18（数字响应 ID 与异步效果）：从 `1b123da` 接续，resultReadback 显式支持非负安全整数、严格原类型身份比较和最小 ID 恢复；HTTP/PAGE_FETCH/原生 UI 的 effect.poll 只对已声明 pending 重复 GET，复用精确审阅/文档身份/30 秒预算/消费账本，独立恢复 15 秒且不认证 uncertain。单次写和原生 UI 无 input/change/普通 call effectVerified:false 保持。WebCLI 117 文件/1330 项、最终聚焦 159 项、扩展 18 项、源码与双打包 HTTP 各 18 项、构建/配置/语法/Skill/npm pack 620 文件通过；Chromium 1217 双打包完整回归 74 项通过。多 ID/响应 URL/UI ID、复杂 UI、多步写/修复和未知项目审计仍待办，1194/平台/真实账户验收欠账保留。Python 网站探索agent未动，不推送/PR；阶段验证与交接完成后按用户约定暂停，整体目标未完成。
+
+- 2026-10-18（UI 原生表单单次提交）：从 `0a97cfb` 接续，新增 UI_SELECTOR/uiWrite 固定契约，原生字段无 input/change 填写、一次 requestSubmit、同文档新回执与独立 GET 的稳定身份/全部参数/改变关联值验证；复用精确审阅、派发前持久消费、取消/重启不重放、安装和知识。普通 call 明确 effectVerified:false。无幂等假设：断响应实测一次 submit/3 次请求/3 次服务端 mutation，uncertain 只能只读回查。WebCLI 116 文件/1284 项、写相关 80 项、扩展 18 项、Chromium 1217 完整 70 项、最终打包 UI 7 项/HTTP 15 项/页面写 10 项通过；同 URL 提交后重载的最终专项及报告见交接末尾。构建/公开配置/19 文件语法/npm pack 619 文件通过。复杂控件/整页提交/hidden CSRF/多步写/写修复/扩展回查与 1194 兼容待办保留。Python 网站探索agent未动，不推送/PR；独立阶段后按用户要求暂停整体目标。
+
+- 2026-10-18（实际写响应 ID 回查）：从 `2bb411c` 接续，HTTP/PAGE_FETCH 的 effect.resultReadback 使用已审阅同源单段模板与实际公开字符串 ID，保留固定 before/after 并严格核对资源身份和内容；最小 ID 先落盘，取消/重启仅 GET 回查，缺失/非法/丢响应不猜值、不重写，不确定状态不放行安装。真实 ID 不进入摘要/知识/安装包，普通 call 行为保持单写。WebCLI 115 文件/1275 项、最终聚焦 76 项、扩展相关 14 项通过；源码与最终打包 HTTP 各 15 项、页面写各 10 项通过。Chromium 1217 完整 65 项通过（早于最后断言别名加固，最终全量/聚焦/打包覆盖）；CLI/Bridge 构建、公开配置、10 文件语法/npm pack 617 文件通过。UI 控件写、多步写、数字/多 ID/响应 URL、写修复和完整对齐仍待办；1194 既有兼容问题保留。Python 网站探索agent未动，保存本地检查点、不推送/PR，按用户要求暂停整体目标。
+
+- 2026-10-18（Extension 声明式页面写）：PAGE_FETCH 写计划绑定固定同源路由、JSON 字符串字段和明确服务端幂等契约，复用 mock/精确审阅/派发前账本/before-write-after/安装/知识；取消、重启、丢响应不应用层重放。实测 Chromium 底层会重发，四种写方法丢响应均为 3 请求/1 实际修改，必须由服务端按稳定 key 去重；不声称单次网络写或任意接口可用。WebCLI 114 文件/1224 项、扩展 59 项、最终打包 CLI＋Bridge 页面专项 7 项及 HTTP 回归 12 项、构建/配置/17 文件语法/npm pack 616 文件通过。Chromium 1217 完整 62 项通过；1194 的 Shadow 失败在 5cabcb8 复现并保留兼容待办。UI 控件写、无幂等支持、动态 ID、多步写/写修复及完整对齐继续待办；Python 网站探索agent未动，未推送/PR。
+
+- 2026-10-18（HTTP 写命令与真实效果验证）：新增显式写来源声明、语义骨架、独立 mock fixture、精确请求审阅与 GET before/write/GET after；授权在派发前持久化消耗，同 review 重入、取消、进程重启、响应丢失均不重放。不确定结果可独立只读回查，未通过不得安装；普通 HTTP write 强制确认、单请求、禁重定向，未完成请求不能提前返回成功。WebCLI 113 文件/1218 项、最终写相关 46 项、完整 Chromium 57 项通过；源码与最终打包 CLI/Bridge 各 12 项 HTTP 验收通过，构建、公开配置、18 文件语法与 npm pack dry-run（614 文件）通过。全量后请求头规范化加固由最终聚焦及打包验收覆盖。真实副作用仅使用隔离 PUBLIC/AUTH loopback；页面/多步写、动态 ID 回查、写修复及完整 OpenCLI 对齐仍未完成。Python 网站探索agent未动；OpenCLI 桌面客户端排除，WeWorker UI 单列产品待办。
+
+- 2026-10-18（多步只读网站流程）：exploration.query 的 workflow 模式组合 2–8 个导航/搜索/固定页筛选/翻页步骤，参数预检、结果关联、步骤间 URL/文档身份、动作权限、失败停止、总预算、观察/作者验证取消与断线不重放已接通。生成→逐 case 验证→安装→重复调用→知识→提取修复通过。WebCLI 112 文件/1203 项、最终扩展相关 64 项、完整 Chromium 57 项、最后打包 CLI 工作流专项 7 项通过；CLI/Bridge 构建、公开配置、23 文件语法与 npm pack dry-run（613 文件）通过。写命令/副作用验证、循环/分支、自定义控件及跨源/跨 frame 流程仍未完成；完整对齐继续，OpenCLI 桌面客户端排除，Python 网站探索agent全程未动。
+
+- 2026-10-18（参数化详情页导航）：exploration.query 新增 UI_SELECTOR navigate，同源主文档路径参数保留前导零/Unicode；一次导航等待准确目标、新文档与稳定结果，超时/重定向/文档改变不重放。生成、两组不同路径作者断言、安装权限、普通调用、知识及保留路由的局部修复已接通。WebCLI 111 文件/1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过；CLI/Bridge 构建、公开配置、20 文件语法与 npm pack dry-run（611 文件）通过。动态 query/hash/跨源页面、多步网站流程和写命令生成仍未完成；OpenCLI 桌面客户端排除，WeWorker UI 单列，Python 网站探索agent全程未动。
+
+- 2026-10-17（无浏览器 HTTP 探索）：mode=http 任务支持明确 OpenAPI 3.0/3.1、Swagger 2 JSON 发现与真实只读宿主请求，生成/作者断言/审阅安装/普通调用/知识/局部修复无需浏览器；需要 Bridge。文档声明不构成执行证据，查询和响应标量省略，重定向逐跳校验，取消与运行中重启不重放且保留次数。WebCLI 111 文件/1193 项、完整 Chromium 50 项、源码与打包 CLI/Bridge 各 8 项零浏览器验收、打包 HTTP 36 项通过；CLI/Bridge 构建、公开配置与 npm pack dry-run（610 文件）通过。JSON 文档仅本地引用，不支持 YAML/自动爬取；完整对齐继续推进动态页面/多步 UI/写命令，OpenCLI 桌面客户端排除，WeWorker UI 单列。Python 网站探索agent未动。
+
+- 2026-10-17（OpenCLI 对齐范围澄清）：用户明确不需要 OpenCLI 桌面客户端，目标为 CLI、浏览器扩展与相关工具能力。此前“桌面 UI”指 WeWorker 自有 API 探索/聊天/profile 界面，单列产品集成，不作为 CLI 对齐完成条件；目标网站多步 UI 和 CDP/Electron 外部目标控制仍按 CLI 能力核对。本次仅同步范围文档，通过 diff 格式检查，未重跑功能测试；Python 网站探索agent未动。
+
+- 2026-10-17（HTTP 宿主鉴权与 Cookie 分区）：契约 version 2 新增 AUTH_API，支持环境 Bearer/header/Basic/声明式 HMAC，精确 origin 注入、重定向按实际请求重新签名，凭据不进入 Worker；Cookie 可选 storeId/partitionKey，旧插件能力不足拒绝派发，不回退默认 store/分区。生成/预览/安装权限/普通调用/只读 repair 已接入。WebCLI 110 文件/1183 项、最终聚焦 84 项、扩展 4 项、完整真实 Chromium 50 项、最终 HTTP 8 项、打包 CLI 36 项通过；构建/配置/22 文件语法检查通过，npm pack dry-run 607 文件含新模块。未重跑日常浏览器/外站，未验证隐身 store、任意站点签名/OAuth；下一步无页面 API 发现，整体 OpenCLI 对齐继续。Python 网站探索agent未动。
+
+- 2026-10-17（独立 HTTP Runner）：新增版本化 `http` runtime 与 PUBLIC_API/COOKIE_API，保持 Extension/Toolkit Runner 分离。公开命令无需 Bridge/浏览器，Cookie 命令固定 profile、按 URL/名称临时读取 HttpOnly Cookie 与 CSRF，精确 origin 授权、失败不重放；接入探索生成、作者 cases、安装、普通调用与只读定向修复。WebCLI 109 文件/1161 项、扩展聚焦 6 项、完整 Chromium 47 项、最终 HTTP 聚焦 6 项、打包 CLI HTTP 16 项通过；CLI/Bridge 构建与配置通过，日志/任务/安装目录无原始占位凭据。尚未实现通用签名/环境凭据、分区 Cookie、无页面 API 发现和多步 UI/写命令；整体 OpenCLI 对齐继续。Python 网站探索agent未改动。
+
+- 2026-10-17（多浏览器 profile）：稳定 contextId 与每连接身份、profile list/rename/use、flag/env/default 选择；普通调用/探索/Worker/trace/follow 固定路由，响应仅回请求者，断线不重放；会话/任务/知识/锁按浏览器隔离，旧根通过 legacy 只读保留。WebCLI 1145 项、扩展相关 85 项、完整真实 Chromium 44 项通过；日常 Chrome/B 站 Excel 第一页 24 卡片标题/链接逐项一致。最终 trace/打包检查见交接日志。完整 OpenCLI 对齐继续，Python 网站探索agent零改动。
+
+- 2026-10-17（CLI 会话交接）：应用户要求，在已完成上传功能 `3e9a7ff` 后暂停当前目标。完成多浏览器连接的源码路由核查与下一阶段设计记录，尚未实现 profile；本次仅更新文档，未重跑功能验收。交接文档顶部新增接手入口、当前状态、验证证据与同步边界。整体 OpenCLI 对齐未完成，Python 网站探索agent未动。
+
+- 2026-10-17（文件输入目标扩展）：browser.upload 支持隐藏/语义/开放 Shadow/关闭 AX/明确 frame 文档，保留实际节点与 target session，派发前复核、派发后验证文件名/顺序/大小；禁用/歧义/替换/导航/过期失败不重放，报告 dispatched。WebCLI 1133 项、扩展相关 122 项、隔离 Chromium 完整 38 项及最终聚焦通过；日常 Chrome 实际文件内容和本地 multipart 接收、B 站 24 卡片回归通过。目录输入/自定义业务流程和其他 OpenCLI 差距继续进行，Python 网站探索agent零改动。
+
+- 2026-10-17（复合字段与结构读取）：DOM state/find 增加日期/下拉/文件元数据，独立读取保留列表第 50 项后的选中状态；get compound 支持隐藏输入、AX ref 和 frame，HTML JSON 树提供明确预算/截断并省略密码值和脚本。select 支持 by=value/label，歧义/禁用拒绝，页面撤回选择明确失败。WebCLI 1132 项、扩展相关 117 项、隔离 Chromium 完整 37 项及最终聚焦通过；日常 Chrome 真实上传/选择/读取和 B 站 24 卡片回归通过。通用自定义组件、Shadow 上传、多连接等继续进行；Python 网站探索agent零改动，详见跟进文档。
+
+- 2026-10-17（开放 Shadow DOM 查询）：browser 定位支持显式 shadow=true，遍历所选文档及开放根，返回树内名称、宿主路径和引用；CSS 组合器不跨树，重复/过期/遮挡/超限明确失败，input/change 可到达宿主。原生嵌套点击/同 frame drag、selector 等待与跨源 frame 操作通过。WebCLI 1131 项、扩展相关 109 项、隔离 Chromium 完整 36 项和日常 Chrome/B 站 24 卡片回归通过；关闭根继续用 AX，复杂控件/Shadow 文件输入/多连接等继续进行，Python 网站探索agent零改动。详细证据见跟进文档。
+
+- 2026-10-17（截图高级选项）：browser.screenshot 支持主文档 DOM 编号、真实 CSS 视口尺寸、fullPage 与本地新 PNG 文件保存；图像侧合成不插入页面覆盖层，核对像素/几何，失败与导航均恢复观测视口，导航不复用旧滚动。WebCLI 1130 项、扩展相关 105 项、隔离 Chromium 完整 35 项通过；日常 Chrome 高 DPR 同类验收及 B 站 24 卡片回归通过。未知设备模拟配置不保证完整恢复，AX/子 frame 标注尚未覆盖；其他 OpenCLI 差距继续推进，Python 网站探索agent零改动。详细证据和分发结果见跟进文档。
+
+- 2026-10-17（AX 页面状态）：state 支持 source=ax 与 compareSources，读取 Chrome 计算的名称/语义树并汇总可访问 frame；引用绑定实际节点和文档，可操作关闭/嵌套 Shadow DOM，拒绝同名替换、名称漂移、错配文档、禁用与遮挡。比较仅输出覆盖指标，不改当前引用；限额/帧失败明确标记。WebCLI 1129 项、扩展相关 98 项通过；隔离 Chromium 完整 34 项及最终 AX 聚焦通过，日常 Chrome 同类操作和 B 站主文档 AX/24 卡片回归通过。截图高级选项、深层 selector/复杂控件、多连接及其他 OpenCLI 差距继续进行；Python 网站探索agent零改动，最终检查见跟进文档。
+
+- 2026-10-17（持续浏览器观察）：新增 browser.events、console/network --follow JSONL、时间窗口与序列游标；主/子调试 target 分离，独立订阅、输出背压、信号退出、断线续接和丢失错误，扩展主动调试断开明确清理。WebCLI 106 文件/1128 项、扩展聚焦 76 项及 Adapter helper 回归 15 项通过；隔离 Chromium 完整 32 项与日常 Chrome 持续观察通过，B 站 Excel 第一页 24 卡片逐项回归通过。裸时间单位沿用秒，观察历史有界；AX/截图高级选项、profile/多连接及其他 OpenCLI 差距继续推进，Python 网站探索agent零改动。最终分发与交接结果见跟进文档。
+
+- 2026-10-17（子 frame 原生指针）：click/dblclick/hover 与同 frame drag 支持嵌套同源/跨源文档，复用身份守卫，按内容四边形投影/逆变换并逐层检查遮挡；悬停后移动、文档导航或准备超时拒绝继续，异常释放按钮。WebCLI 1119 项、扩展聚焦 69 项、隔离 Chromium 完整 29 项与最终浏览器聚焦通过；日常 Chrome 六 frame 的原生事件、缩放/旋转/透视、父层遮挡和跨源点击下载通过，B 站 24 卡片回归通过。Shadow DOM、跨 frame/DataTransfer 拖拽、持续观测与其他 OpenCLI 差距继续推进；Python 网站探索agent零改动。
+
+- 2026-10-17（下载生命周期）：新增 browser.downloads / wait kind=download，按标签与跨源子页面事件观察、游标/ID 续等、进度超时、中断与歧义错误；观察不占点击锁，Bridge 重启可继续，落盘路径只返回限定 URL/时间的唯一匹配。WebCLI 105 文件/1118 项、扩展聚焦 64 项、隔离 Chromium 完整 28 项通过；日常 Chrome 主页面/慢速/跨源 frame 原生键盘触发及文件内容通过，B 站 Excel 第一页 24 卡片回归通过。子 frame DOM 点击仍可能无法触发下载，原生指针及其他 OpenCLI 差距继续开发；Python 网站探索agent零改动。详细失败诊断和边界见跟进文档。
+
+- 2026-10-17（跨 frame 执行）：browser.frames 返回 frameId/documentId，eval 与页面定位支持明确文档身份；递归跨源子会话隔离 context ID，执行一次、不按 URL 猜测，导航/脚本错误/不结束 Promise 明确失败。WebCLI 105 文件/1117 项、Extension 聚焦 52 项通过；隔离 Chromium 最终完整 27 项通过，包含 Promise 超时与页面重写函数的隔离检查；日常 Chrome 五个同 URL/嵌套跨源/严格 CSP frame 实测通过，B 站明确文档执行与旧命令 24 卡片回归通过。构建和配置通过；子 frame 原生指针、Shadow DOM、AX、下载/profile 及完整 OpenCLI 对齐继续进行。Python 网站探索agent零改动，详细打包/交接结果见跟进文档。
+
+- 2026-10-17（来源分析与方案历史）：新增 exploration.analyze/replan/revisions/revision-read，结构分类、策略理由及失败建议；旧草稿/计划/cases/验证结果保留，切换来源后必须重新验证审阅。明确 PAGE_FETCH 执行范围，PUBLIC_API/COOKIE_API 尚无独立 runner。WebCLI 105 文件/1116 项、Extension 聚焦 53 项、隔离 Chromium 26 项通过，含 API 503→DOM→安装调用及重启读取历史。真实 Chrome 完成 API 草稿留档→DOM 生成→预览/安装/普通调用，24 张可见卡片标题/链接逐项一致，重启后历史与调用通过；原 API 正常，页面仍为 excel 第一页。CLI/Bridge 构建、配置及 npm pack dry-run 590 文件通过。OpenCLI 1.8.8 静态审计与缺口已记录，完整对齐继续进行；Python 网站探索agent零改动。
+
+- 2026-10-17（跨文档页面查询）：新增 exploration.query，单次读控件触发后等待同源固定结果路径、URL 参数与稳定 DOM/公开状态；生成命令通过后台续接跨文档返回结果，允许从结果页重复调用，参数命令至少两组不同值验证。修复目录刷新重载打断探索的问题，探索/预览/browser 与普通调用共用页面队列。WebCLI 104 文件/1100 项、Extension 聚焦 58 项、隔离 Chromium 25 项通过；真实 Chrome 两关键词预览、安装与普通调用通过，24/27 张视频卡片与当前 DOM 逐项一致，旧 API/DOM/下一页回归通过。B 站重复同词不触发查询时明确超时，已恢复 excel 第一页并保存知识。构建/配置与 npm pack dry-run 588 文件通过。动态页面路径、跨源查询导航、多步 UI、写命令及完整 OpenCLI 对齐仍未完成；Python 网站探索agent零改动。
+
+- 2026-10-17（页面触发查询 INTERCEPT）：新增搜索/原生筛选/下一页控件与新响应关联，显式 API 端点、query/body 参数关联、临时预览授权、两组不同参数验证；观察仅存结构。WebCLI 103 文件/1094 项、Extension 聚焦 63 项通过，隔离真实 Chromium 24 项包含跨域页面签名 GET/POST 与错误分支；CLI/Bridge 构建和公开配置通过。真实 Chrome 发现后台页吞原生点击，已修复前台激活；公共视频搜索页新增下一页命令完成预览/安装/普通调用，页码 4→5，返回 35 视频并排除 7 非视频，旧 API/DOM 回归通过。整页导航、自动策略回退、多步 UI、写命令和完整 OpenCLI 对齐仍未完成。Python 网站探索agent零改动；详细边界与最终验证见跟进文档。
+
+- 2026-10-17（API 动态路径参数）：Agent plan 可显式绑定 pathname 段与字符串参数，覆盖脱敏 :id 或作者选择的 slug；生成 schema 必填、无捕获值默认参数、单段编码、保持前导零，区分 path/query/body。至少两组不同路径组合实际验证，映射随站点知识保存。WebCLI 102 文件/1090 项、隔离真实 Chromium 23 项通过，含 GET/POST 四组 ID/中文/特殊字符精确断言、安装后普通调用和非法路径零请求；CLI/Bridge 构建及公开配置通过。本轮未在外部站点验证动态详情接口；动态页面路由、INTERCEPT、写操作及完整 OpenCLI 对齐仍未完成。Python 网站探索agent零改动。
+
+- 2026-10-17（页面来源探索与修复）：新增 observe 与 UI_SELECTOR/DOM_STATE，支持无 JSON API 的 DOM 列表、公开页面状态和 JSON 脚本生成；页面证据独立绑定，作者 cases 必填，支持混合计划、站点知识与定向修复。新增 pageRoute 精确页面选择，避免同域首页误调用，缺失/歧义明确报错。WebCLI 全量 101 文件/1086 项、Extension 聚焦 40 项、隔离真实 Chromium 22 项通过；CLI/Bridge 构建、公开配置和 npm pack dry-run（583 文件）通过。用户指定公共搜索页新增 DOM 命令本地安装后读取 27 张已渲染卡片，标题/链接与当前页逐项一致；已有 API 三组查询仍通过。INTERCEPT、动态路径、写操作、多步 UI、跨 Agent 独立对话及完整 OpenCLI 对齐仍在进行；Python 网站探索agent零改动。
+
+- 2026-10-17（已安装命令定向修复）：新增 repair-info/repair，从当前包和新采集证据建立隔离草稿，限定所选只读命令模块/schema/description；共享文件、其他命令、权限和路由保持原样，安装基线变化拒绝覆盖。历史 cases 自动带入并标记过期，必须重新实际验证。WebCLI 全量 100 文件/1080 项通过；真实 Chromium 20 项通过，包含返回字段变化→旧六组全部失败→CLI 修复→六组通过→安装与普通调用。共享文件/写命令修复、其他策略与完整 OpenCLI 对齐仍待做，Python 网站探索agent未动。
+
+  用户指定的真实搜索页已追加三组精确断言：发现课程混排导致空视频标识后，通过上述入口局部修复本地生成命令，验证、审阅安装及普通调用均通过；第一页 17 个视频并报告排除 3 个课程，其余两组各 20 个视频。cases 与字段说明保存在本地站点知识，真实结果未提交。
+
+- 2026-10-17（探索验证与站点知识）：新增 verification-read/write，Agent 可按工具编写 1–10 组真实参数及精确路径、类型、非空、格式、值、行数断言；修复扩展预览仅执行前五组的限制，改为分批汇总，旧插件能力不足时明确拒绝。新增 knowledge-read/save，保存已验证的选中结构端点、字段含义、备注和作者 cases，按 30 天与安装包摘要标记过期，支持跨 Bridge 重启恢复。真实测试第六组故意错误能定位 caseId/path 并阻止安装，修复后全通过。另修复目录刷新重载页面打断普通调用的竞态，刷新与 managed page 调用共用队列。WebCLI 全量 100 文件/1077 项通过；完整 OpenCLI 对齐与安装后修复仍进行中，Python 网站探索agent未动。
+
+- 2026-10-17（OpenCLI 能力对齐进行中）：新增 34 个独立 browser 命令及 Skill，命名会话/身份守卫、主 frame 原生鼠标/拖拽、文件输入、弹窗、console、完整截图、网络过滤/JSON 详情；browser 与 exploration 共用 tab 锁。探索支持显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、1–50 工具、draft-add 和结构 trace。用户指定公共视频搜索页已完成采集→生成→真实验证→增量安装→普通关键词/分页调用，三次查询均返回 20 条且分页/关键词改变结果；无原始用户数据入库到仓库。隔离真实 Chromium 17 项通过，WebCLI 全量 98 文件/1069 项、Extension 聚焦 42 项、CLI/Bridge 构建与公开配置通过，npm pack dry-run 577 文件含新模块/Skill。Python 网站探索agent零改动。完整策略生成、动态路径、写工具、站点知识/安装后修复、多连接、外部 CLI/CDP、UI 统一和跨 Agent 新对话仍待做，详见 `docs/opencli_parity.md` 和跟进文档。
+
+- 2026-10-17（独立探索 CLI 真实验收）：真实 Chromium + 插件 + 独立 CLI/Bridge + loopback 示例站点全流程 15 项通过，覆盖采集/搜索探测、草稿编辑与修复、真实验证、审阅安装、普通搜索/分页调用、空态/HTTP 错误、同站点增量保留、取消和重启恢复。修复登录辅助工具跳过数误阻止安装的问题，仅独立流程限定目标工具统计，共享验证器默认行为不变。新增可复跑浏览器验收脚本；WebCLI 全量 97 文件/1056 项、CLI/Bridge 构建、公开配置及语法检查通过。原有全局 Bridge/用户浏览器未动，Python 网站探索agent无改动；真实登录业务站点、独立 Claude/Codex 对话和各平台安装包仍未验收。记录见 `docs/api_exploration_cli_handoff.md`。
+
+- 2026-10-17（独立 API 探索 CLI）：按用户修正移除桌面 Backend 前置条件，WebCLI Bridge 新增无模型探索任务、结构证据、安全探测、Agent 草稿读写、验证与审阅安装命令，提供外部 Agent Skill。当前首版范围为同源只读 GET；UI 统一、POST/跨源/写工具及真实外部 Agent 对话验收待后续。WebCLI 97 文件/1055 项通过，CLI/Bridge 构建、npm prepack dry-run、公开配置及语法检查通过；真实浏览器/模型未验收。详细记录见 `docs/api_exploration_cli_handoff.md`；本轮未修改 Python 网站探索agent。
+
+- 2026-10-17（API 探索 CLI 集成与设计）：#106/#91 已合入 develop；从 `4c3d5bd` 建集成基线并整合 dev-1.1.0 `dae8932`，解决 7 文件冲突。设计/交接见 `docs/api_exploration_cli_design.md`、`docs/api_exploration_cli_handoff.md`。聚焦 94 项、Renderer 构建与公开配置检查通过；Backend 类型检查缺 yauzl 声明，Python 聚焦测试缺 uv，尚未完成全量/真实验收。CLI 实现未开始。
+
+- 2026-10-17（PR #91 分支同步）：将含 #106 修复的最新 develop 合入 `chore/remove-legacy-extension-adapters`（无冲突），check-public-config 台账 fixture 随 legacy 目录移除精简（去掉 `extension/adapters/index.json` 桩）。worktree 聚焦复验：真实仓库校验通过、scripts 测试 4 项、webcli 两文件 37 项（即 #106 所修用例）、扩展 tool-route 与 wecli-runtime-helper 33 项全部通过。
+
+- 2026-10-17（API 探索 CLI 规划）：新增 `docs/api_exploration_cli_handoff.md`，记录 develop/dev-1.1.0 与未合入 PR #106/#91 的基线快照、拟建集成/功能分支、上游同步与冲突处理流程、验收清单及交接日志。当前仅完成分支核对和文档建立，尚未建分支、合并或实现 CLI；#91 是否纳入及最终发布目标待明确。
+
+- 2026-10-17：修复 PR 上「配置一致性检查」存量失败：webcli 自 10-15 起由发布脚本按 npm 独立发版节奏升至 1.0.4，check-public-config 不再要求 webcli/package.json 等于桌面应用版本，改为校验 webcli 自身发布台账（package.json、version.json、.claude-plugin/plugin.json 与 SKILL.md frontmatter 四处一致）。新增临时目录 fixture 聚焦测试 2 项（版本独立不报错、台账漂移逐文件报错），真实仓库校验与 scripts 测试 4 项通过；未改动发布脚本与 workflow 本身，Release Latest 在 develop 上的历史失败未在本轮排查。
+
+- 2026-10-16：为网站探索agent的 Windows PyInstaller 可执行文件补充 WeWorker 版本资源。构建时动态生成 VERSIONINFO，文件属性包含 ProductName/CompanyName「WeWorker」、描述、产品版本、原始文件名等关键字，保留现有 Webwright.exe 文件名和 embedded onedir 结构；补充分发契约测试。验证：distribution 契约测试 10 项通过、Python 语法检查通过；未在本次变更中构建完整 Windows 安装包或进行安全软件白名单实机验收。
+- 2026-10-15（API 探索优化 PR 整理）：从最新 develop（783e6dbc）建立 codex/api-exploration-optimization，仅迁入探索候选来源/结束条件、输出包装层与业务错误判定、补采回放保留、已有站点包增量生成及默认 auto 优化；未带入演示分支的模型、机器人、导航或版本变更。默认先生成并验证，具体草稿错误最多一次限时 60 秒模型修复；探索预装证据/指引、显式确认目标并结束分析，分析限时 180 秒。独立锁定依赖和 public 33 包准备后，WebCLI 33 文件/241 项、Backend 5 文件/46 项、Renderer 7 项、扩展 35 项共 329 项通过；Backend 类型检查、Renderer 与 Backend/Bridge/WebCLI 构建、34 个 JavaScript 文件语法及差异检查通过。新工作区首轮漏准备资源导致测试失败；构建与测试并行阶段还出现计划缺失和 Windows 临时目录清理失败，二文件独立复查与构建完成后完整聚焦重跑均通过。集成分支真实两轮约 71.439/85.731 秒及 7 次新工具查询只作为迁入前证据，本 PR 尚未重跑完整客户端、真实网站、macOS 或安装包；无 99.999% 结论。操作与边界见 docs/api_exploration_local_acceptance.md、docs/api_exploration_reliability_plan.md。
+
+- 2026-10-16：移除 `extension/adapters/` 旧版 v1 内置目录及其全部管线，仓库根 `adapters/` 成为内置 Adapter 唯一源。该目录此前仅剩空 `index.json`，功能已由 v2 host-managed 包取代。具体：`prepare-build.cjs` 删除 legacy 拷贝管线，扩展内置清单恒为空（`adapters/index.json`/`registry.json` 仍构建生成，供扩展启动初始化与 skill-installer legacy 读取）；`selectBuiltinAdapters` 去掉 `legacyDir` 回退，缺包直接报错；`.profile.json` 元数据移除 `legacy` 字段（写端 builtin-adapter-build.js 与读端 paths.js、adapter-catalog.js 同步）；删除无生产调用方的 backend-ts `adapter-scaffold.ts`（其测试实际测的是 webcli JS 版）、`migrate-legacy-extension-adapters.cjs`、`sync:adapters-registry` script、certification 对旧清单的硬读取，以及经查零消费方的 backend `src/registry.json`（同步清理 shared-core-files exceptions）；`check-public-config` 改为只校验 build profile ↔ 根 `adapters/` 一致性。修复死链与导航白名单：jd.com/mail.163.com/nnfp.jss.com.cn manifest `homepage_url` 从失效 GitHub 旧路径改为站点真实地址、scaffold 提示文案改指根 `adapters/`；jd.com `match` 补全 www/search/item/cart/order 真实主机名（修复 `Adapter navigation host is not allowed`），保持 `jd.com` 为 `match[0]` 以维持 routeDomain 后缀匹配语义。service-worker 管理路径 tab 选择改为两段式：精确 hostname 优先，回退限定在 manifest.match 声明的页面主机（含 `*.` 通配）内复用已开标签页——不选用 runtime_allowed_hosts 辅助域作执行页（既有守卫语义保持）。文档同步：AGENTS.md 模块地图、extension/README、EXTENSION_DEV_GUIDE §7/§8.7、weworker/README、officialWeb/README、adapter_developer_guide 顶部加 v1 历史注记、KNOWN_ISSUES 路径。验证：`check-public-config` 通过；`prepare-build --profile public` 产出 33 个 host-managed 包且空清单/`.profile.json`（无 legacy 字段）正确生成；webcli vitest 988/988 通过（main 基线 prepare 后同为全绿，无新增失败）；tool-route 23/23（新增后缀复用与精确优先 2 个用例，辅助域守卫用例保持通过）；CI 扩展测试清单 4 文件 41/41；webwright-scripts 11/11；backend-ts `tsc --noEmit` 通过、adapter-desktop 单测 8/8。未验证：真实 Chrome 扩展端到端调用（jd 搜索需发版后加载扩展实测）；`check-shared-parity` 需 peer 内部仓本地无法运行（exceptions 清单清理仅静态核对）。
+- 2026-10-14：侧栏告警改为扩展状态旁的固定感叹号入口，移除占用侧栏高度的版本/端口长提示；点击入口显示告警列表，点击条目打开详情弹窗，保留扩展指引、按系统区分的端口查询命令和通道错误详情。入口在无告警时隐藏但保留位置，列表及详情通过浮层展示。聚焦单测 7 项、Renderer 构建及差异检查通过；Chrome/Playwright 模拟状态验证告警出现/消失与开列表不改变侧栏几何位置、版本与通道详情、窄窗口防越界和 Escape 关闭，无运行时错误。
+
+- 2026-10-14：网站探索模型的连接成功提示采用主题绿色，与按钮保持和上方表单一致的 14px 间隔；标题“已连接”增加绿色状态点，检测中或失败时不显示绿点。模型连接单测 2 项、Renderer 构建及差异检查通过；本地 Chrome/Playwright 模拟响应验证了颜色、间距、成功/失败状态、输入保留和手动折叠，无运行时错误。未调用真实模型接口。
+
+- 2026-10-14：修复模型设置中“重新检测已保存配置”成功后自动收起的问题；重新检测仅更新连接结果，保留展开状态及未保存的表单输入。通过模型连接单测 2 项、Renderer 构建与差异检查；使用本地隔离组件及模拟响应完成 Chrome/Playwright 交互验证，覆盖成功、失败、重试、输入保留、按钮位置不变和手动收起，无运行时错误。未调用真实模型接口。
+
 - 2026-10-17：**客户端性能修复（四处）与单轮瓶颈定位**。起因：用户反馈对话响应慢。只读定位（works.db + main.log + 扩展 trace）结论：一轮 15.2s 中模型仅 3.57s、工具执行 11.68s，其中 `ask_user` 3.10s（等人点击，正常）、`PowerShell → webcli call jd.com.check-login-status` 8.58s，而后者有 **7.55s 花在 Chrome 扩展内部等一个注定被拒的页面加载完**（适配器 manifest 声明 `jd.com` 却跳 `www.jd.com`，属适配器数据问题，本次不改适配器）。修复四处：① **扩展侧 fail-fast**：新增 `classifyNavigationTarget`（`allowed/forbidden/unknown`，与 `assertAdapterNavigationUrl` 共用同一份白名单）与 `createNavigationGuard`（`NAVIGATION_TARGET_SETTLE_MS=1500`，仅当同一个非白名单 http(s) URL 连续稳定 ≥1.5s 才判失败，URL 一变即重置，因此不会误杀"先跳 A 再 302 到合法 host"的正常流程），接入 `waitForManagedPageReady` 与 `navigateAdapterTab` 两条等待路径。② **prewarm 提前**：进入/切换会话即复用既有 `requestChatWarmup`（60s 去重 + 后端会话池上限 3，不会预热风暴）。③ **三段观测**：`webcli` 启动→bridge 收单 / 收单→派发 / 派发→扩展返回分别记日志（`[Bridge] 调用分段: …`），扩展内部耗时进既有 `traceLog`。④ **修正 timing 记账**：新增 `backend-ts/src/turn-timing.ts`（`exec`=工具区间并集、`llm`=其余，构造上 `llm+exec===total`；缺结果事件的工具在图片事件或 `finish()` 计入 exec、绝不计入 llm），接入 `server.ts`/`task-executor.ts`/`channel-manager.ts`/`wecom-channel.ts`。**实测收益**（真实日志）：扩展内部 7547ms→**1977ms**、`open_browser` 拒绝 850–980ms→**40–83ms**、首轮 `sdk_start_to_first_event` 760ms→**29ms**、`turn end` 由矛盾值变为 `total=13.08s llm=6.80s exec=6.29s`（6.80+6.29≈13.08 ✓）、三段日志已在实际调用中打出。验证：扩展全量 18 文件 115 项、后端 `tsc --noEmit` 与全量 1289 项、Renderer 构建与全量 308 项、webcli bridge 分段测试 4 项全部通过。未做：未在真实 Chrome 复现 fail-fast（按要求未重载用户扩展；但扩展重连风暴经审查确认为 Chrome 重载抖动而非代码缺陷，已补 1 个消息路径健壮性测试 5 项）；未做端到端首轮预热实测（以日志数字为准）；未消除 `webcli call` 每次 spawn 进程（~0.8–0.9s/次）与 `check_file_encryption` 的 3.79s（列为后续）。
 
 - 2026-10-17：**移除 ZCF 集成，风格转为应用内置纯提示词**。起因：用户反馈对话响应慢，实测后端每轮 `context_tokens.rules` 高达 14369，其中「自动规划」把 `commands/zcf/{workflow,git-commit,feat,init-project}.md` **四份工作流文档全文**（7174，占 49.9%）每轮注入系统提示词，`weworker-clear` 风格正文另占 1203，且每轮都真实写盘（`ensureBundledZcfInstalled` 走「rmSync 扩展目录 + 重建」分支，日志 17 次 `{"filesCopied":2}`）。现在：① 整体删除 ZCF 机制——`zcf-sync.ts`（891 行）、`zcf-role-settings.ts`、`bundled/zcf/**`（8 个模板）、`/zcf/*` 与 `/settings/zcf-*` 端点、模板语言、「从 ZCF 更新扩展」、ZCF 包版本、ZCF 扩展风格扫描、工作流模式（默认／自动规划），renderer 侧删除 `store/zcf.js`、`ZcfPicker`、`useZcfStore`。② **风格全部保留并与 ZCF 脱钩**：现有内置风格（默认／工程师专业版／专业严谨简单明确）正文改为应用内置常量（`backend-ts/src/style-presets.ts`，去掉 frontmatter、ZCF 包裹句与与风格正文重复的硬编码 strictRules），自定义风格链路（卡片编辑按钮＋弹窗＋删除二次确认＋`style-draft.js` 单测）原样保留；后端端点收敛为 `POST /settings/styles` 与 `PATCH /works/:id/style`。③ 为避免数据迁移与丢失用户当前选中的风格，`zcf_custom_roles` / `zcf_default_role` / `zcf_enabled_roles` 三个键名与 work 表 `zcf_role` 字段保持不变（SQLite 历史列 `zcf_mode` 仅做查询投影，删列属 schema 迁移故不动），老设置里的 `zcf_lang` / `zcf_default_mode` / `zcf_package_version` / `zcf_sync` 在加载时剔除（不报错），已删除风格的残留 id 规范化回落 `default`。④ 顺带修掉 `usage` 埋点：`duration_api_ms` 实测是**会话累计值**（CLI 内嵌 JS 证据：`Xg()-We`），旧口径会出现 `api` 大于整轮 `dur` 的误导值，现改为相邻采样的差值（本轮 `api`）并另附 `api_total`，账本重置打 `api_reset`，字段缺失时输出 `?` 而**不猜测**；`ttft` 经核对本来就是本轮值。验证：Backend `tsc --noEmit` 通过、全量 131 文件 1281 项通过；Renderer 全量 307 项与生产构建通过；用仓库自带 tsx 复现真实 `buildSystemPrompt` 得到 `rules`＝默认 **5948**、工程师专业版 6993、专业严谨简单明确 7017（改动前同条件 14369）；真实运行日志中出现 `rules=7017`、ZCF 写盘 **0** 次、`api=4191ms ≤ dur=15217ms`，首字 2218ms→1821ms（**非同条件对照**，两条消息与风格不同，仅供参考）。未在真实窗口逐项点击验收（无 jsdom，仅静态验证）；`scripts/chat-bench` 基准未能运行（`self` 模式固定绑定 8765，与运行中的客户端冲突；`remote` 模式所需 token 由 Electron 启动时生成、不落盘、不暴露给 preload）。**未解决**：同一轮 15.2 秒里约 11 秒不在模型调用内（`turns=3`、`api` 仅 4.2 秒），疑为工具执行与 `webcli` 每次调用的进程冷启动，仍在定位。
@@ -350,46 +488,10 @@
 
 ## 当前阶段
 
-- 2026-09-23：基线 PR 已推送上游 develop 待合并。CI 暴露干净 checkout 缺少 Profile 预处理、打包测试依赖与内部官网构建入口；工作流修正已获单独确认，补齐 Profile 预处理、打包测试依赖和内部官网构建入口，远程 CI 待复验。已修复用户 Adapter 路径测试对 Windows 的固定假设，聚焦 7 项通过；本地公开 WebCLI 561/561、内部 Backend 876 通过/4 跳过、内部 Electron 36/36。公开 Backend 全量 506 通过/4 跳过/1 项目录重命名失败，该文件单独重跑 19/19，通过不代表全量首轮全绿。
-
-- 2026-09-23：整理迁移基线至最新上游 develop；合并网站探索实例身份修复，保留身份检查及路由边界测试，同步开发端口配置。内部专用登录编排保留，扩展全量 313 项通过；公开合并专项 Backend 24、Python 28、Electron 35 项及开发端口回归 1 项通过。最新源码尚未重新打包，真实生成与 macOS 验收继续保留。
-
-- 2026-09-23：客户端生成实测发现目标退化为通用生成描述、大列表回放在 16 KiB 截断、运行验证失败后无法返回静态验证。两仓同步修复：默认继承探索目标，规划提示禁止用无关接口替代目标；回放上限调整为 1 MiB 并明确超限错误；修复后经 revising 重验。公开 Backend 20、编排 16、扩展 15 项通过；内部 Backend 20、编排/恢复/完整性 21、扩展 15 项通过；527 个共享文件一致。仅源码验证，尚未重新打包或完成真实文章列表/点赞生成复验，现有失败草稿未改写或安装。
-
-- 2026-09-23：双向合并通用 API 探索、Agent、Renderer、CLI/Hub、网站探索agent与打包能力；527 个共享源文件检查一致。Backend 公开 498/内部 867 通过，各跳过 4 项；内部 WebCLI 748 通过。访问统计经确认同步并用临时数据库验证。内部旧扩展业务测试已完成适配，312 项全量通过（含新增登录回退与预演保护回归）；内部 Windows 安装包已构建并核验包内新界面/原生程序，真实客户端验收尚未完成，不宣称全仓验收通过。详见 `docs/shared_source_baseline.md`。
-
-
-- 2026-09-22：修复扩展 Service Worker 漏分发 `adapter_catalog_result`/`adapter_bundle_result` 的问题；此前宿主目录响应超时后被误报为 Adapter 快照变化，刷新无法修复。新增真实消息处理函数回归 3 项通过，两仓 Chrome for Testing 各 38 项通过；浏览器 fixture 现在经产品请求/响应分发获取目录和包，不再绕过此层。正式过期摘要检查保持生效。两版 prepare 已更新扩展产物；真实业务查询待用户重载扩展后复验。公开最终打包成功；内部生成安装器后临时归档清理 EBUSY，安装器数据完整性与修复文件检查通过，未将构建退出 1 记为全绿。
-
-- 2026-09-22：用户安装验收暴露聊天 `spawn UNKNOWN`，确认内部 Claude Code 原生入口误为 500 字节占位脚本。恢复依赖原生文件，并在两版 afterPack 增加最终可执行文件格式、目标 CPU 架构与 macOS 执行权限校验；公开构建相关 14 项、内部 13 项通过。两版打包目录中的原生入口已在隔离环境运行 `--version` 成功；内部为 2.1.252，公开为 2.1.196。此前桌面启动/直接 CLI 验收没有覆盖聊天 Agent 启动，真实聊天查询需用户安装修复包后复验。
-
-- 2026-09-22：按用户确认删除内部未选中的草稿包，正式包与旧命令兼容保留；内部官方 prepare 仍为 35 个 v2 包、0 个旧包，相关 4 文件 13 项测试通过。草稿包去留事项关闭，公开仓库仅同步交接记录。
-
-- 2026-09-22：完成真实浏览器重定向专项（37 项）、两版源码及打包 CLI 的真实 Toolkit Runtime 最小链路；两版 Windows 安装包已生成，两版桌面已验证隔离启动与正常退出，公开版另验证安装后 Skill/站点/工具目录自动刷新。公开 WebCLI 556/556、Backend 479 通过/4 跳过；内部 WebCLI 709/709、Backend 在 15 秒超时和 2 worker 下 857 通过/4 跳过。新增可复现验收与 Toolkit 交接说明 `docs/adapter_migration_acceptance.md`。Windows 安装向导/升级、macOS 与真实页面完整生成仍待对应环境验收。
-
-- 2026-09-22：按用户确认划清 Toolkit 职责：本次迁移保留公共包/注册/安装/调用/Runner 与打包边界及最小链路验收；Toolkit 作为 DOM 类 Adapter，其独立自动探索、生成器适配和具体业务全流程由同事拉取已交付基线后完成。该调整仅明确范围，不代表新增验收通过；详见架构文档与交接文档。
-
-- 2026-09-22：内部含空格历史调用名已按用户确认规范化，并接入现有 v2 命令与确认门；聚焦 5 文件 40/40、官方内部 prepare/sync/prepack 与隔离 CLI 帮助验证通过。内部实现仅保留在内部仓库，未执行真实业务操作或最终安装包验收。
-
-- 2026-09-22：内部 Backend 全量恢复至 87 文件、857 通过、4 跳过、0 失败；同时补齐测试 Profile fixture、中性路径、Bearer 认证、场景 override 和查询意图门，TypeScript 与官方 Backend build 通过。
-- 2026-09-22：内部 effective Profile 预检改为逐项校验根 v2 包 manifest 的存在、schema_version 和名称；旧扩展目录仅作兼容输入，配置预检测试 2/2，官方 prepare 通过。
-- 2026-09-22：内部 Backend Agent 恢复批次恢复 API 探索 system/MCP 覆盖、内置工具限制、智能路由 timing 投影、场景标题注册扩展和 Agent 工作目录预创建；TypeScript 与官方 Backend build 通过，聚焦 7 文件 57/57，全量仍有 15 项既有失败。
-- 2026-09-22：内部跨包历史命令恢复批次补回 27 个旧后台执行命令的 v2 包装、Schema、执行声明与 `legacyNames`，修复官方 内部选中包 命令模块注册名并补齐后台执行；内部 WebCLI 102 文件、709/709，官方构建与实际 tarball 隔离验证通过，当时剩余的含空格历史名已在后续用户确认批次完成规范化。
-- 2026-09-22：运行时跨主机权限统一来自宿主托管/扩展打包 manifest 的 `runtime_allowed_hosts`，v2 校验拒绝非法 host 列表；`browser_fetch` 对初始 URL 与 redirected 最终 URL 执行同一允许域检查。公开 WebCLI 81 文件、556/556，Extension runtime helper 8/8，bundle/prepack/dry-run 163 文件；内部 WebCLI 101 文件、701/701，官方构建与 dry-run 497 文件通过。
-- 2026-09-22：内部 56 个业务变更命令补齐 `safety: write` 并锁定旧有效路由，敏感读取保持 read；WebCLI 全量 101 文件、700/700，官方构建与最新 tarball info 验证通过。
-- 2026-09-22：内部官方 选中包 切换为 v2 包，保留旧调用名/Schema/场景并兼容 旧指标查询名；内部 Profile 为 35 个 v2 包、0 个旧包，dry-run 497 文件，实际 tarball help/list 与新旧 内部选中包 help 通过。
-- 2026-09-22：状态同步批次为重连客户端发送当前 Profile/revision 的幂等 `adapter_state_changed` 快照；Extension 对空 adapters 快照全量刷新托管目录与匹配 Tab，Backend 串行刷新、合并刷新期间的最新 revision 并重试临时 Skill 失败，再经 SSE 推送 Renderer 主动刷新站点/工具目录；状态刷新重试/合并聚焦 4/4。公开 WebCLI 全量 81 文件、555/555；内部全量 101 文件、698/698。
-- 2026-09-22：公开 7 个内置 Adapter 迁入根 `adapters/` v2 包，公开 npm 输出切换为 7 个 v2 包、0 个旧包；两端接入命令级路由、Toolkit 冲突/损坏边界和 registry revision → Bridge → Backend/Extension 最小状态事件链。公开 WebCLI 全量 81 文件、555/555；内部全量 101 文件、698/698。公开 dry-run 163 文件，实际 tarball 隔离 help/list 通过；内部官方 prepare/bundle/sync/prepack/dry-run（503 文件、34 v2 + 1 旧包）与实际 tarball help/list/跨包历史名 help 通过，38 个同名 v2 包补齐旧 Schema 基线。独立 Edge MV3 fixture 验证外部包加载、更新、确认门与后台执行；真实站点、完整客户端、Renderer 主动推送、事件失败重试和最终安装包验收仍未完成。
-- 2026-09-22：内部同步仓库完成 WebCLI 21 项失败分诊并修复后，全量 98 个文件、685/685 通过；其中 19 项为配置分层后的过期测试，2 项 Toolkit Runner 参数转发回归已修复，相关 8 文件聚焦 36/36。公开仓库本批代码未因内部分诊发生变化。
-- 2026-09-21：新增根 `HANDOFF.md` 作为持续交接入口，并持续接续目标。内置资源/Profile/桌面与 npm 打包批次已提交（代码批次 5838d97）；路径/打包三文件聚焦 32/32，npm dry-run 确认 128 个文件、7 个旧 Adapter。最新 bundle 已通过；实际 tarball 已解包并安装到隔离临时目录，脱离源码 checkout 完成 CLI 帮助、列表和模拟扩展调用验证。资源边界已补强并通过聚焦 36/36、v2 兼容专项 23/23、Electron 环境 6/6；边界补丁后的 bundle/prepack/dry-run 和最新 tarball 重跑通过。公开 WebCLI 全量 78 文件、541/541；真实浏览器、资产迁移及完整客户端验收仍待完成。
-
-本次范围调整（2026-09-21）：扩展内自动探索计划后续下线，不再重构其旧界面和文件编辑器；仅保留必要兼容。客户端 API 自动探索仍须使用统一 v2 草稿、验证、安装链路。已完成的共用生成校验与预览隔离保留。旧扩展编辑入口尚未迁移，不作为本次完整工作台交付目标。
-
-- 2026-09-21：两个版本的 Adapter 架构同步改造进行中，共用加载器、路径 API、v2 包契约、有效注册表、安装状态及管理器已落地，内部 Hub 安装、CLI 调用/列表/帮助、本地包管理、Skill 派生刷新、Backend 目录/站点开关、设置页状态与宿主托管页面执行已接入；范围、验证与剩余阶段见 `docs/adapter_architecture_unification.md`。公开 Hub、后台 API 的全部旧路由迁移、完整安装事件刷新、生成产物与打包尚未整体切换，旧资产保留。
-
-WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上按模块迁移旧开发分支中未进入 `main` 的通用能力。迁移不引入旧 Git 历史，且保持现有 Profile/Overlay 配置架构不变。
+WeWorker 正在完成开源发布前的仓库清理与验证。当前保留 Electron 桌面端、React Renderer、TypeScript Backend、WebCLI、浏览器扩展、公开网站 Adapter，以及内嵌的网站探索agent源码。
 
 ## 已完成
+
 
 - 2026-10-09：修复工作区导航迁移不完整导致 API 探索、网站探索agent 仍与会话记录共用侧栏的问题。两项探索改为左侧独立图标入口，进入后隐藏会话／定时任务记录栏并关闭辅助面板；浏览器扩展状态收敛为独立拼图图标和连接面板。移除对话侧栏底部重复的服务、模型、扩展和设置区域，更新提示仅在有可用更新时显示在标题栏。Renderer 探索／恢复／网站探索／端口帮助聚焦测试 23/23、生产构建及差异检查通过；运行中的 Electron 未开放调试端口，未重启用户当前窗口做截图验收。
 
@@ -419,7 +521,7 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 - 根更新日志与应用内更新日志已重置为仅记录首次公开版本 `1.0.0`。
 - 浏览器扩展的公开名称统一为 `WeWorker Browser Adapter`，公开链接不再指向旧项目地址。
 - 根 README 已按当前真实架构、启动命令、安全边界和发布状态重写。
-- 当前支持的 Adapter 已在 README、Adapter 清单、官网文档和更新日志中按首次公开版本口径记录。
+- 20 个目标网站清单已保留并增加“已实现／开发中／规划中”状态；Gmail 和诺诺网发票作为补充集成单独记录。
 - 贡献指南已改为基于 `main` 的 GitHub Flow，并补充真实检查命令、Adapter 贡献要求和本地敏感信息自检规则。
 - 已新增 Git 工作流文档，明确 PR、受保护分支、受控敏感信息检查、Squash Merge、Tag 和紧急修复流程。
 - Issue 与 PR 模板已完善，覆盖 Bug、功能、文档和 Adapter 提议，并区分贡献者自检与维护者受控敏感信息检查。
@@ -427,70 +529,13 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 - 已补齐行为准则、支持指引、第三方声明、`.gitattributes`，并完善新仓库文件边界。
 - 发布工作流已改为仅手动触发，并只创建指定版本的草稿 Release，不再强制移动 Tag 或删除既有 Release。
 - 构建配置支持通过外部 Profile Overlay 叠加 Adapter、Provider 与扩展权限；安装包只读取生成的 `build/extension-dist/`，构建不再回写公共源配置。
-- 官网站点清单支持外部 Overlay，源码只保留公开站点基线，开发与构建前自动生成最终清单。
+- 官网（`officialWeb/`）已切换为开源单页站点；`src/lib/sites.json` 与 `extension/adapters` 公开 Adapter 对齐。
 - Backend 提供可注册的 Profile 查询路由入口；默认公开构建保持空实现，定制能力可由独立入口参与开发和打包。
 - Extension 页面运行时跨域访问改由内置 Adapter manifest 的 `runtime_allowed_hosts` 显式声明，公共 Service Worker 不再包含产品域名映射。
 - WebCLI 包清单使用公共超集，定制仓库可按需提供命令目录资产而无需修改公共依赖或 package 配置。
 - Windows 解密工具改由 `uv` 创建隔离、固定版本的构建环境，不再依赖系统 Python 预装 PyInstaller/pywin32。
-- 已从清理后的公开 `main` 创建全新本地 `develop`，旧仓库 `develop` 仅作为只读迁移来源。
-- 首个低风险增量已迁入：Backend 显式固定 `@emnapi/runtime` 构建依赖，不涉及业务配置或内部资产。
-- 旧 `develop` 中的通用上下文与记忆能力已迁入公开 `develop`：Prompt 外置、长期记忆存储/召回、记忆准入与执行证据、对话上下文压缩、上下文用量面板、已加载 Skill 指令连续性。
-- Backend 关键运行依赖已从浮动版本调整为固定版本，并补齐 `@emnapi/runtime` optional lock 元数据，提升 Windows 构建可复现性。
-- 已迁入通用网站/API 探索与 Adapter 生成链路：Extension 提供被动网络采集、安全只读探测、capture-bound 回放与动作捕获，Backend 提供探索 Agent、Bridge RPC、站点记忆和生成编排，Renderer 提供任务恢复与生成工作台。
-- 已新增可复用的 API Adapter 认证框架与 Codex Skill，覆盖清单、mock 成功/失败、安全确认门、live 分类、增量指纹、多开发者本地 profile、打包校验和自包含 HTML 报告；开发者权限、登录态、fixture 与 live 证据不进入仓库。
-- 公开构建当前不包含 API/background Adapter，认证清单为 0 个 Adapter、0 个工具；框架可由外部 Profile Overlay 或内部仓库直接复用，不能据此宣称任何未打包 Adapter 已完成 live 认证。
 
 ## 验证结果
-
-- 2026-09-22：修复原生网站探索工作区缺失托管实例身份的问题。Electron 每次启动生成同一份探索实例 ID 并注入 Backend 与 Python 服务，健康接口返回该 ID，Backend 保留实例匹配校验；分别提示独立后端、托管信息缺失、服务未就绪与实例不匹配，复用界面既有自动重试。Backend 新增回归 7/7、类型检查，Python 健康接口／生命周期 35/35，Electron 启动／端口归属／生命周期 33/33 通过，随后补充每次启动生成新 ID 与异常重启保留 ID 的验证，相关两文件 14/14 通过；JavaScript 语法与差异检查通过。窗口自动化连接超时，未终止现有进程；用户随后确认问题已修复，真实客户端恢复由用户验收确认。
-- 2026-09-21 预览隔离批次：直接 AI 生成 RPC 转入任务式生成；输入只保留响应结构证据，重复来源合并不会重新引入样本值。生成预览使用任务专属注册表及运行时全局覆盖，绑定随机 token、站点、任务标识和包摘要，不清空或重新注入正式 Adapter；结束、异常、导航和过期均限制临时注册。静态验证后的草稿变化在浏览器注入前拒绝。此隔离不是 JavaScript 安全沙箱，DOM 和浏览器能力仍共享。
-- 验证：公开 WebCLI 全量 529/529；随后包摘要与生成/归一化专项两边各 26/26；扩展相关公开 32/32、内部 27/27，最终预览专项各 5/5。独立 Edge 两仓库及 Chrome for Testing 通过 28 项浏览器检查，包含正式同名工具在预览期间和结束后继续可调用。公开 prepare 包含预览资源；内部官方 prepare 仍被既有配置分层预检拦截。未完成真实业务站点、完整客户端、安装包与 macOS 验收。
-- 剩余重点：内置资产、Profile/打包、公开 Hub、完整安装事件与旧名称/后台路由兼容；旧目录保留，未推送或合并。
-
-
-- 2026-09-21 快速生成与安装评审批次：Backend、扩展侧栏和弹窗的快速生成切到同一任务式 v2 草稿链路；只选择最多两个高置信查询来源，保持原始接口索引，不调用模型，不自动安装。页面未就绪时暂停，恢复时继续验证原草稿。安装前展示版本、来源和权限；确认绑定包摘要及注册表版本，来源切换、新增权限或降级必须确认具体评审；过期评审返回待确认，安装基线改变仍拒绝覆盖。安装仅使用已验证的固定字节，成功后通知 Backend 刷新。弹窗保存任务供侧栏恢复，旧任务协议仍以 publish 命名，但用户文案统一为本机安装。
-- 验证：公开 WebCLI 全量 527/527，内部相关七文件 39/39（含真实 Worker 跨进程暂停/恢复/安装，浏览器响应用模拟替身）；最后安装重试错误清理通过两边专项各 9/9。Backend 本批相关公开 29/29、内部 26/26；公开类型检查通过，内部仍为原有 8 项错误。扩展确认/弹窗行为测试各 5/5，Renderer 新增共用行为各 3/3，公开探索相关合计 19/19，两边 Renderer 构建通过。内部 WebCLI 的既有开发模式 UI 断言仍失败，未修改该开关，未宣称内部全量通过。本批未执行完整客户端、真实站点或安装包验收。
-- 剩余工作：直接 AI 生成与文件编辑入口、任务专属预览注册表及恢复、全部安装事件传播、公开 Hub、旧名称/后台路由、内置资产与 Profile/最终打包。上述内容继续属于统一架构总目标；旧目录未删除，未推送或合并。
-
-
-- 2026-09-21 生成包接入批次：智能生成与经典编排默认产出隔离 v2 包，命令采用规范名并声明同包旧名别名；安装内容只含 manifest、内部运行代码和命令，来源证据、mock 用例、修订废弃代码与验证报告保留在任务工作区。使用与 Extension 一致的 bootstrap 做注册完整性、预览和确认门验证；写命令仍须作者实现与独立 mock 验证，禁止把捕获请求/响应值带入包。
-- 新任务默认位于按 Profile 隔离的 Adapter 工作区；历史任务按原路径读取和恢复，不自动迁移。修订复制独立证据并保留原安装基线，恢复时重验；v2 草稿不得切回历史发布格式。安装读取通过验证的固定字节，核对 Profile 和生成时的有效摘要，拒绝验证后改动及并发覆盖。新增权限、降级或来源变化仍由安装管理器拒绝，尚待接通这些变化的具体 UI 评审。
-- 本批验证：公开 WebCLI 全量 514/514；新增格式降级拒绝和损坏 manifest 修订恢复后，两边包/修订/发布/静态聚焦各 27/27。内部生成专项 159/159；内部全量初跑 650/658，修正捕获值旧断言和 CLI 子进程测试缓冲上限后相关聚焦 35/35，剩余 6 项属于此前记录的扩展权限、旧 UI、Windows Toolkit、历史报告/场景问题，未宣称全量全绿。两边 Backend 生成聚焦各 7/7，公开类型检查通过；内部原有 8 项类型错误仍在。独立 Edge 两仓库与 Chrome for Testing 完成 22 项检查，新增实际 v2 草稿→扩展注入器→loopback 模拟接口及预览清理；不等于完整产品生成/安装或真实业务 API 验收。公开 prepare 和两边 npm 文件清单检查通过，内部官方 prepare 仍被既有配置分层预检拦截。
-- 尚未切换：Backend/扩展的旧快速生成、直接 AI 文件生成及其 UI/Skill 反馈；生成安装的来源与权限变更评审、全部状态通知、历史来源迁移。生成 API 仍依赖页面认证环境，未因来源是 API 就自动声明后台执行；后台生成认证需单独接通。公开 Hub、内部旧路由、资产/Profile 与最终安装包验收继续保留在总目标中。
-
-
-- 内部本批 Backend 全量 829 通过、17 失败、4 跳过；17 项失败均与此前精确对照基线匹配。原先 5 项目录/旧名称/后台元数据迁移缺口已通过更新后的语义回归，另新增显式查询别名与停用/冲突边界 2/2。内部类型错误的字段展示因新增 managed 元数据而变化，但 8 项错误位置与根因仍与基线一致。
-
-
-- 2026-09-21 后台执行批次：两个版本接入按包摘要加载的离屏执行器，每次调用使用独立文档生命周期，与旧后台执行器共用串行队列。命令声明、安装新增权限、扩展能力协商、CLI/Skill/Backend 能力说明一致；写操作在宿主与执行器确认。辅助请求绑定当前文档、随机调用标识和宿主构建的上下文，初始目标域名按当前包声明检查，迟到请求不能借用下一次调用的上下文。离屏生命周期隔离不等于 JavaScript 安全沙箱，沿用既有 helper 的网络/认证行为；重定向策略与完整旧路由兼容仍需后续审计。
-- 本批验证：公开 WebCLI 全量 502/502，后补充参数及旧离屏文档切换边界后两边最终聚焦各 49/49；Backend 托管目录各 8/8。公开扩展路由及 helper 21/21，内部路由 16/16。独立 Edge 两仓库及 Chrome for Testing 通过 20 项真实浏览器检查，包含安装快照→离屏命令→实际 Bridge HTTP helper→loopback 模拟接口，参数原样、并发隔离、确认门及失败清理；不等同于真实业务站点或完整客户端验收。公开 prepare 含新离屏资产且类型检查通过；内部 prepare 仍被原有配置分层冲突阻断，8 项类型错误的位置及根因与对照基线一致。
-
-
-- 2026-09-21 同包命令别名：两个版本增加显式 aliases 校验及宿主/Extension/Toolkit/CLI 帮助/Skill/Backend 元数据支持；旧名解析到规范命令和同一摘要，列表不重复命令。两边别名与加载器最终聚焦各 13/13、Backend 目录各 7/7；内部包/宿主/安装/视图聚焦 67/67。公开 WebCLI 全量 492 项中 491 通过，唯一失败为加载器定义新增 aliases 字段后旧精确断言未更新；修正后上述聚焦通过。扩展路由公开 12/12、内部 14/14，独立 Edge 两仓库及 Chrome for Testing 通过 16 项浏览器检查。公开 prepare 通过，内部官方 prepare 仍被此前配置分层冲突拦截；尚未完成后台 API、跨前缀别名、生成和安装包验收。
-
-- 2026-09-21：Backend 与设置页接入托管目录和同一启用状态，停用/损坏包保留管理项但不提供旧工具。每轮刷新托管 Skill，自动索引与历史回放验证包摘要，保留用户冲突文件。两边 Backend 聚焦各 30/30，补充托管启用状态与欢迎页可见性边界后各 13/13、WebCLI 聚焦各 38/38、Renderer 2/2 与构建通过；公开 Backend 全量 463 通过/4 跳过，类型检查和 bundle 通过。内部全量 818 通过/23 失败/4 跳过：17 项对照基线失败，排序测试改为一次目录快照后单独通过，另 5 项为尚未迁移的旧名称/后台 API/查询目录缺口，仍待修复。内部 8 项类型错误及官方 Backend build 缺失导出均在未修改快照复现；内部 Renderer 缺省构建不等于 Profile/安装包验收。完整安装事件刷新、API 执行、生成和资产迁移仍在目标中。
-
-- 2026-09-21：统一 CLI 有效列表/详情/帮助/Skill 与本地 v2 安装/开发/选择/移除入口；派生 Skill 记录版本和摘要，不改写包，刷新保留用户编辑与手动停用状态。公开 WebCLI 全量 485/485；内部 549/555，剩余 6 项均在未修改基线出现。两边安装/宿主/Skill 聚焦各 37/37；随后完整 Schema 展示与布尔/嵌套 Schema 等最终聚焦各 13/13 通过。旧兼容测试与 v2 包隔离，新版覆盖优先级单独测试。公开 prepare 与两边 npm 包文件清单检查通过；内部 prepare 仍被现存配置预检拦截。桌面端自动刷新、后台 API、探索生成、资产与最终打包仍未完成。
-
-- 2026-09-21：Adapter 第三阶段接通宿主目录/脚本快照、CLI/Backend 调用摘要和扩展页面执行队列。公开 WebCLI 471/471；内部 522/541，19 项失败均在此前未修改基线中出现。公开扩展路由/权限/加载器 24/24，内部探索/加载器相关 18/18；两个仓库独立 Edge MV3 及 Chrome for Testing 均通过 14 项检查，新增临时安装快照至真实 content injector 的版本更新、旧摘要拒绝、确认门和工具清理验证。托管 Extension 当前需要已打开的匹配页，后台 API、自动开页、完整列表/Skill/UI、生成和打包仍待完成；未宣称完整客户端或真实站点端到端验收。
-
-- 2026-09-21：Adapter 第二阶段公开 WebCLI 全量 451/451，后续持久快照路径及提交后中断调整通过两边安装/路径/包聚焦各 65/65；内部 Hub 入口 24/24，含 CLI 子进程与模拟服务验证来源切换和权限确认。内部全量 510/532（21 项失败与未修改基线重合，另一个 Worker 超时）；Worker 聚焦仍有 Windows EPERM 相关超时，未宣称内部全量通过。公开配置预处理及两边 npm 包文件清单 dry-run 通过；内部官方 prepare 被现存配置分层问题拦截，未修改基线同样失败，纳入后续资产/Profile 阶段。未宣称消费者整体切换或安装包验收完成。
-
-- 2026-09-21：Adapter 架构第一阶段完成共用加载器与路径/包契约验证。两个版本的路径/包聚焦各 54/54；共用加载器在独立 Edge MV3 与 Chrome for Testing 中通过 8 项行为检查，未使用真实用户浏览器或账号。公开 WebCLI 全量 427/427 后追加边界测试通过，扩展相关 30/30；内部 Hub/接入 38/38、扩展相关 17/17，内部全量 483/505，未修改基线也有 23 项失败，当前 22 项失败中 21 项与基线重合，另一 Worker 超时单独重跑通过。未宣称内部全量、真实网站生成或安装包验收通过；完整记录见架构方案。
-
-- 2026-09-21：拆分提交 Windows 托管启动修复。父进程存活探测改用 Windows 只读同步句柄，避免 os.kill(pid, 0) 误终止进程；移除 Backend 启动时未定义的环境变量赋值，并记录启动异常状态。隔离分支 Windows Python 生命周期测试 7/7、Electron 启动／端口归属／健康检查／停止／异常重启聚焦测试 32/32 通过，确认 Python 测试加载本分支源码。测试仅启动自有临时进程，未操作现有客户端或未知端口进程；安装包及真实客户端重启复验未执行。
-
-- 2026-09-21：补齐响应验证器模块拆分后的扩展测试加载适配。tool-route 与 wecli-runtime-helper 测试改用既有 runServiceWorkerInContext，注入真实验证器导出，不再把含 ESM import 的 Service Worker 作为普通脚本直接执行。修复前 CI 四文件扩展测试为 11 通过／15 失败，错误均为 Cannot use import statement outside a module；修复后在 Windows 的 Node.js 24.18.0 和 CI 同主版本 Node.js 22.23.2 上执行相同四文件命令均为 26/26 通过。WebCLI 全量 57 文件、321/321，以及两个测试文件语法检查、差异格式检查通过。未修改生产运行逻辑、捕获值隔离、依赖或 CI 配置，未跳过断言；Ubuntu 远端完整 CI 仍以新 PR 的实际结果为准，未执行真实站点端到端。
-
-- 2026-09-21：修复生成链路测试基线的两处过期断言：列表 API 候选验证响应结构 hints 的生成／合并，并禁止持久化响应原文；Bridge 协议测试跟随已拆分的响应验证模块，同时检查实际调用连接。新增纯虚构响应的行为回归，覆盖首次保存及重复候选合并，确认字段结构保留、响应实值不进入站点记忆。本次只改测试与记录，不恢复 responsePreview 持久化、不修改运行逻辑或 CI 配置。基于最新 develop 的隔离分支在 Windows 执行 WebCLI 全量 57 文件、321/321，相关三文件聚焦测试 16/16，扩展探索协议／站点状态测试 12/12，测试文件语法检查及差异格式检查均通过。真实模型／浏览器端到端、其他平台及完整桌面端构建未执行；本记录不代表探索／生成链路已完成端到端验收。
-
-- 2026-09-20：同步上游 develop，解决 WebCLI package scripts 的唯一文本冲突：保留上游 `test:e2e:real --profile public` 及本分支 API 测试／认证命令。自动合并 Windows 文件锁重试与持久化脱敏改动后，草稿工作区、Worker、Harness、发布基线、捕获值隔离和认证清单六文件测试 32/32，公共配置一致性检查通过。上游带入的四个生成文件存在 EOF 空行提示，未改写这些既有产物；计划工具遗漏等已知功能问题仍未修复。
-
-- 2026-09-20：用户恢复目标页后，使用已重启的 Backend／Bridge 和已重载扩展重新完成真实探索：36 条请求筛出 3 个只读候选，3 次重放均为 HTTP 200、非空响应，模型分析无错误。保存后分别审计内存站点记忆、磁盘记录和生成上下文，未发现非空请求／响应 preview、responseSample 或 URL 查询实值，3 个候选均保留响应 hints。真实生成要求两个指定只读工具；确定性映射探针再次证明第三候选虽被计划选中，却未进入 scaffold 的两个打分槽位而被静默跳过。Agent 移除历史写骨架及未计划工具后，静态验证通过但缺少计划中的计数工具；补写新工具文件遭到 `draft file not found`，随后生成以 `AI_WORKER_TIMEOUT` 失败，未完成运行验证、未发布。草稿扫描未命中响应样本字段、绝对用户路径或签名查询参数值。结论：本轮新采集与持久化隔离检查通过，计划驱动生成和完整端到端验收仍不通过；需处理候选选择、计划／产物集合强校验与新增草稿文件能力，不能用静态绿灯替代功能完整性验收。
-
-- 2026-09-20：按用户要求从当前工作区启动 Backend 与 Bridge（启动前对应端口均空闲），确认扩展重载后重新连接，被动探索／安全探测／重放／生成能力均已注册。通过真实站点记忆接口触发旧记录清理，并核对磁盘：4 个列表候选均保留响应 hints，请求／响应 preview 与 responseSample 非空字段为 0。新一轮目标页探索在采集阶段被浏览器错误页阻断（`Frame with ID 0 is showing error page`）；独立 HTTPS 探测返回证书链校验失败，未绕过校验，不能据此确定浏览器错误页的唯一原因。复核上次待发布草稿发现计划／产物不一致：计划中的一个只读计数工具缺失，产物包含未计划的列表工具；生成映射仅给打分进入两个 scaffold 槽位的候选改名，其余计划候选被静默跳过。上次静态与运行验证通过只证明实际生成工具通过验证，不代表计划完整实现。未发布草稿；新采集到生成的完整验收待页面恢复及工具集合一致性问题处理后继续。
-
-- 2026-09-18：迁移后 WebCLI 捕获值隔离／scaffold 聚焦测试 30/30、Worker／模型聚焦测试 16/16、Backend 站点记忆／scaffold 19/19、扩展探索协议 9/9 通过；Backend `tsc --noEmit` 和相关 JavaScript 语法检查通过。generation 扩展回归先得到 106/107，一条测试仍期待公开快照暴露完整路径；调整为断言路径脱敏后，该文件 8/8 通过。新增行与新增测试的内部标识扫描未发现回迁，既有未跟踪文档保持原样。真实只读生成重试已越过模型配置失败，静态检查和浏览器运行验证均通过（3 个工具注册、2 个只读用例执行通过、登录检查跳过），finish_run 返回 ready，未发布。实测另观察到历史动作骨架被带入只读草稿，Agent 在静态验证拦截后移除；计划与最终工具集合一致性需继续核对。Backend 与扩展长期进程尚未重载，不能据此宣称持久化边界已完成新版本端到端验收。
 
 - 敏感信息复扫未发现新的硬编码密钥、Token、内部域名或私网 IP；命中项均为变量名、脱敏测试样例或公开占位地址。
 - WebCLI 聚焦测试通过（31 项），Backend 用户场景测试通过（5 项）。
@@ -499,24 +544,18 @@ WeWorker 已完成公开仓库初始化，当前在全新的 `develop` 基线上
 - Electron 集成测试通过（22 项），公开配置校验及校验器测试通过。
 - Windows 本地全量测试基线：WebCLI 234/243、Backend 283/288 通过；剩余失败为 Windows 文件系统/符号链接差异、已变更的 PowerShell 平台文案和过期测试 mock，需在后续开发中修复或在 Ubuntu CI 复核。
 - Git 差异格式检查通过。
-- 官网清单 Overlay 单测与公开生产构建通过（2 个公开分组、3 个站点）。
+- 官网生产构建通过（公开 Adapter 对应 4 个分组、7 个站点）。
 - Backend Profile 聚焦测试、Adapter scaffold/用户场景测试、类型检查与公开 bundle 验证通过；公开 bundle 标记为 `public`。
 - Extension manifest 跨域授权聚焦测试通过；公开 Profile 成功生成 4 个实际打包 Adapter。
 - Windows 解密工具在隔离环境中成功生成 `sd_decrypt.exe`。
-- `@emnapi/runtime` 固定版本迁移后，Backend TypeScript 生产构建通过，Git 差异格式检查通过。
-- 上下文与记忆迁移后，Backend TypeScript 生产构建通过，Renderer 生产构建通过。
-- 记忆、上下文压缩、上下文快照、Skill 连续性与 Windows 原生命令文案聚焦测试通过；Backend 全量测试为 414/421 通过，剩余 3 个失败为既有 mock/Windows 超时问题。
-- 网站/API 探索与认证迁移后，WebCLI 聚焦测试 100/100、Backend 探索测试 44/44、Renderer 探索测试 15/15、Extension/认证 Skill/Electron/打包测试 38/38 通过。
-- API Adapter 认证的 inventory、evidence 与 mock 门禁通过；公开 Profile 的结果为 0 个 Adapter、0 个工具，4 个证据测试文件全部通过。
-- Backend TypeScript 类型检查、Renderer 生产构建、50 个相关 JavaScript 文件语法检查及认证 Skill 结构校验通过。
 
 ## 进行中
 
-- 按“公共通用能力／内部专用能力／不迁移资产”清单逐模块迁移旧 `develop`，每批进入公开分支前执行人工敏感信息检查。
+- 执行初始化前的最终受控敏感信息复扫和文件清单复核。
 
 ## 待办
 
-- 继续在公开 Profile 与内部 Overlay 的实际 Adapter 上分别执行 live 认证，并仅在各自仓库存放对应的非敏感共享基线。
+- 在干净目录复制最终文件并重新初始化 Git 仓库。
 - 为公开发布配置新的下载地址、指标服务和发布流程。
 - 在目标平台完成 Windows x64、macOS arm64 与 macOS x64 安装包验收。
 

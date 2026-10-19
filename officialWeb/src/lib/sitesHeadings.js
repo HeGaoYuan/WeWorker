@@ -1,4 +1,4 @@
-import sitesData from './sites.generated.json'
+import sitesData from './sites.json'
 
 export function slugify(text) {
   return text

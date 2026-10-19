@@ -47,7 +47,7 @@ WeWorker 的 `BridgeManager.start()` 始终无条件启动 bridge 子进程。�
 
 **优先级**: Low
 **发现日期**: 2026-06-01
-**相关文件**: `extension/adapters/*/manifest.json`, `extension/adapters/README.md`
+**相关文件**: `adapters/*/manifest.json`, `extension/README.md`
 
 ### 描述
 

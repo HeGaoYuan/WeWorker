@@ -3,7 +3,6 @@
   "exceptions": [
     "webcli/metrics.js",
     "weworker/backend-ts/src/provider-registry.ts",
-    "weworker/backend-ts/src/registry.json",
     "weworker/electron/update-manager.js",
     "weworker/renderer/src/config/deployment.json",
     "weworker/renderer/src/config/route-aliases.json",

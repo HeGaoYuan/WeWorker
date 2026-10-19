@@ -193,7 +193,7 @@
       "requires_confirmation": false
     }
   ],
-  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/mail.163.com",
+  "homepage_url": "https://mail.163.com/",
   "icon": "mailbox",
   "scenarios": [
     {
