@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-19：补齐 #91 的读端遗漏：Electron `adapter-environment.js` 不再要求内置 Adapter `.profile.json` 包含已移除的 `legacy` 字段，与 `webcli/paths.js`、`adapter-catalog.js` 及写端 `builtin-adapter-build.js` 保持一致，并新增缺省 `legacy` 元数据的聚焦用例（7/7 通过）。同步 `webcli/package-lock.json` 版本到 1.0.4 与 backend-ts lockfile 的 peer 标记；`streamChat` 增加 Adapter 重载、Skill 刷新、上下文组装与 query 创建阶段耗时、上下文分类 token 估算及 prompt 字符数诊断日志（不记录 prompt 正文）。backend `tsc --noEmit` 通过；未在真实打包应用或真实会话中验证日志输出。
+
 - 2026-10-17（PR #91 分支同步）：将含 #106 修复的最新 develop 合入 `chore/remove-legacy-extension-adapters`（无冲突），check-public-config 台账 fixture 随 legacy 目录移除精简（去掉 `extension/adapters/index.json` 桩）。worktree 聚焦复验：真实仓库校验通过、scripts 测试 4 项、webcli 两文件 37 项（即 #106 所修用例）、扩展 tool-route 与 wecli-runtime-helper 33 项全部通过。
 
 - 2026-10-17：修复 PR 上「配置一致性检查」存量失败：webcli 自 10-15 起由发布脚本按 npm 独立发版节奏升至 1.0.4，check-public-config 不再要求 webcli/package.json 等于桌面应用版本，改为校验 webcli 自身发布台账（package.json、version.json、.claude-plugin/plugin.json 与 SKILL.md frontmatter 四处一致）。新增临时目录 fixture 聚焦测试 2 项（版本独立不报错、台账漂移逐文件报错），真实仓库校验与 scripts 测试 4 项通过；未改动发布脚本与 workflow 本身，Release Latest 在 develop 上的历史失败未在本轮排查。
