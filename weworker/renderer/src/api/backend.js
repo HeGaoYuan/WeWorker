@@ -11,7 +11,7 @@ export async function warmupChat(workId, { thinkingEffort, styleId } = {}) {
   const res = await backendFetch(workId ? `/works/${workId}/warmup` : '/chat/warmup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(workId ? { thinkingEffort } : { thinkingEffort, styleId }),
+    body: JSON.stringify(workId ? { thinkingEffort } : { thinkingEffort, zcfRole: styleId }),
   })
   return res.ok ? res.json().catch(() => null) : null
 }

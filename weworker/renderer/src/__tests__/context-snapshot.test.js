@@ -339,3 +339,16 @@ describe('context snapshot display helpers', () => {
     assert.equal(formatContextLimitInput(1000000), '1M')
   })
 })
+
+it('calibrates normal context only from the latest request, not cumulative billing', () => {
+  useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
+  useWorksStore.getState().setContextSnapshot('fixture-work', {
+    phase: 'request_start', estimated_total_tokens: 500, context_limit: 2000,
+    categories: [{ id: 'conversation', scope: 'work', estimated_tokens: 500 }],
+  })
+  useWorksStore.getState().setContextUsage('fixture-work', { total_input_tokens: 9000, context_input_tokens: 600 })
+  assert.equal(useWorksStore.getState().contextSnapshots['fixture-work'].displayed_total_tokens, 600)
+  useWorksStore.getState().setContextUsage('fixture-work', { total_input_tokens: 12000 })
+  assert.equal(useWorksStore.getState().contextSnapshots['fixture-work'].displayed_total_tokens, 600)
+  useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
+})

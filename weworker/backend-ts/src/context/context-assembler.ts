@@ -152,6 +152,7 @@ export function buildTurnEndContextSnapshot(
     ...requestSnapshot,
     phase: 'turn_end',
     estimated_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
+    displayed_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
     categories,
   }
   return calibrateContextSnapshot(snapshot, actualInputTokens)
@@ -164,13 +165,13 @@ export interface TurnContextEvent {
   name?: string
   args?: unknown
   result?: string
-  // Kept for event compatibility; normal query usage is billing data and is
-  // intentionally ignored by the turn context collector.
-  usage?: { total_input_tokens?: number }
+  // Billing totals are cumulative; only the latest main request calibrates context.
+  usage?: { total_input_tokens?: number; context_input_tokens?: number }
 }
 
 export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
   let assistantText = ''
+  let actualInputTokens: number | undefined
   const toolCalls = new Map<string, { name: string; result?: string }>()
   const skillTexts = new Map<string, string>()
 
@@ -186,13 +187,18 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
       } else if (event.type === 'tool_call_result' && event.id) {
         const existing = toolCalls.get(event.id) ?? { name: 'tool' }
         toolCalls.set(event.id, { ...existing, result: event.result })
+      } else if (event.type === 'usage') {
+        const tokens = event.usage?.context_input_tokens
+        if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0) actualInputTokens = tokens
       }
     },
     finish(): [
       { type: 'context_snapshot'; context: ContextSnapshot },
       { type: 'done' },
     ] {
-      const toolText = [...toolCalls.values()]
+      const toolText = [...toolCalls.entries()]
+        .filter(([id]) => !skillTexts.has(id))
+        .map(([, tool]) => tool)
         .map((tool) => `\n[Tool] ${tool.name}${tool.result ? `\n${tool.result}` : ''}`)
         .join('')
       const skillTokens = [...skillTexts.values()].reduce((sum, text) => sum + estimateContextTokens(text), 0)
@@ -206,6 +212,7 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
       const context = buildTurnEndContextSnapshot(
         snapshot,
         `${assistantText}${toolText}`,
+        actualInputTokens,
       )
       return [
         { type: 'context_snapshot', context },

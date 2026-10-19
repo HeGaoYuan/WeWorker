@@ -53,9 +53,10 @@ describe('chat warm-up', () => {
     assert.equal(readPersistedThinkingEffort({ getItem: () => null }), 'off')
     assert.equal(readPersistedThinkingEffort({ getItem: () => 'nonsense' }), 'off')
     assert.equal(readPersistedThinkingEffort({ getItem: () => { throw new Error('blocked') } }), 'off')
-    // 欢迎页没有 work：仍由首次输入触发预热。
-    assert.equal(buildOpenWarmupRequest(null, storage), null)
-    assert.equal(buildOpenWarmupRequest('', storage), null)
+    assert.deepEqual(buildOpenWarmupRequest(null, storage, 'fixture-style'), {
+      workId: null, payload: { thinkingEffort: 'high', styleId: 'fixture-style' },
+    })
+    assert.equal(buildOpenWarmupRequest('', storage).workId, null)
   })
 
   it('posts to the work or welcome warm-up endpoint', async () => {
@@ -70,6 +71,6 @@ describe('chat warm-up', () => {
     assert.equal(calls[0].url, 'http://127.0.0.1:8765/works/work-a/warmup')
     assert.deepEqual(calls[0].body, { thinkingEffort: 'low' })
     assert.equal(calls[1].url, 'http://127.0.0.1:8765/chat/warmup')
-    assert.deepEqual(calls[1].body, { thinkingEffort: 'medium', styleId: 'engineer-professional' })
+    assert.deepEqual(calls[1].body, { thinkingEffort: 'medium', zcfRole: 'engineer-professional' })
   })
 })

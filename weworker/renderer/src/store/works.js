@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
-import { calibrateCompactedContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
+import { calibrateContextSnapshot, calibrateCompactedContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
 import { leaveWebsiteExploration } from './website-exploration.js'
 import { showAlert } from './dialog.js'
@@ -344,13 +344,15 @@ export const useWorksStore = create((set, get) => ({
   },
 
   setContextUsage: (workId, usage) => {
-    if (usage?.kind !== 'post_compaction_probe') return
-    const actualInputTokens = Number(usage?.total_input_tokens)
-    if (!workId || !Number.isFinite(actualInputTokens)) return
+    const isCompactionProbe = usage?.kind === 'post_compaction_probe'
+    const actualInputTokens = isCompactionProbe ? usage?.total_input_tokens : usage?.context_input_tokens
+    if (!workId || typeof actualInputTokens !== 'number' || !Number.isFinite(actualInputTokens) || actualInputTokens < 0) return
     set((s) => {
       const current = s.contextSnapshots[workId]
       if (!current) return s
-      const nextSnapshot = calibrateCompactedContextSnapshot(current, actualInputTokens, s.contextTokenAnchors[workId])
+      const nextSnapshot = isCompactionProbe
+        ? calibrateCompactedContextSnapshot(current, actualInputTokens, s.contextTokenAnchors[workId])
+        : calibrateContextSnapshot(current, actualInputTokens)
       const nextAnchor = createContextTokenAnchor(nextSnapshot)
       return {
         contextSnapshots: {
