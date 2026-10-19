@@ -21,7 +21,7 @@ function readBuiltProfile(builtinDir) {
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Built-in Adapter profile metadata must be a regular file.');
   const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
   if (metadata?.schema_version !== 1 || !isValidProfile(metadata.profile)
-      || !Array.isArray(metadata.adapters) || !Array.isArray(metadata.legacy)) {
+      || !Array.isArray(metadata.adapters)) {
     throw new Error('Invalid built-in Adapter profile metadata.');
   }
   return metadata.profile;
