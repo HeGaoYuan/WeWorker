@@ -964,9 +964,12 @@ export async function* streamChat(
     compactionOnly?: boolean;
   } = {},
 ): AsyncGenerator<SSEEvent> {
+  const streamStartTime = Date.now()
+  const elapsedSinceStreamStart = () => ((Date.now() - streamStartTime) / 1000).toFixed(2)
   // Claude Code discovers user Skills when each query starts. If a website was
   // just scaffolded, wait for its hot-install to finish before starting query.
   await waitForAdapterRuntimeReload()
+  log.info(`stage adapter_reload_ready elapsed=${elapsedSinceStreamStart()}s`)
   const enabledAdapterIds = opts.enabledAdapterIds
   const channelPermissionMode = opts.channelPermissionMode ?? 'full'
 
@@ -1056,9 +1059,10 @@ export async function* streamChat(
     path.join(getUserDirectory(), '.claude', 'skills'),
   ]
   if (skillRoots.length) refreshDesktopAdapterSkills(skillRoots[0])
+  log.info(`stage skills_refreshed elapsed=${elapsedSinceStreamStart()}s`)
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
-  log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
+  log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length, elapsed: `${elapsedSinceStreamStart()}s` })
   const storedCompactedConversation = takeStoredCompactedConversation(opts.workId, messages.length)
   const latestMessage = messages[messages.length - 1]
   const promptRaw = storedCompactedConversation
@@ -1113,6 +1117,22 @@ export async function* streamChat(
     compaction,
   })
   const fullContextAssembly = buildAssembly(prompt)
+  log.info(`stage context_assembled elapsed=${elapsedSinceStreamStart()}s prompt_chars=${fullContextAssembly.sdk.prompt.length} system_prompt_chars=${fullContextAssembly.sdk.system_prompt.length}`)
+  log.info('context_categories', {
+    estimated_total_tokens: fullContextAssembly.snapshot.estimated_total_tokens,
+    categories: fullContextAssembly.snapshot.categories.map((category) => ({
+      id: category.id,
+      tokens: category.estimated_tokens,
+    })),
+    runtime_chars: {
+      system_prompt: systemPrompt.length,
+      rules: fullContextAssembly.runtime.rules.length,
+      tool_definitions: fullContextAssembly.runtime.tool_definitions.length,
+      skills: fullContextAssembly.runtime.skills.length,
+      recalled_memory: fullContextAssembly.long_term.recalled.length,
+      conversation: fullContextAssembly.work.conversation.length,
+    },
+  })
   const nonConversationTokens = fullContextAssembly.snapshot.categories
     .filter((item) => item.id !== 'conversation')
     .reduce((sum, item) => sum + item.estimated_tokens, 0)
@@ -1281,6 +1301,14 @@ export async function* streamChat(
     }
   }
 
+  // Sizes of the input actually handed to the SDK/Claude Code, for latency
+  // diagnosis. Prompt bodies are deliberately not logged.
+  log.info('prompt_payload', {
+    model: settings.model,
+    prompt_chars: contextAssembly.sdk.prompt.length,
+    system_prompt_chars: contextAssembly.sdk.system_prompt.length,
+  })
+  log.info(`stage query_creating elapsed=${elapsedSinceStreamStart()}s`)
   const queryHandle = query({
     prompt: contextAssembly.sdk.prompt,
     options: {
