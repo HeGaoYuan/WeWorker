@@ -25,6 +25,9 @@
  * CHAT_SESSION_WARM_IDLE_MS.
  */
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { createLogger } from './logger.js'
 import { createApiDurationTracker, type ApiDurationTracker } from './usage-metrics.js'
 
@@ -50,6 +53,7 @@ export interface ChatTurnBindings {
 export interface ChatHistoryEntry {
   id: string
   role: string
+  digest?: string
 }
 
 /** Push-based prompt stream for streaming-input mode. */
@@ -105,7 +109,7 @@ export class ChatSession {
    * the previous turn of this same session. A new session gets a fresh tracker.
    */
   readonly apiDuration: ApiDurationTracker = createApiDurationTracker()
-  private consumedIds: string[] = []
+  private consumed: ChatHistoryEntry[] = []
   private started = false
   private closeStarted = false
   private iterator: AsyncIterator<SDKMessage> | undefined
@@ -138,12 +142,14 @@ export class ChatSession {
     if (this.closed || this.busy) return false
     // A warm session holds no history yet; its first turn carries the full prompt.
     if (this.fresh) return history.length > 0 && history[history.length - 1].role === 'user'
-    if (this.consumedIds.length === 0) return false
-    if (history.length <= this.consumedIds.length) return false
-    for (let index = 0; index < this.consumedIds.length; index++) {
-      if (history[index]?.id !== this.consumedIds[index]) return false
+    if (this.consumed.length === 0) return false
+    if (history.length <= this.consumed.length) return false
+    for (let index = 0; index < this.consumed.length; index++) {
+      const previous = this.consumed[index]
+      if (history[index]?.id !== previous.id || history[index]?.role !== previous.role
+        || history[index]?.digest !== previous.digest) return false
     }
-    const added = history.slice(this.consumedIds.length)
+    const added = history.slice(this.consumed.length)
     if (added[added.length - 1]?.role !== 'user') return false
     return added.slice(0, -1).every((entry) => entry.role === 'assistant')
   }
@@ -181,7 +187,7 @@ export class ChatSession {
 
   /** Record that the CLI now holds `history` and accept the next turn. */
   complete(history: ChatHistoryEntry[]): void {
-    this.consumedIds = history.map((entry) => entry.id)
+    this.consumed = history.map((entry) => ({ ...entry }))
     this.completedTurns += 1
     this.busy = false
     this.lastUsedAt = Date.now()
@@ -204,6 +210,26 @@ export class ChatSession {
       log.warn('chat session cleanup failed', error instanceof Error ? error.message : String(error))
     })
   }
+}
+
+/** Detect edits to Skill instructions and supporting files without rereading their bodies. */
+export function fingerprintSkillFiles(roots: string[]): string {
+  const hash = createHash('sha256')
+  const visit = (directory: string, depth: number) => {
+    if (depth > 8) return
+    try {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const file = path.join(directory, entry.name)
+        if (entry.isDirectory()) visit(file, depth + 1)
+        else {
+          const stat = fs.lstatSync(file)
+          hash.update(`${file}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}\n`)
+        }
+      }
+    } catch { hash.update(`${directory}:unavailable`) }
+  }
+  roots.forEach(root => visit(root, 0))
+  return hash.digest('hex')
 }
 
 const sessions = new Map<string, ChatSession>()

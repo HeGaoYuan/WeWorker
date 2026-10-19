@@ -41,11 +41,13 @@ export function readPersistedThinkingEffort(storage = defaultStorage()) {
 
 /**
  * 打开/切换会话（进入某个 work 的聊天界面）时的预热请求。
- * `workId` 为空表示欢迎页，那里仍由首次输入触发，返回 null。
+ * `workId` 为空表示欢迎页，使用发送时将保存的风格提前预热。
  */
-export function buildOpenWarmupRequest(workId, storage = defaultStorage()) {
-  if (!workId) return null
-  return { workId, payload: { thinkingEffort: readPersistedThinkingEffort(storage) } }
+export function buildOpenWarmupRequest(workId, storage = defaultStorage(), styleId) {
+  return {
+    workId: workId || null,
+    payload: { thinkingEffort: readPersistedThinkingEffort(storage), ...(!workId && styleId ? { styleId } : {}) },
+  }
 }
 
 export function createChatWarmupScheduler({ send, now = () => Date.now(), intervalMs = CHAT_WARMUP_INTERVAL_MS }) {

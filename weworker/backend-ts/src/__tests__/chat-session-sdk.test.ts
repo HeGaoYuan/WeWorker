@@ -74,6 +74,9 @@ it('keeps one real Claude process alive and refreshes MCP callbacks between turn
     } })
     session = new ChatSession({ workId: 'fixture-work', fingerprint: 'fixture', queue, query: handle,
       bindings: { workIdRef: { current: 'fixture-work' }, onAskUser: null, memory: { userPromptInjections: 0, postToolBatchInjections: 0 } } })
+    await handle.initializationResult()
+    expect(children).toHaveLength(1)
+    expect(requests).toHaveLength(0)
     const rawApiDurations: number[] = []
     const turnDurations: number[] = []
     // A live session owns the cross-turn baseline used to diff the CLI's

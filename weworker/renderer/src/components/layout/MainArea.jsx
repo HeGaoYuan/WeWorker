@@ -18,6 +18,7 @@ import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 import DedicatedAgentsPage from '../dedicated-agents/DedicatedAgentsPage.jsx'
 import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
 import { requestChatWarmup } from '../../api/backend.js'
+import { buildOpenWarmupRequest } from '../../utils/chat-warmup.js'
 
 export default function MainArea({ onOpenSettings, sidebarWidth }) {
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
@@ -48,6 +49,12 @@ export default function MainArea({ onOpenSettings, sidebarWidth }) {
       setInputText(fillText)
     }
   }, [activeTaskId, activeWorkId, fillSeq, fillText])
+
+  React.useEffect(() => {
+    if (activeWorkId || activeTaskId || websiteOpen || dedicatedAgentsOpen || toolPackageOpen || explorationOpen) return
+    const request = buildOpenWarmupRequest(null, undefined, styleId)
+    requestChatWarmup(request.workId, request.payload)
+  }, [activeWorkId, activeTaskId, websiteOpen, dedicatedAgentsOpen, toolPackageOpen, explorationOpen, styleId])
 
   const handleSendFromWelcome = async (text, files = [], thinkingEffort = 'off') => {
     setInputText('')

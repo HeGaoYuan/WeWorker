@@ -25,6 +25,7 @@ import { parseAllAdapters } from './adapter-parser.js'
 import { getDesktopAdapterCatalog, refreshDesktopAdapterSkillsIfStale } from './adapter-catalog-cache.js'
 import {
   ChatSession,
+  fingerprintSkillFiles,
   PromptQueue,
   disposeChatSession,
   findReusableChatSession,
@@ -269,6 +270,8 @@ export interface UsageEvent {
   cache_read_input_tokens: number
   cache_creation_input_tokens: number
   total_input_tokens: number
+  /** Latest main model request input, separate from cumulative billing usage. */
+  context_input_tokens?: number
   cache_hit_rate: number
   total_cost_usd?: number
   duration_ms?: number
@@ -1520,7 +1523,9 @@ async function* streamChatWithBaseUrl(
   })
 
   // Session mode: reuse this work's live CLI when its configuration and history match.
-  const history: ChatHistoryEntry[] = messages.map((message) => ({ id: message.id, role: message.role }))
+  const history: ChatHistoryEntry[] = messages.map((message) => ({
+    id: message.id, role: message.role, digest: sha256(JSON.stringify(message.content)),
+  }))
   const recalledMemoryBlock = longTermMemory.recalled ? `${RECALLED_MEMORY_HEADER}\n${longTermMemory.recalled}\n\n` : ''
   // A new (or still unused warm) session has seen no history: send replay + current message.
   const fullFirstPrompt = recalledMemoryBlock ? `${recalledMemoryBlock}${contextAssembly.sdk.prompt}` : contextAssembly.sdk.prompt
@@ -1539,6 +1544,8 @@ async function* streamChatWithBaseUrl(
       systemPrompt,
       skillIndex,
       sharedWebcliSkillDigest,
+      skillFiles: fingerprintSkillFiles(skillRoots),
+      filesystemSettings,
       projectSkillIndex: isolatedSkills ? '' : buildEnabledSkillIndex(path.join(getUserDirectory(), '.claude', 'skills')),
       adapters: getDesktopAdapterCatalog().effective.map((entry) => `${entry.name}@${entry.digest}`),
       disallowedTools,
@@ -1660,6 +1667,7 @@ async function* streamChatWithBaseUrl(
 
   let completed = false
   let turnFailed = false
+  let latestModelInputTokens: number | undefined
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
@@ -1690,13 +1698,30 @@ async function* streamChatWithBaseUrl(
           present: reminderObserved,
         })
       }
-      if (msg.type === 'assistant') assistantResponseCount += 1
+      if (msg.type === 'assistant') {
+        assistantResponseCount += 1
+        // Tool loops repeat their input; result.usage is billing, not current occupancy.
+        if (!msg.parent_tool_use_id && !msg.error) {
+          const usage = msg.message.usage
+          if (usage && typeof usage.input_tokens === 'number') {
+            const tokens = computeUsageMetrics({
+              input_tokens: usage.input_tokens,
+              cache_read_input_tokens: usage.cache_read_input_tokens ?? undefined,
+              cache_creation_input_tokens: usage.cache_creation_input_tokens ?? undefined,
+            }).total_input_tokens
+            if (Number.isFinite(tokens) && tokens >= 0) latestModelInputTokens = tokens
+          }
+        }
+      }
       for (const skillContext of skillContextCollector.observe(msg)) {
         turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
         log.info('skill_context_captured', { chars: skillContext.text.length })
         yield { type: 'skill_context', skillContext }
       }
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf, apiDurationTracker)) {
+        if (event.type === 'usage' && event.usage && latestModelInputTokens !== undefined) {
+          event.usage = { ...event.usage, context_input_tokens: latestModelInputTokens }
+        }
         if (event.type === 'memory_parse') memoryParseCount += 1
         if (event.type === 'error') turnFailed = true
         if (

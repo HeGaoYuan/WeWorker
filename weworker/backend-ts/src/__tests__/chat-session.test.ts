@@ -47,7 +47,7 @@ import { clearDesktopAdapterCatalogCache } from '../adapter-catalog-cache.js'
 type Request = { prompt: string | AsyncIterable<{ message: { content: string } }>; options: Record<string, any> }
 
 /** Fake CLI: streaming input answers every pushed message; a string prompt answers once. */
-function installFakeCli(behavior: { hold?: Promise<void>; toolCall?: boolean; failTurn?: number } = {}) {
+function installFakeCli(behavior: { hold?: Promise<void>; toolCall?: boolean; failTurn?: number; modelUsage?: boolean } = {}) {
   const sessions: Array<{ request: Request; received: string[]; closed: boolean }> = []
   mocks.query.mockImplementation((request: Request) => {
     const state = { request, received: [] as string[], closed: false }
@@ -60,6 +60,11 @@ function installFakeCli(behavior: { hold?: Promise<void>; toolCall?: boolean; fa
         yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: `tool-${index}`, name: 'Bash', input: { command: 'webcli call example.com.list' } }] } }
         await Promise.race([behavior.hold, closedSignal])
         if (state.closed) return
+      }
+      if (behavior.modelUsage) {
+        yield { type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 30, cache_read_input_tokens: 50 } } }
+        yield { type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 40, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 } } }
+        yield { type: 'assistant', parent_tool_use_id: 'fixture-subagent', message: { content: [], usage: { input_tokens: 9000 } } }
       }
       const failed = behavior.failTurn === index
       yield { type: 'result', subtype: failed ? 'error_during_execution' : 'success', is_error: failed, errors: failed ? ['fixture failure'] : [], result: `reply ${index}`, usage: { input_tokens: 10, output_tokens: 2 } }
@@ -131,6 +136,50 @@ afterEach(() => {
 })
 
 describe('desktop chat session reuse', () => {
+  it('uses only the latest main model input for context while preserving billing usage', async () => {
+    installFakeCli({ modelUsage: true })
+    const events = await collect([message('u1', 'fixture question')])
+    const usage = events.find(event => event.type === 'usage')?.usage
+    expect(usage?.total_input_tokens).toBe(10)
+    expect(usage?.context_input_tokens).toBe(160)
+    const end = events.filter(event => event.type === 'context_snapshot').at(-1)?.context
+    expect(end?.actual_input_tokens).toBe(160)
+    expect(end?.displayed_total_tokens).toBe(160)
+  })
+
+  it('restarts after earlier message content changes without an ID change', async () => {
+    const sessions = installFakeCli()
+    await collect([message('u1', 'original question')])
+    await collect([message('u1', 'edited question'), message('a1', 'reply 1', 'assistant'), message('u2', 'continue')])
+    expect(mocks.query).toHaveBeenCalledTimes(2)
+    expect(sessions[0].closed).toBe(true)
+    expect(sessions[1].received[0]).toContain('edited question')
+  })
+
+  it('restarts after a project Skill body changes with its name and description unchanged', async () => {
+    const directory = path.join(mocks.directory, 'user-files/.claude/skills/fixture-skill')
+    fs.mkdirSync(directory, { recursive: true })
+    const file = path.join(directory, 'SKILL.md')
+    fs.writeFileSync(file, '---\nname: fixture-skill\ndescription: fixture instructions\n---\nOriginal body')
+    const sessions = installFakeCli()
+    const first = [message('u1', 'first question')]
+    await collect(first)
+    fs.appendFileSync(file, '\nUpdated instructions')
+    await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', 'continue')])
+    expect(mocks.query).toHaveBeenCalledTimes(2)
+    expect(sessions[0].closed).toBe(true)
+  })
+
+  it('keeps an unchanged session reusable after SDK version initialization', async () => {
+    const sessions = installFakeCli()
+    vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', '')
+    await collect([], { warmupOnly: true })
+    vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', 'fixture-sdk-version')
+    await collect([message('u1', 'first question')])
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    expect(sessions[0].closed).toBe(false)
+  })
+
   it('defaults cold and prewarmed sessions to explicit thinking off and rebuilds when enabled', async () => {
     const sessions = installFakeCli()
     await collect([], { warmupOnly: true })
