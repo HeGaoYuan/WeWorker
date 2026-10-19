@@ -368,6 +368,32 @@ test('hide() leaves off-screen and minimized windows alone', async () => {
   await third.instance.stop()
 })
 
+test('captureTarget screenshots one page over its own session and always detaches', async () => {
+  // SOI + SOF0 (800×600) + EOI.
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x58, 0x03, 0x20, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9]).toString('base64')
+  let failCapture = false
+  const browser = fakeBrowser({ handlers: {
+    'Target.attachToTarget': (params) => ({ sessionId: `session-${params.targetId}` }),
+    'Page.getLayoutMetrics': () => ({ cssVisualViewport: { pageX: 0, pageY: 0, clientWidth: 800, clientHeight: 600 } }),
+    'Page.captureScreenshot': () => { if (failCapture) throw new Error('Target closed'); return { data: jpeg } },
+  } })
+  const { instance } = manager({ browsers: [browser] })
+  await instance.start()
+  const shot = await instance.captureTarget('page-7')
+  assert.deepEqual([shot.width, shot.height, shot.data], [800, 600, jpeg])
+  const forPage = (method) => browser.requests.filter((request) => request.method === method)
+  assert.deepEqual(forPage('Target.attachToTarget').at(-1).params, { targetId: 'page-7', flatten: true })
+  assert.equal(forPage('Page.captureScreenshot').at(-1).sessionId, 'session-page-7')
+  assert.deepEqual(forPage('Target.detachFromTarget').at(-1).params, { sessionId: 'session-page-7' })
+
+  failCapture = true
+  await assert.rejects(instance.captureTarget('page-8'), /Target closed/)
+  assert.deepEqual(forPage('Target.detachFromTarget').at(-1).params, { sessionId: 'session-page-8' })
+  await assert.rejects(instance.captureTarget(''), /缺少截图目标/)
+  await instance.stop()
+  await assert.rejects(instance.captureTarget('page-7'), /未运行/)
+})
+
 test('reports a profile used by another process and retries without killing it', async () => {
   const handedOver = fakeBrowser({ exitOnLaunch: 0, handlers: { 'Browser.getVersion': () => { throw new Error('closed') } } })
   // Never answers: the profile owner keeps running elsewhere.

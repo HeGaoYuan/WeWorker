@@ -19,6 +19,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { autofillLogin } from './site-autologin.js';
+import { adapterPagePatterns, hostMatchesPattern } from './host-scope.js';
 
 export const DEFAULT_LOGIN_WAIT_MS = 75_000;
 export const MAX_LOGIN_WAIT_MS = 15 * 60_000;
@@ -39,10 +40,7 @@ function codedError(code, message, auth = null) {
   return Object.assign(new Error(message), { code, ...(auth ? { auth } : {}) });
 }
 
-function hostMatches(host, pattern) {
-  const value = String(pattern || '').toLowerCase();
-  return value.startsWith('*.') ? host === value.slice(2) || host.endsWith(value.slice(1)) : host === value;
-}
+const hostMatches = hostMatchesPattern;
 
 /** Auto-login types only into HTTPS pages (or local test pages) on the site's declared hosts. */
 export function isAutologinPage(manifest, value) {
@@ -51,7 +49,7 @@ export function isAutologinPage(manifest, value) {
   const local = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
   if (url.protocol !== 'https:' && !local) return false;
   const auth = manifest?.auth || {};
-  const hosts = [...(manifest?.match || []), ...(Array.isArray(auth.login_hosts) ? auth.login_hosts : [])];
+  const hosts = [...adapterPagePatterns(manifest), ...(Array.isArray(auth.login_hosts) ? auth.login_hosts : [])];
   try { hosts.push(new URL(auth.login_url).hostname); } catch { /* No declared login URL. */ }
   return hosts.some((pattern) => hostMatches(url.hostname.toLowerCase(), pattern));
 }

@@ -1,3 +1,5 @@
+import { adapterHelperPatterns, adapterPagePatterns, hostMatchesPattern } from './host-scope.js';
+
 /** Serialize page replacement and calls so an update cannot replace a running command's globals. */
 export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
   const queues = new Map();
@@ -67,13 +69,14 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
 export function assertAdapterNavigationUrl(manifest, value, resume = true) {
   let url;
   try { url = new URL(value); } catch { throw new Error('Invalid Adapter navigation URL.'); }
-  const hosts = [...(manifest.match || []), ...(resume ? [] : (manifest.runtime_allowed_hosts || []))];
-  const allowed = hosts.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))));
+  // Page scope: `match` plus every subdomain of `domains`; helper hosts allow terminal navigation only.
+  const patterns = resume ? adapterPagePatterns(manifest) : adapterHelperPatterns(manifest);
+  const allowed = patterns.some((pattern) => hostMatchesPattern(url.hostname, pattern));
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !allowed) {
     // Name the host (never the full URL): the caller must see that this is a package
     // declaration problem that retrying cannot fix.
     const host = ['http:', 'https:'].includes(url.protocol) ? url.hostname : url.protocol;
-    throw Object.assign(new Error(`Adapter navigation host is not allowed: ${host}（页面跳转到了该 Adapter 未声明的网站，这是 Adapter 配置问题，重试无效）`), {
+    throw Object.assign(new Error(`Adapter navigation host is not allowed: ${host}（页面跳转到了该 Adapter 未声明的网站，这是 Adapter 配置问题，重试无效；开发者可在 manifest 的 domains 中声明该网站的域名）`), {
       code: 'ADAPTER_HOST_NOT_ALLOWED',
     });
   }

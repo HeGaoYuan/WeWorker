@@ -13,6 +13,7 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { basename, join, resolve, sep } from "path";
+import { adapterHelperPatterns, hostMatchesPattern, isDeclaredRouteHost, siteDomainProblem } from "./host-scope.js";
 
 
 const RUNTIMES = ["extension", "wewright"];
@@ -116,6 +117,19 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     }
   }
 
+  // Site domains: each covers the domain and all of its subdomains (see host-scope.js).
+  const domains = manifest.domains;
+  if (domains !== undefined && (!Array.isArray(domains) || domains.length === 0 || domains.length > 16)) {
+    fail(adapterName, "domains must be an array of 1 to 16 site domains.");
+  }
+  const seenDomains = new Set();
+  for (const domain of domains || []) {
+    const problem = siteDomainProblem(domain);
+    if (problem) fail(adapterName, `domains entry "${String(domain)}" ${problem}.`);
+    if (seenDomains.has(domain)) fail(adapterName, `duplicate domains entry "${domain}".`);
+    seenDomains.add(domain);
+  }
+
   const runtimesPresent = new Set();
   const ids = new Set();
   const callIds = new Set();
@@ -158,8 +172,8 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     for (const field of ['routeDomain', 'tabDomain', 'excludeTabDomain']) {
       const value = command[field];
       if (value === undefined) continue;
-      if (typeof value !== 'string' || !/^[A-Za-z0-9*_.-]+$/.test(value) || !match?.includes(value)) {
-        fail(adapterName, `Command "${id}" route field "${field}" must be a declared match host.`);
+      if (typeof value !== 'string' || !/^[A-Za-z0-9*_.-]+$/.test(value) || !isDeclaredRouteHost(manifest, value)) {
+        fail(adapterName, `Command "${id}" route field "${field}" must be a match host or a host inside domains.`);
       }
     }
     runtimesPresent.add(command.runtime);
@@ -194,6 +208,8 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     }
   } else if (match != null && (!Array.isArray(match) || match.length > 0)) {
     fail(adapterName, "match is forbidden for pure wewright adapters.");
+  } else if (domains !== undefined) {
+    fail(adapterName, "domains is forbidden for pure wewright adapters.");
   }
   for (const command of commands) {
     if (command.auth !== undefined && !["required", "optional", "none"].includes(command.auth)) {
@@ -208,10 +224,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
 const AUTH_FIELDS = new Set(["login_url", "login_hosts", "check", "autologin", "display_name"]);
 const AUTH_HOST_RE = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$/;
 
-function authHostMatches(host, pattern) {
-  const value = String(pattern || "").toLowerCase();
-  return value.startsWith("*.") ? host === value.slice(2) || host.endsWith(value.slice(1)) : host === value;
-}
+const authHostMatches = hostMatchesPattern;
 
 function authUrl(adapterName, value, field, hosts) {
   let url;
@@ -221,7 +234,7 @@ function authUrl(adapterName, value, field, hosts) {
     fail(adapterName, `auth.${field} must be an https URL without credentials.`);
   }
   if (!hosts.some((pattern) => authHostMatches(url.hostname.toLowerCase(), pattern))) {
-    fail(adapterName, `auth.${field} host must be declared in match, runtime_allowed_hosts or auth.login_hosts.`);
+    fail(adapterName, `auth.${field} host must be declared in match, domains, runtime_allowed_hosts or auth.login_hosts.`);
   }
   return url;
 }
@@ -254,7 +267,7 @@ function validateAuth(adapterName, manifest, commands, hasExtension) {
   if (!Array.isArray(loginHosts) || loginHosts.length > 16 || loginHosts.some((host) => typeof host !== "string" || !AUTH_HOST_RE.test(host))) {
     fail(adapterName, "auth.login_hosts must contain at most 16 host names (optionally *.domain).");
   }
-  const hosts = [...(manifest.match || []), ...(manifest.runtime_allowed_hosts || []), ...loginHosts];
+  const hosts = [...adapterHelperPatterns(manifest), ...loginHosts];
   if (typeof auth.login_url !== "string") fail(adapterName, "auth.login_url is required.");
   authUrl(adapterName, auth.login_url, "login_url", hosts);
   if (auth.display_name !== undefined && (typeof auth.display_name !== "string" || !auth.display_name.trim() || auth.display_name.length > 40)) {

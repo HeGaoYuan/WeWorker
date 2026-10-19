@@ -133,6 +133,7 @@ import { getMemoryStore } from './memory/memory-store.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
+import { createDesktopUserMedia } from './user-media.js'
 import { inferTerminalShell, onTerminalEvent, runWeWorkerPowerShell, stopTerminalSession } from './powershell-runner.js'
 import { channelManager } from './channels/channel-manager.js'
 import { QqQrService, FeishuQrService } from './channels/app-bot-qr.js'
@@ -1802,8 +1803,8 @@ app.get('/system-tools', (_req, res) => {
     { name: 'ask_user', description: '向用户提出选择题，等待用户回答', parameters: [{ name: 'question', type: 'string', description: '问题内容', required: true }, { name: 'options', type: 'array', description: '选项列表', required: true }] },
     { name: 'create_scheduled_task', description: '创建定时任务，按 cron 表达式周期执行', parameters: [{ name: 'title', type: 'string', description: '任务标题', required: true }, { name: 'cron_expression', type: 'string', description: 'Cron 表达式', required: true }, { name: 'prompt_template', type: 'string', description: '任务指令', required: true }] },
     { name: 'list_scheduled_tasks', description: '列出所有定时任务及执行状态', parameters: [] },
-    { name: 'send_file_to_user', description: '通过企业微信发送文件给用户', parameters: [{ name: 'file_path', type: 'string', description: '文件绝对路径', required: true }] },
-    { name: 'send_image_to_user', description: '通过企业微信发送图片给用户', parameters: [{ name: 'file_path', type: 'string', description: '图片绝对路径', required: true }] },
+    { name: 'send_file_to_user', description: '把文件发给当前对话的用户（桌面端显示为附件，机器人对话发回该会话）', parameters: [{ name: 'file_path', type: 'string', description: '文件绝对路径', required: true }] },
+    { name: 'send_image_to_user', description: '把图片发给当前对话的用户（桌面端直接显示，机器人对话发回该会话）', parameters: [{ name: 'file_path', type: 'string', description: '图片绝对路径', required: true }] },
     ...(process.platform === 'win32' ? [
       { name: 'check_file_encryption', description: '检查文件是否被 DLP 加密（仅 Windows）', parameters: [{ name: 'file_path', type: 'string', description: '文件绝对路径', required: true }] },
       { name: 'decrypt_file', description: '解密被 DLP 加密的文件（仅 Windows）', parameters: [{ name: 'file_path', type: 'string', description: '文件或文件夹路径', required: true }] },
@@ -3146,6 +3147,17 @@ app.post('/works/:id/chat', async (req, res) => {
       memoryScope: initialMemoryScope,
       ...(siteToolkit ? { siteToolkitPrompt: siteToolkit.prompt } : {}),
       onAskUser: (event) => send(event),
+      // send_image_to_user / send_file_to_user show their media in this desktop conversation.
+      userMedia: createDesktopUserMedia({
+        append: (block) => {
+          if (currentText) {
+            assistantContent.push({ type: 'text', text: currentText })
+            currentText = ''
+          }
+          assistantContent.push(block)
+        },
+        send,
+      }),
       // Keep this work's Claude Code process between turns (skips the CLI cold start).
       reuseSession: true,
       ...(dedicatedAgentOptions ?? {}),

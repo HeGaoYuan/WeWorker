@@ -633,7 +633,10 @@ async function cmdAuth(sub, rest = [], { json = false } = {}) {
 }
 
 function dedicatedBrowserHint() {
-  return readBrowserMode().mode === "dedicated" ? "；如需登录或查看页面，运行 webcli browser show 打开 WeWorker 浏览器" : "";
+  // Read by the model too: desktop users open the browser from the app, not from a terminal.
+  return readBrowserMode().mode === "dedicated"
+    ? "；如需登录或查看页面，请打开 WeWorker 浏览器（WeWorker 桌面端：左侧栏底部的浏览器图标；命令行：webcli browser show）"
+    : "";
 }
 
 // ─── Command: call <tool_name> ────────────────────────────────────────────────

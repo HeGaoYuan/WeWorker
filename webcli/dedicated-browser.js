@@ -37,12 +37,14 @@ import { createHash, randomBytes } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { capturePage } from './page-screenshot.js';
 
 export const BROWSER_INSTANCE_STORAGE_KEY = 'weworkerBrowserInstance';
 export const BROWSER_MODES = Object.freeze(['dedicated', 'system']);
 export const DEFAULT_BROWSER_MODE = 'dedicated';
 export const OFFSCREEN_POSITION = -32000;
 export const ONSCREEN_BOUNDS = Object.freeze({ left: 120, top: 80, width: 1280, height: 860 });
+const SCREENSHOT_ATTACH_TIMEOUT_MS = 5000;
 /** Standalone use stops an unused browser; a desktop client keeps it running. */
 export const DEFAULT_IDLE_STOP_MS = 30 * 60_000;
 
@@ -655,6 +657,30 @@ export class DedicatedBrowserManager {
     }
   }
 
+  /**
+   * Screenshot of one page target (capture_screenshot). Uses a session on the
+   * browser pipe, never chrome.debugger, and always detaches it.
+   */
+  async captureTarget(targetId, options = {}) {
+    if (!this.isRunning) throw new Error('WeWorker 浏览器未运行');
+    if (typeof targetId !== 'string' || !targetId) throw new Error('缺少截图目标');
+    const cdp = this._cdp;
+    const attaching = cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    let sessionId;
+    try {
+      ({ sessionId } = await withTimeout(attaching, SCREENSHOT_ATTACH_TIMEOUT_MS, `Target.attachToTarget 超时（${SCREENSHOT_ATTACH_TIMEOUT_MS} ms）`));
+    } catch (error) {
+      // A session that arrives after the timeout is released too.
+      attaching.then(({ sessionId: late }) => cdp.send('Target.detachFromTarget', { sessionId: late })).catch(() => {});
+      throw error;
+    }
+    try {
+      return await capturePage((method, params = {}) => cdp.send(method, params, sessionId), options);
+    } finally {
+      await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+    }
+  }
+
   /** Bring the browser on-screen, for example so the user can sign in to a website. */
   async show({ url } = {}) {
     if (!this.isRunning) {
@@ -918,6 +944,13 @@ export class BrowserHost {
 
   async attachPage(url) {
     return this.pageControl ? this._manager.attachPage(url) : null;
+  }
+
+  /** capture_screenshot through the browser pipe; only for a running WeWorker 浏览器. */
+  async captureTarget(targetId, options = {}) {
+    if (!this.pageControl) throw new Error('WeWorker 浏览器未运行');
+    this.touch();
+    return this._manager.captureTarget(targetId, options);
   }
 }
 

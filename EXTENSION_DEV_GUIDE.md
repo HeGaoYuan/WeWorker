@@ -438,12 +438,23 @@ SW 处理流程：`debugger.attach` → `DOM.querySelector` → `DOM.setFileInpu
 }
 ```
 
-### 8.9 `match` 与 `homepage_url` 的区别
+### 8.9 网站范围：`match`、`domains` 与 `homepage_url`
 
-- `match`：给扩展用，决定在哪些页面注入 adapter 脚本，只看 hostname
-- `homepage_url`：给 AI 用，`open_browser` 打开的完整 URL
+v2 包的页面命令只能在声明的网站范围内运行和跳转；跳到范围外会报 `ADAPTER_HOST_NOT_ALLOWED`（Adapter 配置问题，重试无效）。
 
-大多数网站只填 `match` 即可，`homepage_url` 自动生成为 `http://{match[0]}/`。
+- `match`：精确的页面主机。第一项是主主机（默认路由、无 `homepage_url` 时的首页）。`*.example.com` 表示 example.com 及其全部子域名。
+- `domains`：站点域名，例如 `["jd.com", "jd.hk"]`。每一项覆盖该域名本身和它的全部子域名，**不用再逐个列** `order.*`、`search.*`、`item.*`。同一网站的地区或品牌域名（如 `jd.hk`）要显式写出，宿主不会根据跳转自动推断归属。不允许公共后缀（`com`、`co.uk`、`com.cn`、`github.io` 等）、通配符或 IP。
+- `routeDomain` / `tabDomain` / `excludeTabDomain` 可以是 `match` 中的主机，也可以是 `domains` 覆盖的任意主机。
+- `homepage_url`：给 AI 用，`open_browser` 打开的完整 URL。`open_browser` 允许 `match` 主机、`homepage_url`，以及每个 `domains` 的根域名和 `www.` 主机。
+
+推荐写法：`match` 只写主页主机，其余交给 `domains`：
+
+```json
+"match": ["www.jd.com"],
+"domains": ["jd.com", "jd.hk"]
+```
+
+宿主会记住范围内的跳转（例如 `order.jd.com` 被网站跳到 `order.jd.hk`），之后的调用直接复用该标签页。`domains` 覆盖的主机上，`passport.*`、`sso.*`、`/login` 等通用登录页仍会被识别为登录页；需要用户完成的验证页（如京东的 `aq.jd.com`）请写进 `auth.login_hosts`。新增 `domains` 对用户安装的 Adapter 属于权限变更，更新时需要用户同意。匹配规则只有一份实现：`extension/background/host-scope.js`（WebCLI 中的 `webcli/host-scope.js` 是逐字节相同的副本）。
 
 ### 8.10 网站登录：声明 `auth`，由宿主处理
 
@@ -463,7 +474,7 @@ SW 处理流程：`debugger.attach` → `DOM.querySelector` → `DOM.setFileInpu
 
 | 字段 | 说明 |
 |------|------|
-| `login_url` | 必填。打开登录时使用的页面（HTTPS）；主机必须在 `match`、`runtime_allowed_hosts` 或 `login_hosts` 中 |
+| `login_url` | 必填。打开登录时使用的页面（HTTPS）；主机必须在 `match`、`domains`、`runtime_allowed_hosts` 或 `login_hosts` 中 |
 | `login_hosts` | 可选。只用于登录的主机，例如 SSO 认证中心 `sso.example.com`、`passport.example.com`。命令页面被重定向到这些主机即判定为「需要登录」 |
 | `check.cookies` | 可选，最快。`url` 下的 Cookie 满足 `all`（全部存在）/ `any`（任一存在）/ `equals`（值相等）/ `not`（值不等）即视为已登录 |
 | `check.command` | 可选。本包的一个只读 Extension 命令（例如 `whoami`）。返回 `logged_in: false` 或抛出 `AUTH_REQUIRED` 表示未登录，其他成功结果表示已登录 |

@@ -449,6 +449,8 @@ export class QQChannel implements Channel {
       ;({ text: fullText, images, toolCalls, timing } = await runChannelChat(wm.messages, settings, {
         channelPermissionMode,
         memoryScope: { user: `${channelType}:${userId}` },
+        // Images are sent back only where this chat can receive them.
+        sendsImages: !!replyImageFn,
         askUserHandler: async (question, options) => {
           // Format as numbered text
           const lines = [`${question}`]

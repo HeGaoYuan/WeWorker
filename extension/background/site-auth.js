@@ -13,16 +13,19 @@
  *                "command": "whoami" }                 // read command; optional
  *   }
  */
+import { adapterHelperPatterns, adapterPrimaryHost, hostMatchesPattern, isAdapterPageHost } from './host-scope.js';
+
 export const AUTH_REQUIRED = 'AUTH_REQUIRED';
 
 // Undeclared login pages are only recognised on hosts outside the package.
 const GENERIC_LOGIN_HOST_RE = /^(passport|login|signin|sso|account|accounts|auth|cas|uc|ptlogin\d*)\./i;
 const GENERIC_LOGIN_PATH_RE = /(^|\/)(login|signin|sign-in|sign_in|logon|passport|sso|cas\/login|auth\/login|oauth\/authorize)(\/|\.|$)/i;
 
-function hostMatches(host, pattern) {
-  const value = String(pattern || '').toLowerCase();
-  if (!value) return false;
-  return value.startsWith('*.') ? host === value.slice(2) || host.endsWith(value.slice(1)) : host === value;
+const hostMatches = hostMatchesPattern;
+
+/** Hosts the author named explicitly (`match`, helpers); hosts only covered by `domains` are not. */
+function explicitHostPatterns(manifest) {
+  return [...(manifest?.match || []), ...(manifest?.runtime_allowed_hosts || [])];
 }
 
 function parseHttpUrl(value) {
@@ -44,12 +47,12 @@ export function loginHosts(manifest) {
   const auth = siteAuth(manifest);
   const hosts = new Set((Array.isArray(auth?.login_hosts) ? auth.login_hosts : []).map((host) => String(host).toLowerCase()));
   const login = parseHttpUrl(auth?.login_url);
-  if (login && !(manifest?.match || []).some((pattern) => hostMatches(login.hostname, pattern))) hosts.add(login.hostname);
+  if (login && !isAdapterPageHost(manifest, login.hostname)) hosts.add(login.hostname);
   return [...hosts];
 }
 
 export function declaredHosts(manifest) {
-  return [...(manifest?.match || []), ...(manifest?.runtime_allowed_hosts || []), ...loginHosts(manifest)];
+  return [...adapterHelperPatterns(manifest), ...loginHosts(manifest)];
 }
 
 /**
@@ -75,8 +78,9 @@ export function isLoginPageUrl(manifest, value, { root = false } = {}) {
       return true;
     }
   }
-  const known = [...(manifest?.match || []), ...(manifest?.runtime_allowed_hosts || [])];
-  if (known.some((pattern) => hostMatches(host, pattern))) return false;
+  // Generic login pages (passport.*, /login …) are still recognised on hosts that are only
+  // covered by `domains`: a site domain usually contains its own SSO host.
+  if (explicitHostPatterns(manifest).some((pattern) => hostMatches(host, pattern))) return false;
   return GENERIC_LOGIN_HOST_RE.test(host) || GENERIC_LOGIN_PATH_RE.test(url.pathname);
 }
 
@@ -85,7 +89,7 @@ export function loginStartUrl(manifest) {
   const declared = parseHttpUrl(siteAuth(manifest)?.login_url);
   if (declared) return declared.href;
   const home = parseHttpUrl(manifest?.homepage_url);
-  const firstHost = String(manifest?.match?.[0] || '').replace(/^\*\./, '');
+  const firstHost = adapterPrimaryHost(manifest);
   if (home && declaredHosts(manifest).some((pattern) => hostMatches(home.hostname.toLowerCase(), pattern))) return home.href;
   return firstHost ? `https://${firstHost}/` : null;
 }

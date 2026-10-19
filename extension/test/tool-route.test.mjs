@@ -334,6 +334,32 @@ test("managed command aliases dispatch the canonical handler with the same write
   assert.deepEqual(plain(worker.sentToTabs.at(-1).message.args), { __confirmed: true, count: '007' });
 });
 
+test("screenshot_target points at the tab of the last Adapter call and selects it", async () => {
+  const manifest = { name: 'fixture', match: ['example.com'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'pay', aliases: ['pay'], runtime: 'extension', safety: 'read' }] };
+  // The window's active tab is the start-up about:blank; the command runs in a background tab.
+  const worker = loadServiceWorker({
+    tabs: [
+      { id: 1, windowId: 5, url: 'about:blank', active: true, status: 'complete' },
+      { id: 7, windowId: 5, url: 'https://example.com/checkout?session=placeholder', active: false, status: 'complete' },
+    ],
+    managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] },
+  });
+  const updates = [];
+  worker.context.chrome.tabs.update = async (tabId, props) => { updates.push([tabId, plain(props)]); return { id: tabId }; };
+  worker.context.chrome.debugger.getTargets = async () => [{ id: 'target-1', type: 'page', tabId: 1 }, { id: 'target-7', type: 'page', tabId: 7 }];
+  await worker.callNativeTool('fixture.pay');
+  assert.equal(worker.sentToTabs.at(-1).tabId, 7);
+
+  const reply = await worker.sendNative({ type: 'screenshot_target', id: 'shot-1', traceID: 'fixturetrace1' });
+  assert.equal(reply.type, 'call_tool_result');
+  assert.deepEqual(plain(reply.result), { tabId: 7, url: 'https://example.com/checkout', reason: 'last_tool_call', targetId: 'target-7' });
+  assert.deepEqual(updates, [[7, { active: true }]]);
+  const trace = worker.context.getTraceLogs('fixturetrace1').join('\n');
+  assert.match(trace, /截图目标: tab=7 \(last_tool_call\) https:\/\/example\.com\/checkout，在窗口内选中/);
+});
+
 function loadInjector() {
   const runtimeMessages = [];
   const onMessage = makeEvent();
@@ -913,4 +939,40 @@ test("a redirect to an undeclared host names the host and is marked as a package
     assert.doesNotMatch(error.message, /\/home/);
     return true;
   });
+});
+
+// ─── Site domains: every subdomain of a declared domain, including regional domains ───
+
+test("a route redirected to another declared site domain runs there and reuses that tab", async () => {
+  const manifest = { name: 'shop.example.com', match: ['www.example.com'], domains: ['example.com', 'example.hk'],
+    _hostSnapshot: { profile: 'public', digest: 'fixture' },
+    commands: [{ id: 'orders', runtime: 'extension', safety: 'read', routeDomain: 'order.example.com' }] };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: [manifest.name], adapters: [manifest] } });
+  const created = [];
+  const tabs = worker.context.chrome.tabs;
+  const original = tabs.create;
+  // The site sends order.example.com to its regional host.
+  tabs.create = async (props) => {
+    created.push(props.url);
+    const tab = await original(props);
+    tab.url = 'https://order.example.hk/list';
+    return tab;
+  };
+  const first = await worker.callNativeTool('shop.example.com.orders');
+  assert.equal(first.result.tabId, 999);
+  const second = await worker.callNativeTool('shop.example.com.orders');
+  assert.equal(second.result.tabId, 999);
+  assert.deepEqual(created, ['https://order.example.com/']);
+});
+
+test("a redirect outside every declared site domain is still refused", async () => {
+  const manifest = { name: 'shop.example.com', match: ['www.example.com'], domains: ['example.com'],
+    _hostSnapshot: { profile: 'public', digest: 'fixture' },
+    commands: [{ id: 'orders', runtime: 'extension', safety: 'read', routeDomain: 'order.example.com' }] };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: [manifest.name], adapters: [manifest] } });
+  const original = worker.context.chrome.tabs.create;
+  worker.context.chrome.tabs.create = async (props) => Object.assign(await original(props), { url: 'https://order.example.net/list' });
+  const failed = await worker.callNativeTool('shop.example.com.orders');
+  assert.match(failed.error, /not allowed: order\.example\.net/);
+  assert.match(failed.error, /domains/);
 });

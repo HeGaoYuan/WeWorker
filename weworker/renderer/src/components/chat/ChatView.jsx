@@ -347,6 +347,11 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
             return { ...msg, content: [...content, { type: 'tool_use', id: event.id, name: '', result: event.result ?? '(no result)', status: 'done', execMs: event.execMs }] }
           }
 
+          // send_file_to_user in a desktop conversation: an attachment the user can open.
+          if (event.type === 'user_file' && event.attachment?.path) {
+            return { ...msg, content: [...content, { ...event.attachment, type: 'file_attachment' }] }
+          }
+
           if (event.type === 'tool_call_image') {
             const existing = content.find((b) => b.type === 'tool_use' && b.id === event.id)
             if (existing) {

@@ -37,6 +37,7 @@ import {
   type ChatHistoryEntry,
   type ChatTurnBindings,
 } from './chat-session.js'
+import type { UserMediaSink } from './user-media.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
@@ -1006,6 +1007,8 @@ async function* streamChatWithBaseUrl(
     channelPermissionMode?: ChannelPermissionMode;
     onAskUser?: (event: { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }) => void;
     channelAskUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>;
+    /** Where send_image_to_user / send_file_to_user deliver for this turn; absent = cannot deliver. */
+    userMedia?: UserMediaSink | null;
     systemPromptOverride?: string;
     mcpServerOverride?: ReturnType<typeof _buildMcpServer>;
     restrictBuiltInTools?: boolean;
@@ -1069,6 +1072,7 @@ async function* streamChatWithBaseUrl(
   const turnBindings: ChatTurnBindings = {
     workIdRef: { current: opts.workId ?? null },
     onAskUser: opts.onAskUser ?? null,
+    userMedia: opts.userMedia ?? null,
     extraToolGuard: opts.extraToolGuard,
     memory: { userPromptInjections: 0, postToolBatchInjections: 0 },
   }
@@ -1078,6 +1082,7 @@ async function* streamChatWithBaseUrl(
     workId: opts.workId ?? null,
     askUserSSECallback: opts.onAskUser ?? null,
     channelAskUserHandler: opts.channelAskUserHandler ?? null,
+    userMedia: () => turnBindings.userMedia ?? null,
   })
   const activeMcpServer = opts.mcpServerOverride || mcpServer
   const claudeSetup: { pathToClaudeCodeExecutable?: string; executable?: string; extraEnv?: Record<string, string> } = process.env.WEWORKER_PACKAGED
@@ -1505,6 +1510,7 @@ async function* streamChatWithBaseUrl(
         workIdRef: bindings.workIdRef,
         askUserSSECallback: (event) => bindings.onAskUser?.(event),
         channelAskUserHandler: null,
+        userMedia: () => bindings.userMedia ?? null,
       })
       const releaseRuntime = internal.adoptModelRuntime()
       return new ChatSession({
@@ -1548,6 +1554,7 @@ async function* streamChatWithBaseUrl(
       sessionState = prewarmed ? 'prewarmed' : 'reused'
       reusable.bindings.workIdRef.current = turnWorkId
       reusable.bindings.onAskUser = turnBindings.onAskUser
+      reusable.bindings.userMedia = turnBindings.userMedia
       reusable.bindings.extraToolGuard = turnBindings.extraToolGuard
       reusable.bindings.memory = turnBindings.memory
       activeBindings = reusable.bindings

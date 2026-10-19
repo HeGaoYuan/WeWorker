@@ -26,6 +26,7 @@
  */
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createLogger } from './logger.js'
+import type { UserMediaSink } from './user-media.js'
 
 const log = createLogger('chat-session')
 
@@ -42,6 +43,8 @@ export interface ChatTurnBindings {
   /** Work used by the session's MCP tools; set when a spare session is bound to a work. */
   workIdRef: { current: string | null }
   onAskUser: ((event: AskUserEvent) => void) | null
+  /** Delivery of send_image_to_user / send_file_to_user to the current turn's conversation. */
+  userMedia?: UserMediaSink | null
   extraToolGuard?: ToolGuard
   memory: { userPromptInjections: number; postToolBatchInjections: number }
 }

@@ -11,6 +11,18 @@ import { createPackagedAdapterMatcher, injectPackagedAdapter } from '../../backg
 import { selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 } from '../../background/generation-output-validator.js';
 import * as browserInstance from '../../background/browser-instance.js';
 import * as siteAuth from '../../background/site-auth.js';
+import * as hostScope from '../../background/host-scope.js';
+import * as screenshot from '../../background/screenshot.js';
+
+/** screenshot.js takes `api` explicitly; the service worker imports these names. */
+export function screenshotBindings() {
+  return { ...screenshot };
+}
+
+/** host-scope.js is pure; the service worker imports these names. */
+export function hostScopeBindings() {
+  return { ...hostScope };
+}
 
 /** site-auth.js is pure; the service worker imports these names (some under aliases). */
 export function siteAuthBindings() {
@@ -55,6 +67,6 @@ export function runServiceWorkerInContext(context, { repoRoot = process.cwd() } 
   Object.assign(context, { scopedGenerationPreviewScripts, createHostAdapterClient, createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab, buildV2Bootstrap,
     createManagedBackgroundRuntime, MANAGED_RUNNER_PATH,
     v2InjectionFiles, injectAdapterSources, selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2,
-    ...browserInstanceBindings(context), ...siteAuthBindings(), ...packagedAdapterBindings(context) });
+    ...browserInstanceBindings(context), ...siteAuthBindings(), ...packagedAdapterBindings(context), ...hostScopeBindings(), ...screenshotBindings() });
   vm.runInContext(source, context, { filename: 'service-worker.js', timeout: 5000 });
 }

@@ -1,21 +1,20 @@
 {
   "schema_version": 2,
   "name": "jd.com",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "京东：导航主页、查看购物车、查看订单、购买商品、支付",
   "match": [
-    "www.jd.com",
+    "www.jd.com"
+  ],
+  "domains": [
     "jd.com",
-    "order.jd.com",
-    "search.jd.com",
-    "item.jd.com",
-    "cart.jd.com",
-    "pc-settlement-lite-pro.pf.jd.com"
+    "jd.hk"
   ],
   "auth": {
     "login_url": "https://passport.jd.com/new/login.aspx",
     "login_hosts": [
-      "passport.jd.com"
+      "passport.jd.com",
+      "aq.jd.com"
     ],
     "check": {
       "command": "check-login-status"
@@ -43,7 +42,7 @@
       "id": "search-products",
       "runtime": "extension",
       "module": "extension/commands/search-products.js",
-      "description": "按关键词搜索京东商品，一次调用返回商品列表。",
+      "description": "按关键词搜索京东商品，一次调用返回商品列表（SKU、标题、价格、原价、店铺、销量、图片、链接）。",
       "safety": "read",
       "schema": {
         "type": "object",
@@ -51,6 +50,12 @@
           "keyword": {
             "type": "string",
             "description": "Search keyword (e.g., \"耳机\", \"笔记本电脑\", \"运动鞋\")"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60,
+            "description": "最多返回的商品数，默认 30"
           }
         },
         "required": [
@@ -66,7 +71,7 @@
       "id": "navigate-to-homepage",
       "runtime": "extension",
       "module": "extension/commands/navigate-to-homepage.js",
-      "description": "Navigate to the JD.com homepage. Use this before multi-step operations to ensure a clean starting state.",
+      "description": "打开京东首页，页面加载完成后返回。其他工具会自行打开所需页面，通常不需要先调用它。",
       "safety": "read",
       "schema": {
         "type": "object",
@@ -82,7 +87,7 @@
       "id": "view-cart",
       "runtime": "extension",
       "module": "extension/commands/view-cart.js",
-      "description": "View shopping cart. Navigates to the cart page from the homepage navigation bar. Returns cart URL and page status. Cart items parsing will be implemented after HTML structure is provided.",
+      "description": "查看京东购物车，一次调用返回商品列表（名称、SKU、单价、数量、是否勾选、规格、店铺）和已勾选商品的估算金额 selectedEstimate（单价×数量，不含结算时的优惠）。",
       "safety": "read",
       "schema": {
         "type": "object",
@@ -98,11 +103,22 @@
       "id": "view-orders",
       "runtime": "extension",
       "module": "extension/commands/view-orders.js",
-      "description": "查看京东「我的订单」列表（订单号、下单时间、商品、金额、状态）。一次调用即可返回；未登录时 WeWorker 会自动打开登录页。",
+      "description": "查看京东「我的订单」（订单号、下单时间、店铺、商品、金额、状态；拆分订单含子订单），并给出合计 summary.totalAmount（不含已取消订单）。统计某段时间的消费时传 since（如本月第一天），会自动翻页直到更早的订单；complete 为 false 表示还有未读的页。页面默认只列近 3 个月的订单。一次调用即可返回；未登录时 WeWorker 会自动打开登录页。",
       "safety": "read",
       "schema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "since": {
+            "type": "string",
+            "description": "只返回该日期（含）之后的订单，格式 YYYY-MM-DD，例如 2026-10-01；会自动翻页"
+          },
+          "maxPages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "最多读取的页数，默认 1（传 since 时默认 10）"
+          }
+        },
         "required": []
       },
       "aliases": [
@@ -115,7 +131,7 @@
       "id": "open-product",
       "runtime": "extension",
       "module": "extension/commands/open-product.js",
-      "description": "Open a product page by URL. Use this before buying a product.",
+      "description": "打开京东商品页，页面加载完成后返回（不需要额外等待）。传 url 或 sku 之一。",
       "safety": "read",
       "schema": {
         "type": "object",
@@ -123,11 +139,13 @@
           "url": {
             "type": "string",
             "description": "Product page URL (e.g., https://item.jd.com/100054010576.html)"
+          },
+          "sku": {
+            "type": "string",
+            "description": "商品 SKU（搜索结果中的 sku），与 url 二选一"
           }
         },
-        "required": [
-          "url"
-        ]
+        "required": []
       },
       "aliases": [
         "open_product"
@@ -138,7 +156,7 @@
       "id": "buy-now",
       "runtime": "extension",
       "module": "extension/commands/buy-now.js",
-      "description": "Click the \"立即购买\" (Buy Now) button on the current product page. Must be on a product page (item.jd.com). Must wait at least 7 seconds after Open Product. Use jd.com.open_product first to navigate to a product page. After clicking, a checkout iframe will appear.",
+      "description": "在当前商品页点击该商品的「立即购买」，并打开京东结算页（此时尚未下单、未支付）。需先用 jd.com.open-product 打开商品页；商品需要预约、到货通知或先选规格时会返回页面上的按钮说明。完成后用 jd.com.pay-now 支付。",
       "safety": "write",
       "schema": {
         "type": "object",

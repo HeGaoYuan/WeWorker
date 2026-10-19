@@ -124,3 +124,30 @@ describe('Bridge login wiring', () => {
     expect(bridge._browserHost.control).toHaveBeenCalledWith('hide', { mode: undefined }, client)
   })
 })
+
+describe('Bridge managed calls before the browser runs', () => {
+  it('starts WeWorker 浏览器 before checking the extension capabilities', async () => {
+    const bridge = createBridge()
+    const order = []
+    bridge._ensureBrowser = vi.fn(async () => {
+      order.push('ensure')
+      // The extension connects while the browser starts.
+      bridge._extensionCapabilities = ['adapter_catalog_v1']
+    })
+    bridge._requestNow = vi.fn(async (msg) => { order.push(msg.type); return { ok: true } })
+    await expect(bridge._callToolInner('fixture.example.com.list', {})).resolves.toEqual({ ok: true })
+    expect(order[0]).toBe('ensure')
+    expect(order).toContain('call_tool')
+  })
+
+  it('still reports an old extension that lacks managed package support', async () => {
+    const bridge = createBridge()
+    bridge._ensureBrowser = vi.fn(async () => {})
+    await expect(bridge._callToolInner('fixture.example.com.list', {})).rejects.toThrow(/Reload the browser extension/)
+    // A connected extension with known capabilities needs no browser start.
+    bridge._extensionCapabilities = ['some_other_capability']
+    bridge._ensureBrowser.mockClear()
+    await expect(bridge._callToolInner('fixture.example.com.list', {})).rejects.toThrow(/Reload the browser extension/)
+    expect(bridge._ensureBrowser).not.toHaveBeenCalled()
+  })
+})

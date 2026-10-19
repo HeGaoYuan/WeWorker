@@ -62,6 +62,9 @@ const ADAPTER_ROOT_WRITABLE_FILES = new Set([
 const GENERATED_WRITABLE_FILE_RE = /^webcli-generated\/[a-zA-Z0-9._/-]+\.(?:js|json|md|txt)$/;
 const API_REPLAY_BODY_LIMIT = 2 * 1024 * 1024;
 const API_REPLAY_TIMEOUT_MS = 30000;
+const SCREENSHOT_TARGET_TIMEOUT_MS = 10000;
+// Read by the model: the desktop user opens the browser from the app, not from a terminal.
+const SCREENSHOT_FAILURE_HINT = "可以请用户直接在浏览器里查看这个页面（WeWorker 桌面端：点击左侧栏底部的浏览器图标），不要让桌面端用户运行命令";
 const API_REPLAY_CURL_BODY_LIMIT = 8 * 1024 * 1024;
 const API_REPLAY_ALLOWED_HEADER_RE = /^[!#$%&'*+\-.^_`|~0-9a-zA-Z]+$/;
 const API_REPLAY_BLOCKED_HEADERS = new Set([
@@ -1626,7 +1629,7 @@ export class WebSocketBridge extends EventEmitter {
       return this.openBrowser(args?.url);
     }
     if (toolName === "capture_screenshot") {
-      return this.captureScreenshot(args?.fullPage ?? false);
+      return this.captureScreenshot(args?.fullPage ?? false, traceID);
     }
     // 开发调试工具 — 暂不对用户开放，取消拦截后这些工具会走正常的 adapter 路径（报错"找不到域名"）
     // if (toolName === "inspect_page_state") {
@@ -1661,6 +1664,9 @@ export class WebSocketBridge extends EventEmitter {
       if (completed.exitCode !== 0) throw new Error('Toolkit Adapter execution failed.');
       return completed.result;
     }
+    // Capabilities are only known once the extension has connected: with none known yet, start
+    // WeWorker 浏览器 first (a no-op in system mode), as every extension request does.
+    if (selected && !this._extensionCapabilities?.length) await this._ensureBrowser();
     if (selected && !this._extensionCapabilities?.includes('adapter_catalog_v1')) {
       throw new Error('Reload the browser extension before calling managed Adapter packages.');
     }
@@ -1841,24 +1847,44 @@ export class WebSocketBridge extends EventEmitter {
   }
 
   /**
-   * 截取当前浏览器标签页的屏幕截图
+   * 截取网站页面的屏幕截图：截最近一次 Adapter 调用所在的标签页（先在窗口内选中），
+   * 而不是窗口当前选中的标签页（Adapter 在后台标签页执行，选中的常是无关页面）。
+   * WeWorker 浏览器中由 Bridge 通过自己的 CDP 管道截图（页面不出现「正在调试」提示条，
+   * 不与扩展的 chrome.debugger 冲突）；其他情况或该方式失败时由扩展截图。
    * @param {boolean} fullPage - 是否截取整个页面（包括滚动区域）
-   * @returns {Promise<{data: string, width: number, height: number}>} base64编码的PNG图片数据
+   * @returns {Promise<{data: string, width: number, height: number}>} base64 编码的 JPEG
    */
-  async captureScreenshot(fullPage = false) {
-    if (!this.isExtensionConnected()) {
-      throw new Error("Chrome扩展未连接，无法截图");
-    }
-
+  async captureScreenshot(fullPage = false, traceID = null) {
+    const log = (line) => process.stderr.write(`[${ts()}] ${traceID ? `[${traceID}] ` : ''}[Bridge] ${line}\n`);
+    log(`Capturing screenshot (fullPage: ${fullPage})`);
     try {
-      process.stderr.write(`[${ts()}] [Bridge] Capturing screenshot (fullPage: ${fullPage})\n`);
-      const result = await this._request({ type: "capture_screenshot", fullPage }, 30000);
-      process.stderr.write(`[${ts()}] [Bridge] Screenshot captured successfully\n`);
+      await this._ensureBrowser();
+      if (!this.isExtensionConnected()) throw new Error("Chrome扩展未连接，无法截图");
+      const host = this._browser();
+      let tabId = null;
+      if (host.pageControl && this._activeExtensionInstance() === 'dedicated') {
+        const target = await this._requestNow({ type: "screenshot_target" }, SCREENSHOT_TARGET_TIMEOUT_MS, traceID);
+        tabId = Number.isInteger(target?.tabId) ? target.tabId : null;
+        log(`Screenshot target: tab=${tabId} (${target?.reason || 'unknown'}) ${target?.url || ''}`);
+        if (target?.targetId) {
+          try {
+            const shot = await host.captureTarget(target.targetId, { fullPage: !!fullPage, log });
+            log(`Screenshot captured via the WeWorker browser (${shot.width}x${shot.height})`);
+            return { ...shot, fullPage: !!fullPage, tabId, url: target.url || '' };
+          } catch (err) {
+            log(`Browser screenshot failed, using the extension: ${err.message}`);
+          }
+        }
+      }
+      // The extension's own step timeouts end well inside this one.
+      const result = await this._requestNow({ type: "capture_screenshot", fullPage, ...(tabId != null ? { tabId } : {}) }, 30000, traceID);
+      log("Screenshot captured successfully");
       return result;
     } catch (err) {
-      throw new Error(`截图失败: ${err.message}`);
+      log(`Screenshot failed: ${err.message}`);
+      throw new Error(`截图失败: ${err.message}。${SCREENSHOT_FAILURE_HINT}`);
+    }
   }
-}
 
 /**
    * 打开浏览器并访问指定URL

@@ -20,6 +20,7 @@ import crypto from 'node:crypto'
 import type { Channel, ChannelStatus } from './channel-manager.js'
 import { runChannelChat } from './channel-manager.js'
 import { streamChat } from '../agent.js'
+import { createChannelUserMedia, userFileBlock } from '../user-media.js'
 import { resolveZcfPrefs } from '../zcf-sync.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
 import type { ChannelPermissionMode } from './channel-permissions.js'
@@ -337,9 +338,8 @@ export class WecomChannel implements Channel {
     return mediaId
   }
 
-  /** Send a file to the last user who messaged */
-  async sendFile(filePath: string): Promise<{ success: boolean; error?: string }> {
-    if (!this._lastUserId) return { success: false, error: '没有可用的企业微信用户' }
+  /** Send a file from disk to one chat (the chat of the turn that asked for it). */
+  private async _sendFileToChat(filePath: string, chatId: string, chatType: number): Promise<{ success: boolean; error?: string }> {
     if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return { success: false, error: 'WebSocket 未连接' }
 
     const mediaId = await this._uploadMedia(filePath, 'file')
@@ -349,35 +349,13 @@ export class WecomChannel implements Channel {
       cmd: 'aibot_send_msg',
       headers: { req_id: randomUUID() },
       body: {
-        chatid: this._lastUserId,
-        chat_type: this._lastChatType,
+        chatid: chatId,
+        chat_type: chatType,
         msgtype: 'file',
         file: { media_id: mediaId },
       },
     })
     log.info(`file sent: ${filePath}, media_id=${mediaId}`)
-    return { success: true }
-  }
-
-  /** Send an image from disk to the last user who messaged */
-  async sendImage(filePath: string): Promise<{ success: boolean; error?: string }> {
-    if (!this._lastUserId) return { success: false, error: '没有可用的企业微信用户' }
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return { success: false, error: 'WebSocket 未连接' }
-
-    const mediaId = await this._uploadMedia(filePath, 'image')
-    if (!mediaId) return { success: false, error: '图片上传失败' }
-
-    this._send({
-      cmd: 'aibot_send_msg',
-      headers: { req_id: randomUUID() },
-      body: {
-        chatid: this._lastUserId,
-        chat_type: this._lastChatType,
-        msgtype: 'image',
-        image: { media_id: mediaId },
-      },
-    })
-    log.info(`image sent: ${filePath}, media_id=${mediaId}`)
     return { success: true }
   }
 
@@ -807,6 +785,12 @@ export class WecomChannel implements Channel {
       const profileOptions = this._profile.chatOptions(userId)
       for await (const event of streamChat(wm.messages, settings, turn.abortController, {
         ...profileOptions,
+        // send_image_to_user / send_file_to_user answer this chat, not the last bot user.
+        userMedia: createChannelUserMedia(images, assistantContent, async (file) => {
+          const sent = await this._sendFileToChat(file.path, chatType === 'single' ? userId : (chatId ?? userId), chatType === 'single' ? 1 : 2)
+          if (!sent.success) throw new Error(sent.error || '文件发送失败')
+          assistantContent.push(userFileBlock(file))
+        }),
         streaming: true,
         workId: work.id,
         zcfRole: zcfPrefs.zcfRole,

@@ -171,6 +171,53 @@ describe('requests in WeWorker browser mode', () => {
   })
 })
 
+describe('capture_screenshot', () => {
+  const shot = { data: 'ZmFrZQ==', width: 1200, height: 675, crop: { cropped: true, croppedSize: 4 } }
+  const screenshotHost = (captureTarget) => Object.assign(fakeHost(), { pageControl: true, captureTarget: vi.fn(captureTarget) })
+
+  it('captures the tab of the last Adapter call through the WeWorker browser, not chrome.debugger', async () => {
+    const host = screenshotHost(async () => shot)
+    const bridge = createBridge(host)
+    hello(connect(bridge), { instanceToken: TOKEN })
+    bridge._requestNow = vi.fn(async () => ({ tabId: 7, url: 'https://example.com/checkout', reason: 'last_tool_call', targetId: 'target-7' }))
+    const result = await bridge._callToolInner('capture_screenshot', {}, 'fixturetrace1')
+    expect(result).toEqual({ ...shot, fullPage: false, tabId: 7, url: 'https://example.com/checkout' })
+    expect(bridge._requestNow).toHaveBeenCalledTimes(1)
+    expect(bridge._requestNow).toHaveBeenCalledWith({ type: 'screenshot_target' }, expect.any(Number), 'fixturetrace1')
+    expect(host.captureTarget).toHaveBeenCalledWith('target-7', expect.objectContaining({ fullPage: false }))
+  })
+
+  it('falls back to the extension for the same tab when the browser capture fails', async () => {
+    const host = screenshotHost(async () => { throw new Error('Page.captureScreenshot 超时（15000 ms）') })
+    const bridge = createBridge(host)
+    hello(connect(bridge), { instanceToken: TOKEN })
+    bridge._requestNow = vi.fn(async (msg) => (msg.type === 'screenshot_target'
+      ? { tabId: 7, url: 'https://example.com/checkout', reason: 'last_tool_call', targetId: 'target-7' }
+      : shot))
+    await expect(bridge.captureScreenshot(true, 'fixturetrace2')).resolves.toEqual(shot)
+    expect(bridge._requestNow).toHaveBeenLastCalledWith({ type: 'capture_screenshot', fullPage: true, tabId: 7 }, 30000, 'fixturetrace2')
+  })
+
+  it('uses the extension directly with the user\'s Chrome', async () => {
+    const host = Object.assign(fakeHost({ mode: 'system', ready: async () => false }), { pageControl: false, captureTarget: vi.fn() })
+    const bridge = createBridge(host)
+    hello(connect(bridge))
+    bridge._requestNow = vi.fn(async () => shot)
+    await expect(bridge.captureScreenshot(false, 'fixturetrace3')).resolves.toEqual(shot)
+    expect(bridge._requestNow).toHaveBeenCalledWith({ type: 'capture_screenshot', fullPage: false }, 30000, 'fixturetrace3')
+    expect(host.captureTarget).not.toHaveBeenCalled()
+  })
+
+  it('tells the model how a desktop user can see the page when the capture fails', async () => {
+    const bridge = createBridge(fakeHost({ mode: 'system', ready: async () => false }))
+    hello(connect(bridge))
+    bridge._requestNow = vi.fn(async () => { throw new Error('debugger.attach 超时（5000 ms）') })
+    const error = await bridge.captureScreenshot().catch((caught) => caught)
+    expect(error.message).toContain('截图失败: debugger.attach 超时')
+    expect(error.message).toContain('左侧栏底部的浏览器图标')
+  })
+})
+
 describe('browser_control', () => {
   it('answers the sender, publishes status changes to control clients only, and detaches on close', async () => {
     const host = fakeHost()

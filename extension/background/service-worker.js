@@ -4,6 +4,14 @@ import { injectAdapterSources } from './adapter-script-loader.js';
 import { createPackagedAdapterMatcher, injectPackagedAdapter } from './packaged-adapter-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
+import {
+  adapterHelperPatterns,
+  adapterPrimaryHost,
+  createRouteRedirects,
+  hostMatchesPattern,
+  pickRecentScopeTab,
+  pickRouteTab,
+} from './host-scope.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 import {
   authErrorFields,
@@ -24,6 +32,14 @@ import {
   revealWindowOnUserFocus,
   watchBrowserInstance,
 } from './browser-instance.js';
+import {
+  captureTabViaDebugger,
+  createToolTabTracker,
+  debuggerTargetId,
+  displayPageUrl,
+  pickScreenshotTab,
+  selectTabForScreenshot,
+} from './screenshot.js';
 
 /**
  * Background Service Worker
@@ -2697,16 +2713,20 @@ async function handleNativeMessage(msg) {
         }
         const tabs = await chrome.tabs.query({});
         const declaredRoute = selected.command.tabDomain || selected.command.routeDomain;
-        const route = declaredRoute || selected.manifest.match[0];
-        let tab = tabs.find(entry => {
-          try { return new URL(entry.url).hostname === route; } catch { return false; }
-        });
+        const route = declaredRoute || adapterPrimaryHost(selected.manifest);
+        const excludeTabDomain = selected.command.excludeTabDomain;
+        // The route host, or the host it was last redirected to (order.jd.com → order.jd.hk).
+        let tab = pickRouteTab(tabs, route, { aliases: managedRouteRedirects.aliases(selected.manifest, route), excludeTabDomain });
         // A command without a declared route runs on any page of its package: a page
-        // command may have moved its tab to another declared host (search.*, order.* …).
-        if (!tab && !declaredRoute) tab = recentPackageTab(tabs, selected.manifest, selected.command.excludeTabDomain);
+        // command may have moved its tab to another host in its scope (search.*, order.* …).
+        if (!tab && !declaredRoute) tab = pickRecentScopeTab(tabs, selected.manifest, excludeTabDomain);
         if (!tab?.id) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await createBrowserTab({ url: startUrl, active: false });
+          // Learn where the site sends this host (regional or brand domains) before the first call.
+          const landed = await waitForManagedPageReady(tab.id, selected.manifest, true, 25000);
+          managedRouteRedirects.note(selected.manifest, startUrl, landed);
+          tab = { ...tab, url: landed };
         }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
           (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command);
@@ -3134,38 +3154,44 @@ async function handleNativeMessage(msg) {
     } catch (err) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
+  } else if (msg.type === "screenshot_target") {
+    // WeWorker 浏览器: the Bridge captures through its own CDP pipe (no "being debugged"
+    // bar, no chrome.debugger); the extension only picks and selects the tab.
+    const traceID = msg.traceID || null;
+    try {
+      const { tab, reason } = await prepareScreenshotTab(msg.tabId, traceID);
+      const targetId = await debuggerTargetId({ api: chrome, tabId: tab.id });
+      traceLog(traceID, `[ServiceWorker] screenshot_target: tab=${tab.id} target=${targetId || 'none'}`);
+      sendToNative({
+        type: "call_tool_result", id: msg.id, traceID,
+        result: { tabId: tab.id, url: displayPageUrl(tab.url), reason, targetId },
+      });
+    } catch (err) {
+      traceLog(traceID, `[ServiceWorker] screenshot_target 失败: ${err.message}`);
+      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
+    }
   } else if (msg.type === "capture_screenshot") {
+    const traceID = msg.traceID || null;
+    const log = (line) => traceLog(traceID, `[ServiceWorker] capture_screenshot: ${line}`);
     // captureVisibleTab 在 MV3 下需要 <all_urls> 或带用户手势的 activeTab，
     // 仅按域名授予的 host 权限不满足（会抛 "Either the '<all_urls>' or 'activeTab' permission is required."）。
     // 项目安全策略禁止 <all_urls>，故权限不足时回退到已授权的 chrome.debugger（CDP Page.captureScreenshot）。
-    async function captureTabViaDebugger(tabId, { format = "jpeg", quality = 80 } = {}) {
-      const target = { tabId };
-      await chrome.debugger.attach(target, "1.3");
-      try {
-        await chrome.debugger.sendCommand(target, "Page.enable");
-        const { data } = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", { format, quality });
-        return `data:image/${format === "png" ? "png" : "jpeg"};base64,${data}`;
-      } finally {
-        try { await chrome.debugger.detach(target); } catch (_) { /* 已分离 */ }
-      }
-    }
     async function captureVisible(tab, { format = "jpeg", quality = 80 } = {}) {
       try {
         return await chrome.tabs.captureVisibleTab(tab.windowId, { format, quality });
       } catch (err) {
         const m = err?.message || "";
         if (m.includes("'<all_urls>'") || m.includes("activeTab") || m.includes("permission")) {
-          return await captureTabViaDebugger(tab.id, { format, quality });
+          log('captureVisibleTab not permitted; using chrome.debugger');
+          // A session another feature holds on this tab is borrowed, never detached.
+          return await captureTabViaDebugger({ api: chrome, tabId: tab.id, borrowed: cdpAttachedTabs.has(tab.id), format, quality, log });
         }
         throw err;
       }
     }
     try {
-      // 获取当前活动的tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) {
-        throw new Error("未找到活动的标签页");
-      }
+      const { tab } = await prepareScreenshotTab(msg.tabId, traceID);
+      const shotTab = { tabId: tab.id, url: displayPageUrl(tab.url) };
 
       // 使用chrome.tabs.captureVisibleTab截图（使用JPEG格式以获得更好的压缩）
       // 若权限不足，captureVisible 会自动回退到 chrome.debugger (CDP) 截图
@@ -3215,7 +3241,9 @@ async function handleNativeMessage(msg) {
           sendToNative({
             type: "call_tool_result",
             id: msg.id,
+            traceID,
             result: {
+              ...shotTab,
               data: cropped.data,
               width: cropped.width,
               height: cropped.height,
@@ -3236,7 +3264,9 @@ async function handleNativeMessage(msg) {
           sendToNative({
             type: "call_tool_result",
             id: msg.id,
+            traceID,
             result: {
+              ...shotTab,
               data: cropped.data,
               width: cropped.width,
               height: cropped.height,
@@ -3257,7 +3287,9 @@ async function handleNativeMessage(msg) {
         sendToNative({
           type: "call_tool_result",
           id: msg.id,
+          traceID,
           result: {
+            ...shotTab,
             data: cropped.data,
             width: cropped.width,
             height: cropped.height,
@@ -3271,8 +3303,10 @@ async function handleNativeMessage(msg) {
           }
         });
       }
+      log('done');
     } catch (err) {
-      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
+      log(`失败: ${err.message}`);
+      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
     }
   } else if (msg.type === "reload_extension") {
     console.log("[WebMCP] Reloading extension by request from native host...");
@@ -3403,6 +3437,17 @@ function sendToNative(msg) {
 // ─── Trace 日志存储（按需拉取，不主动推送） ──────────────────────────────────
 
 const traceLogs = new Map(); // traceID -> string[]
+// Tab of the last Adapter command; capture_screenshot captures it (see screenshot.js).
+const screenshotToolTabs = createToolTabTracker(typeof chrome !== 'undefined' ? chrome : undefined);
+
+/** The tab capture_screenshot shows, selected in its window so that it paints. */
+async function prepareScreenshotTab(tabId, traceID) {
+  const toolTabId = await screenshotToolTabs.get();
+  const picked = await pickScreenshotTab({ api: chrome, tabId: Number.isInteger(tabId) ? tabId : null, toolTabId });
+  traceLog(traceID, `[ServiceWorker] 截图目标: tab=${picked.tab.id} (${picked.reason}) ${displayPageUrl(picked.tab.url)}${picked.tab.active ? '' : '，在窗口内选中'}`);
+  const tab = await selectTabForScreenshot({ api: chrome, tab: picked.tab });
+  return { tab, reason: picked.reason };
+}
 
 function traceLog(traceID, message) {
   if (!traceID) return;
@@ -4923,6 +4968,8 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
 async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
+  // capture_screenshot shows this page, not whatever tab the window has selected.
+  screenshotToolTabs.note(tabId);
 
   const message = { type: "call_tool", toolName, args };
   if (traceID) message.traceID = traceID;
@@ -6967,39 +7014,26 @@ function assertManagedRuntimeRequest(action, payload, context) {
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Unsupported Adapter helper URL.');
       host = url.hostname;
     }
-    if (!context.declaredHosts.some((entry) => {
-      const pattern = entry.toLowerCase();
-      return pattern.startsWith('*.') ? host === pattern.slice(2) || host.endsWith(pattern.slice(1)) : host === pattern;
-    })) throw new Error('Adapter helper host is not declared in the current package.');
+    if (!context.declaredHosts.some((pattern) => hostMatchesPattern(host, pattern))) {
+      throw new Error('Adapter helper host is not declared in the current package.');
+    }
   }
 }
 
 async function callManagedBackgroundTool(manifest, command, args, traceID) {
-  const routeDomain = manifest.match[0].replace(/^\*\./, '');
+  const routeDomain = adapterPrimaryHost(manifest);
+  const declaredHosts = adapterHelperPatterns(manifest);
   const context = { adapterId: manifest.name, routeDomain, tabDomain: routeDomain, traceID,
-    declaredHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])],
-    allowedHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])].map(host => host.replace(/^\*\./, '')) };
+    declaredHosts,
+    allowedHosts: declaredHosts.map(host => host.replace(/^\*\./, '')) };
   // The runtime owns the shared queue. Set global legacy helper context only
   // while its queued task runs, including settlement of in-flight helpers.
   const runtime = getManagedBackgroundRuntime();
   return runtime.execute(manifest, command, args, context);
 }
 
-/** Most recently used tab on one of the package's declared page hosts. */
-function recentPackageTab(tabs, manifest, excludeTabDomain = '') {
-  const hostMatches = (host, pattern) => {
-    const value = String(pattern || '').toLowerCase();
-    return value.startsWith('*.') ? host === value.slice(2) || host.endsWith(value.slice(1)) : host === value;
-  };
-  return tabs
-    .filter((entry) => {
-      let host;
-      try { host = new URL(entry.url).hostname.toLowerCase(); } catch { return false; }
-      if (excludeTabDomain && hostMatches(host, excludeTabDomain)) return false;
-      return Number.isInteger(entry.id) && (manifest.match || []).some((pattern) => hostMatches(host, pattern));
-    })
-    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
-}
+/** Where the site redirected a requested host inside the package scope (see host-scope.js). */
+const managedRouteRedirects = createRouteRedirects();
 
 /** A read step that lands on a login page (redirect or SSO) has not run Adapter code yet. */
 function assertNotOnLoginPage(manifest, url) {
@@ -7037,7 +7071,9 @@ function getHostAdapterRuntime() {
     ready: (tabId, manifest, timeoutMs) => waitForManagedPageReady(tabId, manifest, true, timeoutMs),
     navigate: async (tabId, url, manifest, resume, timeoutMs) => {
       try {
-        return await navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs);
+        const landed = await navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs);
+        managedRouteRedirects.note(manifest, url, landed);
+        return landed;
       } catch (error) {
         // A read continuation redirected to an undeclared login host (SSO).
         if (resume) {
@@ -7059,11 +7095,7 @@ function isDeclaredHostUrl(manifest, value) {
   let url;
   try { url = new URL(String(value)); } catch { return false; }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
-  const host = url.hostname.toLowerCase();
-  return authDeclaredHosts(manifest).some((pattern) => {
-    const entry = String(pattern).toLowerCase();
-    return entry.startsWith('*.') ? host === entry.slice(2) || host.endsWith(entry.slice(1)) : host === entry;
-  });
+  return authDeclaredHosts(manifest).some((pattern) => hostMatchesPattern(url.hostname, pattern));
 }
 
 async function managedSiteManifest(site) {
@@ -7540,8 +7572,10 @@ function adapterMatchesHostname(adapterMeta, hostname) {
     const host = String(hostname).toLowerCase().replace(/\.$/, '');
     return host === normalized || host.endsWith('.' + normalized);
   };
-  return Array.isArray(adapterMeta?.match)
-    && adapterMeta.match.some(matches)
+  // Registry entries treat `match` as a domain suffix; v2 `domains` are site domains.
+  const scope = [...(Array.isArray(adapterMeta?.match) ? adapterMeta.match : []),
+    ...(Array.isArray(adapterMeta?.domains) ? adapterMeta.domains : [])];
+  return scope.some(matches)
     && !(adapterMeta.except ?? []).some(matches);
 }
 

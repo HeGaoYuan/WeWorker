@@ -228,8 +228,8 @@ function checkLoginStatus() {
   try {
     const hostname = window.location.hostname;
 
-    // 不在 jd.com 域名下 → 导航到首页
-    if (!hostname.includes('jd.com')) {
+    // 不在京东域名下（jd.com，及部分地区的 jd.hk）→ 导航到首页
+    if (!/(^|\.)jd\.(com|hk)$/.test(hostname)) {
       setTimeout(() => { window.location.href = 'https://www.jd.com/'; }, 100);
       return {
         logged_in: false,
@@ -428,8 +428,8 @@ async function viewCart() {
  */
 async function viewOrders() {
   try {
-    // 如果已经在订单页面，直接解析
-    if (window.location.href.includes('order.jd.com/center/list.action')) {
+    // 如果已经在订单页面，直接解析（部分账号会被京东从 order.jd.com 跳转到 order.jd.hk）
+    if (/^order\.jd\.(com|hk)$/.test(window.location.hostname) && window.location.pathname.indexOf('/center/list.action') === 0) {
       // 等待订单列表加载
       await sleep(1000);
       const orders = parseOrderList();

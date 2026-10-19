@@ -1,11 +1,11 @@
-/* v2 command jd.com.search-products; delegates to the preserved executable implementation. */
+/* v2 command jd.com.search-products: opens the results for a keyword and reads them in one call. */
 (function () {
   __webcliRegisterCommand("search-products", async function (params) {
     var keyword = String((params && params.keyword) || "").trim();
-    // One call: open the results page for this keyword, then parse it there.
-    if (keyword && (location.hostname !== "search.jd.com" || new URLSearchParams(location.search).get("keyword") !== keyword)) {
+    if (!keyword) return { error: "Missing required parameter", message: "keyword parameter is required" };
+    if (location.hostname !== "search.jd.com" || new URLSearchParams(location.search).get("keyword") !== keyword) {
       return { __webcli_navigation: { version: 1, url: "https://search.jd.com/Search?keyword=" + encodeURIComponent(keyword) + "&enc=utf-8", resume: true } };
     }
-    return window["__jd_com_internal"].invoke("jd.com.search_products", params || {});
+    return window.__jd_com_pages.readSearch(params || {});
   });
 })();

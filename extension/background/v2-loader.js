@@ -7,9 +7,11 @@
  * definition/schema 由本模块从 manifest 合入（单源），经 bootstrap 预埋进页面。
  */
 
+import { adapterPrimaryHost } from './host-scope.js';
+
 /** 单个命令的注册定义（对接 injector 的 __webmcpRegister 协议） */
 export function v2CommandDef(manifest, command) {
-  const defaultRouteDomain = (manifest.match || [])[0] || "";
+  const defaultRouteDomain = adapterPrimaryHost(manifest);
   const routeDomain = command.routeDomain || command.tabDomain || defaultRouteDomain;
   return {
     id: command.id,

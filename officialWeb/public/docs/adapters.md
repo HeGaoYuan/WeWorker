@@ -121,6 +121,7 @@ Chrome 扩展的后台脚本（service-worker）是扩展的核心逻辑，负�
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `homepage_url` | `string` | AI 打开网站时使用的完整 URL，需要特殊端口或路径时必填 |
+| `domains` | `string[]` | 站点域名，如 `["example.com", "example.hk"]`。每项覆盖该域名及其全部子域名，不用逐个列出子域名；同一网站的地区或品牌域名需显式写出。不允许公共后缀、通配符或 IP |
 | `auth` | `object` | 登录声明（登录页、SSO 主机、判断方式），登录由 WeWorker 自动处理，见下方「网站登录」 |
 | `except` | `string[]` | 排除的子域名 |
 | `i18n` | `object` | 国际化，支持 `zh`，包含 `name` 和 `description` |

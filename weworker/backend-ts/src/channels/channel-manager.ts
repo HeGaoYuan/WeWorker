@@ -5,6 +5,7 @@ import { streamChat } from '../agent.js'
 import { createLogger } from '../logger.js'
 import type { MemoryScope } from '../memory/memory-types.js'
 import type { ChannelProfileChatOptions } from './channel-profile.js'
+import { createChannelUserMedia, type UserMediaSink } from '../user-media.js'
 
 const log = createLogger('channel-manager')
 
@@ -75,12 +76,19 @@ export async function runChannelChat(
     abortController?: AbortController
     /** Per-turn agent options from a channel profile (e.g. a dedicated agent). */
     profileOptions?: ChannelProfileChatOptions
+    /** Sends a file from send_file_to_user to this turn's chat; channels without it cannot send files. */
+    sendFile?: UserMediaSink['file']
+    /** False for channels that do not send the returned images, so the tool reports it cannot deliver. */
+    sendsImages?: boolean
   },
 ): Promise<{ text: string; images: string[]; toolCalls: store.ContentBlock[]; timing: store.ContentBlock | null }> {
   let text = ''
   const images: string[] = []
   // Collect tool call records for desktop-side debugging
   const toolCalls: store.ContentBlock[] = []
+  // send_image_to_user goes back to this turn's chat with the turn's other images.
+  const channelMedia = createChannelUserMedia(images, toolCalls, opts?.sendFile)
+  const userMedia: UserMediaSink = opts?.sendsImages === false ? { ...(channelMedia.file ? { file: channelMedia.file } : {}) } : channelMedia
   const toolCallMap = new Map<string, { name: string; args: unknown; thinkMs?: number; startMs?: number }>()
 
   // Per-turn timing (mirrors server.ts / task-executor.ts so channel turns are observable)
@@ -99,6 +107,7 @@ export async function runChannelChat(
     channelPermissionMode: opts?.channelPermissionMode ?? 'full',
     memoryScope: opts?.memoryScope,
     channelAskUserHandler: opts?.askUserHandler,
+    userMedia,
   })) {
     if (event.type === 'skill_context' && event.skillContext) {
       toolCalls.push(event.skillContext)
