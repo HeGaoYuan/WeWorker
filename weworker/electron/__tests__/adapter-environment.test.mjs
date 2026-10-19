@@ -80,6 +80,14 @@ test('packaged metadata and explicit root ownership are validated at the desktop
   assert.throws(() => buildAdapterEnvironment({ ...options, env: { WEWORKER_USER_ADAPTERS_DIR: userDir } }), /different profile/);
 });
 
+test('packaged metadata without the retired legacy field is accepted', (t) => {
+  const options = fixture(t, 'public');
+  fs.writeFileSync(path.join(options.builtinDir, '.profile.json'), JSON.stringify({ schema_version: 1, profile: 'public', adapters: [] }));
+  const env = buildAdapterEnvironment(options);
+  assert.equal(env.WEWORKER_BUILD_PROFILE, 'public');
+  assert.equal(env.WEWORKER_BUILTIN_ADAPTERS_DIR, options.builtinDir);
+});
+
 test('Windows-style equivalent override casing is not a conflict', (t) => {
   if (process.platform !== 'win32') return;
   const options = fixture(t, 'public');
