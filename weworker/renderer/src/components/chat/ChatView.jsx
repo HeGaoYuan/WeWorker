@@ -5,9 +5,11 @@ import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useSitesStore } from '../../store/sites.js'
 import MessageList from './MessageList.jsx'
 import ChatBottomDock from './ChatBottomDock.jsx'
+import MessageQueue from './MessageQueue.jsx'
+import { EMPTY_MESSAGE_QUEUE, getMessageQueue, useMessageQueueStore } from '../../store/message-queue.js'
 import WelcomeScreen from '../welcome/WelcomeScreen.jsx'
 import HealthCheckPanel from './HealthCheckPanel.jsx'
-import { requestChatWarmup, setContextCompactionLifecycleHandler, streamChat, submitUserChoice } from '../../api/backend.js'
+import { requestChatWarmup, setContextCompactionLifecycleHandler, steerChat, stopChat, streamChat, submitUserChoice } from '../../api/backend.js'
 import { backendFetch } from '../../api/http.js'
 import { displayToolName } from '../../utils/tool-name.js'
 import { formatDuration } from '../../utils/format-duration.js'
@@ -17,7 +19,7 @@ import StylePicker from './StylePicker.jsx'
 import { useChatInputFillStore } from '../../store/chat-input-fill.js'
 import { buildResumePrompt, isPlanChangeIntent, isResumeIntent } from '../../utils/chat-generation-stop.js'
 import { buildOpenWarmupRequest } from '../../utils/chat-warmup.js'
-import { applyAssistantStreamEvent } from '../../utils/chat-stream-events.js'
+import { applyAssistantStreamEvent, insertSteeringIntoMessages, updateAssistantMessages } from '../../utils/chat-stream-events.js'
 import { applyTerminalEventToMessages } from '../../utils/terminal-chat-output.js'
 import { buildTodoWriteContextPrompt, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/user-choice.js'
@@ -31,6 +33,8 @@ import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/use
  * @param {() => void} [props.onTurnFinished] Called after each send completes.
  */
 export default function ChatView({ workId, embedded = false, renderEmpty, onTurnFinished }) {
+  const queue = useMemo(() => getMessageQueue(workId), [workId])
+  const queueState = useMessageQueueStore(s => s.queues[workId] ?? EMPTY_MESSAGE_QUEUE)
   const messages = useWorksStore((s) => s.messages[workId] ?? [])
   const contextSnapshot = useWorksStore((s) => s.contextSnapshots[workId] ?? null)
   const contextCompactionStatus = useWorksStore((s) => s.contextCompactionStatuses[workId] ?? null)
@@ -111,8 +115,10 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
   }
 
   const handleStop = () => {
-    useWorksStore.getState().abortControllers[workId]?.abort()
-    useWorksStore.getState().stopGeneration(workId)
+    void queue.stop().catch(e => setError(e.message))
+  }
+  const updateStreamMessage = (event, updater) => {
+    useWorksStore.setState(s => ({ messages: { ...s.messages, [workId]: updateAssistantMessages(s.messages[workId] ?? [], event, updater) } }))
   }
 
   const handleChoice = async (choiceId, answer) => {
@@ -120,7 +126,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
     try {
       await submitUserChoice(workId, cleanAnswer)
       // Update the choice block status to 'answered'
-      updateLastMessage(workId, (msg) => ({
+      updateStreamMessage({ type: 'user_choice_answer', id: choiceId }, (msg) => ({
         ...msg,
         content: msg.content.map((b) =>
           b.type === 'user_choice' && b.id === choiceId
@@ -133,21 +139,19 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
     }
   }
 
-  const handleSend = async (text, files = [], thinkingEffort = 'off') => {
-    if ((!text.trim() && !files.length) || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
+  const sendTurn = async (text, files = [], thinkingEffort = 'off') => {
+    if ((!text.trim() && !files.length) || useWorksStore.getState().streamingWorkIds.has(workId) || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return { status: 'failed', accepted: false }
     if (files.length > maxChatAttachments) {
       setError(`已选 ${files.length}/${maxChatAttachments} 个文件，请删减后再发送`)
-      return
+      return { status: 'failed', accepted: false, error: '附件数量超过限制，请编辑后重试' }
     }
     setError(null)
-    setInputText('')
-    setAttachments([])
     setSlowWarning(false)
     gotFirstEventRef.current = false
     useWorksStore.getState().clearMemoryStatus(workId)
 
     const controller = new AbortController()
-    const currentPlan = buildTodoWriteState(messages, { streaming: false })?.plan ?? null
+    const currentPlan = buildTodoWriteState(useWorksStore.getState().messages[workId] ?? [], { streaming: false })?.plan ?? null
     const modelText = (() => {
       const plan = currentPlan
       if (!plan) return text
@@ -169,8 +173,10 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       abortControllers: { ...s.abortControllers, [workId]: controller },
     }))
 
+    const optimisticUserId = Date.now() + '-u'
+    const optimisticAssistantId = Date.now() + '-a'
     appendMessage(workId, {
-      id: Date.now() + '-u',
+      id: optimisticUserId,
       role: 'user',
       content: [
         ...files.map((file) => ({ type: 'file_attachment', name: file.name, path: file.path })),
@@ -178,10 +184,20 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       ],
       created_at: new Date().toISOString(),
     })
-    appendMessage(workId, { id: Date.now() + '-a', role: 'assistant', content: [], created_at: new Date().toISOString() })
+    appendMessage(workId, { id: optimisticAssistantId, streamingTurnId: optimisticAssistantId, role: 'assistant', content: [], created_at: new Date().toISOString() })
 
+    let accepted = false
+    let failed = false
+    let steered = false
     try {
       await streamChat(workId, text, (event) => {
+        if (event.type === 'error') failed = true
+        if (event.type === 'steering_message_saved') {
+          steered = true
+          insertSteeringMessage(event.message, event.previousAssistant)
+          queue.acknowledgeSteering(event.requestId)
+          return
+        }
         if (!gotFirstEventRef.current) {
           gotFirstEventRef.current = true
           setSlowWarning(false)
@@ -192,20 +208,17 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
           return
         }
         if (event.type === 'user_message_saved') {
+          accepted = true
           useWorksStore.setState((s) => {
             const msgs = s.messages[workId] ?? []
-            const withoutPlaceholders = msgs.filter((m, i) => {
-              const isLastAssistantPlaceholder = i === msgs.length - 1 && m.role === 'assistant' && (m.content?.length ?? 0) === 0
-              const isPreviousUserPlaceholder = i === msgs.length - 2 && m.role === 'user'
-              return !isLastAssistantPlaceholder && !isPreviousUserPlaceholder
-            })
+            const withoutPlaceholders = msgs.filter(m => m.id !== optimisticUserId && m.id !== optimisticAssistantId)
             return {
               messages: {
                 ...s.messages,
                 [workId]: [
                   ...withoutPlaceholders,
                   event.message,
-                  { id: Date.now() + '-a', role: 'assistant', content: [], created_at: new Date().toISOString() },
+                  { id: optimisticAssistantId, streamingTurnId: optimisticAssistantId, role: 'assistant', content: [], created_at: new Date().toISOString() },
                 ],
               },
             }
@@ -273,7 +286,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
           })
           return
         }
-        updateLastMessage(workId, (msg) => {
+        updateStreamMessage(event, (msg) => {
           const content = [...msg.content]
 
           if (event.type === 'text_delta') {
@@ -362,6 +375,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
         })
       }, controller.signal, files, maxChatAttachments, modelText, false, thinkingEffort)
     } catch (e) {
+      failed = true
       if (e.name === 'AbortError') {
         const store = useWorksStore.getState()
         if (store.streamingWorkIds.has(workId)) {
@@ -377,24 +391,65 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
     } finally {
       clearTimeout(slowTimerRef.current)
       setSlowWarning(false)
+      if (!accepted) {
+        useWorksStore.setState(s => ({ messages: { ...s.messages, [workId]: (s.messages[workId] ?? []).filter(message => message.id !== optimisticUserId && message.id !== optimisticAssistantId) } }))
+      }
       // Clean up store-level streaming state
       useWorksStore.setState((s) => {
+        if (s.abortControllers[workId] !== controller) return s
         const next = new Set(s.streamingWorkIds)
         next.delete(workId)
         const controllers = { ...s.abortControllers }
         delete controllers[workId]
         return { streamingWorkIds: next, abortControllers: controllers }
       })
+      if (steered && accepted && !failed && !controller.signal.aborted) {
+        await useWorksStore.getState().refreshWorkMessages(workId)
+      }
       onTurnFinished?.()
     }
+    return { status: controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed', accepted }
+  }
+
+  const insertSteeringMessage = (message, previousAssistant) => {
+    if (!message?.id) return
+    useWorksStore.setState(s => {
+      const current = s.messages[workId] ?? []
+      const next = insertSteeringIntoMessages(current, message, previousAssistant)
+      return next === current ? s : { messages: { ...s.messages, [workId]: next } }
+    })
+  }
+
+  queue.setHandlers({
+    isBlocked: () => useWorksStore.getState().streamingWorkIds.has(workId) || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting',
+    send: item => item.command ? handleShellCommand(item.command, item.text) : sendTurn(item.text, item.files, item.thinkingEffort),
+    steer: async item => {
+      if (item.command) throw new Error('命令行消息只能排队执行，请等待当前回复完成')
+      await steerChat(workId, item)
+      // Only SSE has a total order with text/tool events. A faster POST response
+      // must not split the reply before earlier buffered deltas have arrived.
+      if (!useWorksStore.getState().streamingWorkIds.has(workId)) {
+        await useWorksStore.getState().refreshWorkMessages(workId)
+      }
+    },
+    stop: async () => {
+      const controller = useWorksStore.getState().abortControllers[workId]
+      if (!controller) throw new Error('命令正在执行，请在终端停止；队列已暂停')
+      await stopChat(workId)
+      controller.abort()
+      useWorksStore.getState().stopGeneration(workId)
+    },
+  })
+  useEffect(() => { queue.wake() }, [queue, streaming, contextCompactionStatus])
+  const handleSend = (text, files = [], thinkingEffort = 'off') => {
+    const id = queue.enqueue({ text, files, thinkingEffort })
+    if (id) { setInputText(''); setAttachments([]) }
   }
 
   const handleShellCommand = async (command, originalText = '') => {
     const trimmed = String(command || '').trim()
-    if (!trimmed || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
+    if (!trimmed || useWorksStore.getState().streamingWorkIds.has(workId) || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return { status: 'failed', accepted: false }
     setError(null)
-    setInputText('')
-    setAttachments([])
     setSlowWarning(false)
     gotFirstEventRef.current = false
 
@@ -427,6 +482,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       created_at: new Date().toISOString(),
     })
 
+    let shellFailed = false
     try {
       const res = await backendFetch('/terminal/run', {
         method: 'POST',
@@ -438,6 +494,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || 'Shell command failed')
+      shellFailed = data.exitCode == null || Number(data.exitCode) !== 0
       const execMs = Date.now() - startedAt
       useWorksStore.setState((s) => {
         const msgs = s.messages[workId] ?? []
@@ -452,7 +509,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
                   block.type === 'tool_use' && block.id === toolId
                     ? {
                         ...block,
-                        status: Number(data.exitCode) === 0 ? 'done' : 'failed',
+                        status: shellFailed ? 'failed' : 'done',
                         args: { ...(block.args || {}), shell: data.shell || block.args?.shell },
                         result: JSON.stringify({ output: data.output || '', exitCode: data.exitCode ?? null }),
                         execMs,
@@ -465,6 +522,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
         }
       })
     } catch (e) {
+      shellFailed = true
       const message = e.message || 'Shell command failed'
       setError(message)
       useWorksStore.setState((s) => {
@@ -493,11 +551,16 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
         return { streamingWorkIds: next }
       })
     }
+    return { status: shellFailed ? 'failed' : 'completed', accepted: true }
+  }
+  const enqueueShell = (command, originalText) => {
+    queue.enqueue({ command, text: originalText || '!' + command })
+    setInputText(''); setAttachments([])
   }
 
   handleSendRef.current = handleSend
   const handleShellCommandRef = useRef(null)
-  handleShellCommandRef.current = handleShellCommand
+  handleShellCommandRef.current = enqueueShell
 
   useEffect(() => {
     const init = async () => {
@@ -644,9 +707,11 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
         <ChatBottomDock
           showInput
           onSend={handleSend}
-          onShellCommand={handleShellCommand}
+          onShellCommand={enqueueShell}
           onStop={handleStop}
-          disabled={isStreamingHere || contextCompactionStatus === 'compacting' || messageSelectMode}
+          disabled={contextCompactionStatus === 'compacting' || messageSelectMode}
+          allowQueue
+          queuePanel={<MessageQueue state={queueState} controller={queue} disabled={contextCompactionStatus === 'compacting' || messageSelectMode} />}
           streaming={isStreamingHere}
           text={inputText}
           historyMessages={messages}

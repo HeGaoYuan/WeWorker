@@ -1,6 +1,8 @@
-import { randomUUID as channelQrId } from 'node:crypto'
+import { randomUUID as channelQrId, createHash } from 'node:crypto'
 import { changeChannelConfiguration, createChannelMutationQueue, getChannelConfiguration, isChannelType, publicChannelSettings, type ChannelType } from './channels/channel-configurations.js'
 import express from 'express'
+import { createChatTurnRegistry } from './chat-turn-lifecycle.js'
+import { createAssistantSegments } from './chat-assistant-segments.js'
 import cors from 'cors'
 import { createWebsiteExplorationRouter } from './website-exploration.js'
 import fs from 'node:fs'
@@ -97,8 +99,8 @@ import { execFile } from 'node:child_process'
 import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow } from './site-memory.js'
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
-import { disposeChatSession, disposeIdleChatSession, hasChatSession, hasSpareChatSession } from './chat-session.js'
-import { buildConfiguredModelEnv, streamChat, type SSEEvent } from './agent.js'
+import { disposeChatSession, disposeIdleChatSession, getSteerableChatSession, hasChatSession, hasSpareChatSession } from './chat-session.js'
+import { buildConfiguredModelEnv, messagePromptText, streamChat, type SSEEvent } from './agent.js'
 import { matchSiteAdapter, resolveSiteToolkitPrompt } from './site-gate.js'
 import { listToolkitSkills, resolveToolkitSkillPrompt, toolkitGateCandidates } from './toolkit-skills.js'
 import { decideTier4, openTier4Turn } from './tier4-dispatch.js'
@@ -2885,7 +2887,69 @@ app.post('/chat/warmup', (req, res) => {
   })
 })
 
+const chatTurns = createChatTurnRegistry()
+const chatSteeringListeners = new Map<string, {
+  checkpoint: () => store.Message | undefined
+  notify: (message: store.Message, requestId?: string, previousAssistant?: store.Message) => void
+}>()
+app.post('/works/:id/chat/steer', (req, res) => {
+  const { message, attachments, requestId } = req.body ?? {}
+  if (requestId !== undefined && (typeof requestId !== 'string' || requestId.length > 100)) {
+    res.status(400).json({ detail: 'invalid requestId' })
+    return
+  }
+  if ((typeof message !== 'string' || !message.trim()) && (!Array.isArray(attachments) || !attachments.length)) {
+    res.status(400).json({ detail: 'message or attachments required' })
+    return
+  }
+  const session = getSteerableChatSession(req.params.id)
+  const listener = chatSteeringListeners.get(req.params.id)
+  if (!session || !listener || !store.getWork(req.params.id)) {
+    res.status(409).json({ code: 'steering_unavailable', detail: '当前回复暂不支持接收补充指令，消息保留在队列中' })
+    return
+  }
+  let files: store.ContentBlock[]
+  try { files = Array.isArray(attachments) ? importChatAttachments(attachments) : [] }
+  catch (error) { res.status(400).json({ detail: error instanceof Error ? error.message : 'failed to import attachments' }); return }
+  // Synchronous checkpoint + user append: no stream event can cross this boundary.
+  const previousAssistant = listener.checkpoint()
+  const saved = store.appendMessage(req.params.id, 'user', [
+    ...files, ...(typeof message === 'string' && message.trim() ? [{ type: 'text' as const, text: message }] : []),
+  ])
+  session.steer({ type: 'user', uuid: channelQrId(), session_id: '', parent_tool_use_id: null,
+    message: { role: 'user', content: messagePromptText(saved) },
+  }, { id: saved.id, role: saved.role, digest: createHash('sha256').update(JSON.stringify(saved.content)).digest('hex') },
+  previousAssistant ? { id: previousAssistant.id, role: previousAssistant.role, digest: createHash('sha256').update(JSON.stringify(previousAssistant.content)).digest('hex') } : undefined)
+  listener.notify(saved, requestId, previousAssistant)
+  res.json({ status: 'accepted', message: saved, previousAssistant })
+})
+
+app.post('/works/:id/chat/stop', async (req, res) => {
+  const status = await chatTurns.stop(req.params.id)
+  res.status(status === 'timeout' ? 409 : 200).json({
+    status,
+    ...(status === 'timeout' ? { detail: '当前回复尚未停止，请稍后重试；排队消息已保留' } : {}),
+  })
+})
+
 app.post('/works/:id/chat', async (req, res) => {
+  const turn = chatTurns.start(req.params.id)
+  if (!turn) {
+    res.status(409).json({ detail: '当前对话仍在处理上一条消息，请稍后重试' })
+    return
+  }
+  const onDisconnect = () => { if (!res.writableEnded) turn.controller.abort() }
+  res.on('close', onDisconnect)
+  try {
+    await handleChatRequest(req, res, turn.controller)
+  } finally {
+    chatSteeringListeners.delete(req.params.id)
+    res.off('close', onDisconnect)
+    turn.finish()
+  }
+})
+
+async function handleChatRequest(req: express.Request<{ id: string }>, res: express.Response, abortController: AbortController) {
   const workId = req.params.id
   const { message, modelMessage, attachments, retryCompaction, thinkingEffort } = req.body as {
     message: string;
@@ -2979,8 +3043,6 @@ app.post('/works/:id/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive')
   res.flushHeaders()
 
-  const abortController = new AbortController()
-
   // Listen on the response (not request) for client disconnect.
   // req.on('close') fires when the request body stream ends (i.e. right
   // after express.json() consumes the POST body), NOT when the TCP
@@ -3004,8 +3066,27 @@ app.post('/works/:id/chat', async (req, res) => {
   const memoryCandidates: MemoryUpdateCandidate[] = []
 
   const send = (event: object) => {
-    res.write(`data: ${JSON.stringify(event)}\n\n`)
+    if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
+  let steeringSession: ReturnType<typeof getSteerableChatSession>
+  const segments = createAssistantSegments(workId, assistantContent, message => {
+    steeringSession?.refreshSteeredAssistant({
+      id: message.id, role: message.role, digest: createHash('sha256').update(JSON.stringify(message.content)).digest('hex'),
+    })
+  })
+  const flushText = () => {
+    if (!currentText) return
+    assistantContent.push({ type: 'text', text: currentText })
+    currentText = ''
+  }
+  chatSteeringListeners.set(workId, {
+    checkpoint: () => {
+      steeringSession = getSteerableChatSession(workId)
+      flushText()
+      return segments.checkpoint()
+    },
+    notify: (message, requestId, previousAssistant) => send({ type: 'steering_message_saved', message, requestId, previousAssistant }),
+  })
 
   const processMemoryCandidate = (candidate: MemoryUpdateCandidate) => {
     memoryCandidateIndex += 1
@@ -3204,10 +3285,7 @@ app.post('/works/:id/chat', async (req, res) => {
         }
         // Send cleaned name + LLM think time to frontend via SSE
         send({ ...ev, name: cleanName, ...(thinkMs !== undefined ? { thinkMs } : {}) })
-        if (currentText) {
-          assistantContent.push({ type: 'text', text: currentText })
-          currentText = ''
-        }
+        flushText()
         // If this tool id already exists (args update from full assistant message), merge instead of duplicating
         const existingIdx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (existingIdx >= 0) {
@@ -3216,6 +3294,7 @@ app.post('/works/:id/chat', async (req, res) => {
             args: ev.args ?? (assistantContent[existingIdx] as { args?: unknown }).args,
             name: cleanName || (assistantContent[existingIdx] as { name?: string }).name,
           } as store.ContentBlock
+          segments.refresh(existingIdx)
         } else {
           toolCallMap.set(ev.id, { name: cleanName, args: ev.args })
           assistantContent.push({ type: 'tool_use', id: ev.id, name: cleanName, args: ev.args, status: 'running', ...(thinkMs !== undefined ? { thinkMs } : {}) })
@@ -3227,6 +3306,7 @@ app.post('/works/:id/chat', async (req, res) => {
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
           assistantContent[idx] = { ...(assistantContent[idx] as object), result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration } as store.ContentBlock
+          segments.refresh(idx)
         } else {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration })
         }
@@ -3244,6 +3324,7 @@ app.post('/works/:id/chat', async (req, res) => {
             status: currentStatus === 'failed' ? 'failed' : 'done',
             ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}),
           } as store.ContentBlock
+          segments.refresh(idx)
         } else {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done', ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}) })
         }
@@ -3309,13 +3390,21 @@ app.post('/works/:id/chat', async (req, res) => {
   }
 
   // Finalize text
-  if (currentText) assistantContent.push({ type: 'text', text: currentText })
+  flushText()
+  // Stop/error must also settle tools in segments saved before a steering message.
+  for (let index = 0; index < assistantContent.length; index++) {
+    const block = assistantContent[index]
+    if (!turnSucceeded && block.type === 'tool_use' && block.status === 'running') {
+      assistantContent[index] = { ...block, status: 'cancelled' }
+      segments.refresh(index)
+    }
+  }
 
   // Persist assistant message
   if (assistantContent.length > 0) {
     const timing = turnTimingResult ?? turnTiming.finish()
     assistantContent.push({ type: 'timing', totalMs: timing.totalMs, llmMs: timing.llmMs, execMs: timing.execMs, steps: stepIndex })
-    store.appendMessage(workId, 'assistant', assistantContent)
+    segments.checkpoint()
   }
 
   // Dedicated agent turns run with long-term memory off: nothing to plan or report.
@@ -3472,7 +3561,7 @@ app.post('/works/:id/chat', async (req, res) => {
   chatLog.info(` sending res.end() for workId=${workId}`)
   broadcastSSE({ type: 'works_changed', workId })
   res.end()
-})
+}
 
 // ── Long-term memory management (Renderer) ─────────────────────────────────
 

@@ -6,9 +6,23 @@ import {
   isPlanChangeIntent,
   isResumeIntent,
   mapMessageContentAfterStop,
+  mapMessagesAfterStop,
 } from '../utils/chat-generation-stop.js'
 
 describe('chat-generation-stop', () => {
+  it('stops every split segment of the active turn without changing old turns', () => {
+    const tool = { type: 'tool_use', id: 'fixture', name: 'Read', status: 'running' }
+    const messages = [
+      { role: 'assistant', streamingTurnId: 'old', content: [tool] },
+      { role: 'assistant', streamingTurnId: 'active', content: [tool] },
+      { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+      { role: 'assistant', streamingTurnId: 'active', content: [] },
+    ]
+    const result = mapMessagesAfterStop(messages)
+    assert.equal(result[0], messages[0])
+    assert.equal(result[1].content[0].status, 'cancelled')
+    assert.equal(result[2], messages[2])
+  })
   it('marks running tools cancelled and flags in-progress plan tools as needing confirmation', () => {
     const content = [
       { type: 'tool_use', id: '1', name: 'Bash', status: 'running' },

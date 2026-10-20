@@ -1,10 +1,11 @@
 import { create } from 'zustand'
-import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
+import { mapMessagesAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
 import { calibrateContextSnapshot, calibrateCompactedContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
 import { leaveWebsiteExploration } from './website-exploration.js'
 import { showAlert } from './dialog.js'
+import { discardMessageQueue } from './message-queue.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -177,6 +178,8 @@ export const useWorksStore = create((set, get) => ({
     try {
       const res = await backendFetch(`${API}/works/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Failed to delete work')
+      discardMessageQueue(id)
+      get().abortControllers[id]?.abort()
       set((s) => {
         const works = s.works.filter((w) => w.id !== id)
         const messages = { ...s.messages }
@@ -410,12 +413,7 @@ export const useWorksStore = create((set, get) => ({
         return { streamingWorkIds: nextStreaming, abortControllers: controllers }
       }
 
-      const updated = [...msgs]
-      const last = updated[updated.length - 1]
-      updated[updated.length - 1] = {
-        ...last,
-        content: mapMessageContentAfterStop(last.content),
-      }
+      const updated = mapMessagesAfterStop(msgs)
 
       return {
         messages: { ...s.messages, [workId]: updated },
