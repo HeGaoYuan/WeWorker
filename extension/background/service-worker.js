@@ -3,13 +3,12 @@ import { browserContextId } from './browser-profile.js';
 import { readHttpCookies } from './http-credentials.js';
 import { executePageRequest, pageWriteRequest } from './page-write.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
-import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from "./v2-loader.js";
 import { validateBackgroundPreview, backgroundPreviewRequest } from './generation-background-preview.js';
-import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
+import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createPackagedAdapterMatcher, injectPackagedAdapter } from './packaged-adapter-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
-import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
 import {
   adapterHelperPatterns,
   adapterPrimaryHost,
@@ -46,8 +45,6 @@ import {
   pickScreenshotTab,
   selectTabForScreenshot,
 } from './screenshot.js';
-import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
-import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 import { executeBrowserCommand } from './browser-commands.js';
 import { browserResponseEvidence } from './browser-network.js';
 import { executePageSource } from './page-source.js';

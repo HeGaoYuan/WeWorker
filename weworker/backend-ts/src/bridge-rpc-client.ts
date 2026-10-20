@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import { createLogger } from './logger.js'
+import { BridgeExtensionConnections } from './bridge-extension-connections.js'
 
 const log = createLogger('bridge-rpc')
 const DEFAULT_BRIDGE_URL = 'ws://localhost:3711'
@@ -57,11 +58,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function normalizeCapabilities(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return [...new Set(value.filter((item): item is string => typeof item === 'string' && item.trim() !== ''))]
-}
-
 function sanitizeExplorableTabUrl(value: string): string {
   try {
     const url = new URL(value)
@@ -92,6 +88,7 @@ export class BridgeRpcClient {
   private _extensionConnected = false
   private _extensionVersion: string | null = null
   private _capabilities: string[] = []
+  private readonly _extensionConnections = new BridgeExtensionConnections()
   private _stopped = false
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _pending = new Map<string, PendingRequest>()
@@ -114,7 +111,8 @@ export class BridgeRpcClient {
     this._ws?.close()
     this._ws = null
     this._connected = false
-    this._extensionConnected = false
+    this._extensionConnections.clear()
+    this._syncExtensionStatus()
   }
 
   getCapabilities(): BridgeCapabilities {
@@ -436,9 +434,8 @@ export class BridgeRpcClient {
     ws.on('close', () => {
       if (this._ws !== ws) return
       this._connected = false
-      this._extensionConnected = false
-      this._extensionVersion = null
-      this._capabilities = []
+      this._extensionConnections.clear()
+      this._syncExtensionStatus()
       this._ws = null
       this._rejectPending(new Error('BRIDGE_DISCONNECTED'))
       if (!this._stopped) {
@@ -455,16 +452,16 @@ export class BridgeRpcClient {
   private _handleMessage(message: Record<string, unknown>): void {
     const type = typeof message.type === 'string' ? message.type : ''
     if (type === 'extension_connected') {
-      this._extensionConnected = true
-      this._extensionVersion = typeof message.version === 'string' ? message.version : null
-      this._capabilities = normalizeCapabilities(message.capabilities)
+      this._extensionConnections.connected(message)
+      this._syncExtensionStatus()
       return
     }
     if (type === 'extension_disconnected') {
-      this._extensionConnected = false
-      this._extensionVersion = null
-      this._capabilities = []
-      this._rejectPending(new Error('EXTENSION_DISCONNECTED'))
+      const allDisconnected = this._extensionConnections.disconnected(message)
+      this._syncExtensionStatus()
+      // Identified per-profile disconnects do not invalidate unrelated requests;
+      // the Bridge returns PROFILE_DISCONNECTED for work pinned to that profile.
+      if (allDisconnected) this._rejectPending(new Error('EXTENSION_DISCONNECTED'))
       return
     }
 
@@ -482,6 +479,13 @@ export class BridgeRpcClient {
     clearTimeout(pending.timer)
     this._pending.delete(id)
     pending.resolve(message)
+  }
+
+  private _syncExtensionStatus(): void {
+    const status = this._extensionConnections.snapshot()
+    this._extensionConnected = status.connected
+    this._extensionVersion = status.version
+    this._capabilities = status.capabilities
   }
 
   private readGenerationRun(message: Record<string, unknown>): GenerationRunSnapshot {
