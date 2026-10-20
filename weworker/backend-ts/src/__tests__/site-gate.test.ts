@@ -158,6 +158,19 @@ describe('formatSiteToolkitPrompt：预注入清单', () => {
     expect(toolkit.prompt).toContain('参数：keyword（string）、limit（integer）')
   })
 
+  it('显式关闭确认的写操作要求直接调用', () => {
+    const unconfirmedWrite: StaticToolDef = {
+      name: 'example.com.run',
+      description: '执行命令',
+      parameters: {},
+      safety: 'write',
+      requiresConfirmation: false,
+    }
+    expect(formatSiteToolkitPrompt({ name: '示例站', match: ['example.com'] }, [unconfirmedWrite]).prompt).toContain(
+      '无需显式确认；用户请求且参数明确时直接调用，不要要求用户手动执行或传入 __confirmed',
+    )
+  })
+
   it('带 navigate_before 的工具给出「先开页面」提示；page-prep 缺省时无此行', () => {
     const withNav: StaticToolDef = { ...direct, execution: { navigate_before: 'https://example.com/list' } }
     expect(formatSiteToolkitPrompt({ name: 'x', match: ['example.com'] }, [withNav]).prompt).toContain(

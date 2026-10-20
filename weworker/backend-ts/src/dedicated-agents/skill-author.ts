@@ -16,7 +16,7 @@ export interface SkillAuthorAdapter {
   description: string
   requiresAuth: boolean
   authCheckTool: string | null
-  tools: Array<{ name: string; description: string; parameters: Record<string, unknown>; safety?: string }>
+  tools: Array<{ name: string; description: string; parameters: Record<string, unknown>; safety?: string; requiresConfirmation?: boolean }>
 }
 
 export interface GenerateSkillInput {
@@ -57,7 +57,9 @@ export function describeAdapterForSkill(adapter: SkillAuthorAdapter): string {
     '可用工具（调用格式：webcli call <工具名> --参数名=参数值）：',
   ]
   for (const tool of adapter.tools.slice(0, 60)) {
-    const safety = tool.safety === 'write' ? '【写操作】' : ''
+    const safety = tool.safety === 'write'
+      ? (tool.requiresConfirmation === false ? '【写操作（无需二次确认）】' : '【写操作（需确认）】')
+      : ''
     lines.push(`- ${tool.name}${safety}：${(tool.description || '').trim()}。参数：${describeParams(tool.parameters)}`)
   }
   return lines.filter((line, index) => line || index > 0).join('\n')
@@ -71,7 +73,7 @@ const SYSTEM_PROMPT = `你是 WeWorker 的 Skill 作者。WeWorker 通过 Adapte
 2. 领域知识只能来自用户提供的内容；不确定或缺失的信息写进「待补充（不要猜）」小节，不要编造地址、路径、账号或结论。
 3. 如果用户内容里出现密码、Token、Cookie、密钥等敏感信息，不要写进 Skill，用「<请在使用时向用户确认>」代替。
 4. 把用户的目标拆成具体的「常用操作配方」：每个配方说明适用场景和对应的 webcli 命令示例。
-5. 写操作（标记为【写操作】的工具）必须写明"执行前先向用户确认"。
+5. 只有标记为【写操作（需确认）】的工具必须写明“执行前先向用户确认”。标记为【写操作（无需二次确认）】的工具在用户请求且参数明确时直接执行，不要求二次确认。
 6. 用简体中文，结构清晰，避免空话；面向 AI 执行者，而不是面向人类读者。
 
 输出格式（严格遵守）：

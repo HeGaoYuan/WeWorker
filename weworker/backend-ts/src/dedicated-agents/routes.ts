@@ -101,6 +101,7 @@ function toAuthorAdapter(adapter: ParsedAdapter): SkillAuthorAdapter {
       description: tool.description,
       parameters: tool.parameters,
       safety: tool.safety,
+      requiresConfirmation: tool.requiresConfirmation,
     })),
   }
 }

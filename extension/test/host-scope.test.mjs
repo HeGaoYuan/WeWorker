@@ -90,6 +90,24 @@ test('tabs: the route host first, then the host it was redirected to, never excl
   assert.equal(pickRecentScopeTab(tabs, shop, 'pay.example.com')?.id, 3);
 });
 
+test('tabs: prefer active matches, then last access time and a stable ID tie-break', () => {
+  const sameHost = [
+    { id: 11, url: 'https://www.example.com/', lastAccessed: 100 },
+    { id: 12, url: 'https://www.example.com/', lastAccessed: 20, active: true },
+    { id: 13, url: 'https://www.example.com/', lastAccessed: 40, active: true },
+  ];
+  assert.equal(pickRouteTab(sameHost, 'www.example.com')?.id, 13);
+  assert.equal(pickRouteTab(sameHost.filter((tab) => !tab.active), 'www.example.com')?.id, 11);
+  assert.equal(pickRouteTab([
+    { id: 20, url: 'https://www.example.com/', lastAccessed: 5 },
+    { id: 21, url: 'https://www.example.com/', lastAccessed: 5 },
+  ], 'www.example.com')?.id, 21);
+  assert.equal(pickRecentScopeTab([
+    { id: 30, url: 'https://order.example.com/', lastAccessed: 100 },
+    { id: 31, url: 'https://order.example.com/', lastAccessed: 1, active: true },
+  ], shop)?.id, 31);
+});
+
 test('redirect memory keeps only redirects that stay inside the scope', () => {
   const redirects = createRouteRedirects(2);
   redirects.note(shop, 'https://order.example.com/', 'https://order.example.hk/list');

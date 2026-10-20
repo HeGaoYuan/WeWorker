@@ -135,30 +135,35 @@ function tabHost(tab) {
   return hostOf(tab?.url);
 }
 
+function preferredTab(tabs) {
+  return [...tabs].sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active))
+    || (Number(b.lastAccessed) || 0) - (Number(a.lastAccessed) || 0)
+    || Number(b.id) - Number(a.id))[0] || null;
+}
+
 /**
- * Tab for a command with a route host: a tab on that host, or on the host the route was
- * last redirected to (for example order.jd.com → order.jd.hk). `aliases` lists those hosts.
+ * Tab for a command with a route host: prefer an active matching tab, then the
+ * most recently used one, and finally the greatest tab ID for a stable tie-break.
+ * A declared route host still takes precedence over redirected-host aliases.
  */
 export function pickRouteTab(tabs, route, { aliases = [], excludeTabDomain = '' } = {}) {
   const wanted = [normalizeHost(route), ...aliases.map(normalizeHost)].filter(Boolean);
   for (const host of wanted) {
-    const tab = (tabs || []).find((entry) => Number.isInteger(entry?.id) && tabHost(entry) === host
-      && !(excludeTabDomain && hostMatchesPattern(host, excludeTabDomain)));
+    const tab = preferredTab((tabs || []).filter((entry) => Number.isInteger(entry?.id) && tabHost(entry) === host
+      && !(excludeTabDomain && hostMatchesPattern(host, excludeTabDomain))));
     if (tab) return tab;
   }
   return null;
 }
 
-/** Most recently used tab anywhere in the Adapter's page scope. */
+/** Active tab first, then most recently used tab anywhere in the Adapter's page scope. */
 export function pickRecentScopeTab(tabs, manifest, excludeTabDomain = '') {
-  return (tabs || [])
-    .filter((entry) => {
-      const host = tabHost(entry);
-      if (!host || !Number.isInteger(entry?.id)) return false;
-      if (excludeTabDomain && hostMatchesPattern(host, excludeTabDomain)) return false;
-      return isAdapterPageHost(manifest, host);
-    })
-    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
+  return preferredTab((tabs || []).filter((entry) => {
+    const host = tabHost(entry);
+    if (!host || !Number.isInteger(entry?.id)) return false;
+    if (excludeTabDomain && hostMatchesPattern(host, excludeTabDomain)) return false;
+    return isAdapterPageHost(manifest, host);
+  }));
 }
 
 /**

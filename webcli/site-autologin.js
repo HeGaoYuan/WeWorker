@@ -48,7 +48,7 @@ export function locateScript(spec = {}) {
     let submit = spec.submit ? first(spec.submit) : null;
     if (!submit) {
       const root = form || document;
-      submit = [...root.querySelectorAll('button, input[type="submit"], [role="button"]')].find((el) => visible(el)
+      submit = [...root.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')].find((el) => visible(el)
         && (el.type === 'submit' || ${SUBMIT_TEXT}.test(el.textContent || el.value || ''))) || null;
     }
     if (password) password.setAttribute(mark, 'password');
