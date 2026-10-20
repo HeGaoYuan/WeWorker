@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { buildV2Bootstrap, v2InjectionFiles } from '../../extension/background/v2-loader.js';
+import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from '../../extension/background/v2-loader.js';
 const swSource = fs.readFileSync(new URL('../../extension/background/service-worker.js', import.meta.url), 'utf8');
 const bridgeSource = fs.readFileSync(new URL('../bridge.js', import.meta.url), 'utf8');
 
@@ -52,6 +52,10 @@ describe('effective snapshot Extension wiring', () => {
       getHostAdapterClient: () => ({ bundle: async () => bundle }),
       cdpAttachedTabs: new Set(), getCdpExecutionContextMap: () => new Map(),
       injectAdapterSources: async (request) => { calls.push(request); },
+      // No byte-identical copy packaged with the Extension: the debugger loader is used.
+      packagedAdapterFiles: async () => null,
+      injectPackagedAdapter: async () => { throw new Error('unexpected packaged injection'); },
+      v2CommandDefs,
     });
     vm.runInContext(body, context);
     await context.injectV2AdapterWithCode(7, manifest, 'https://example.com/');
@@ -61,5 +65,26 @@ describe('effective snapshot Extension wiring', () => {
     delete bundle.files['extension/commands/list.js'];
     await expect(context.injectV2AdapterWithCode(7, manifest, 'https://example.com/')).rejects.toThrow(/unavailable/);
     expect(calls).toHaveLength(1);
+  });
+
+  it('injects an identical packaged built-in copy without the debugger loader', async () => {
+    const start = swSource.indexOf('async function injectV2AdapterWithCode(');
+    const body = swSource.slice(start, swSource.indexOf('\n}', start) + 2);
+    const manifest = { name: 'demo', match: ['example.com'], commands: [{ id: 'list', runtime: 'extension', module: 'extension/commands/list.js' }] };
+    const bundle = { manifest, digest: 'a'.repeat(64), files: { 'extension/commands/list.js': 'command', 'extension/internal/shared.js': 'shared' } };
+    const packaged = [];
+    const context = vm.createContext({
+      v2InjectionFiles, buildV2Bootstrap, v2CommandDefs,
+      getHostAdapterClient: () => ({ bundle: async () => bundle }),
+      injectAdapterSources: async () => { throw new Error('debugger loader must not run'); },
+      packagedAdapterFiles: async (_bundle, paths) => paths.map((path) => 'managed-adapters/demo/' + path),
+      injectPackagedAdapter: async (request) => { packaged.push(request); return { packaged: true }; },
+    });
+    vm.runInContext(body, context);
+    expect(await context.injectV2AdapterWithCode(7, manifest, 'https://example.com/')).toEqual({ packaged: true });
+    expect(packaged[0].files).toEqual(['managed-adapters/demo/extension/internal/shared.js', 'managed-adapters/demo/extension/commands/list.js']);
+    expect(Object.keys(packaged[0].defs)).toEqual(['list']);
+    expect(packaged[0].modules).toEqual({ list: 'extension/commands/list.js' });
+    expect(packaged[0].expectedUrl).toBe('https://example.com/');
   });
 });

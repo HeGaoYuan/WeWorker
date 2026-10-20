@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { selectBuiltinAdapters, writeBuiltinAdapters, validateBuiltinOutput } from '../builtin-adapter-build.js';
+import { selectBuiltinAdapters, writeBuiltinAdapters, validateBuiltinOutput, writeExtensionPageScripts } from '../builtin-adapter-build.js';
 import { resolveAdapterPaths, resolveExtensionDir } from '../paths.js';
 import { buildAdapterCatalog } from '../adapter-catalog.js';
 
@@ -129,4 +129,24 @@ it('runtime catalog enforcement matches built-in packages to profile metadata', 
   tampered.adapters[0].extra = true;
   fs.writeFileSync(path.join(outputDir, '.profile.json'), JSON.stringify(tampered));
   expect(() => validateBuiltinOutput(outputDir)).toThrow(/profile entry/);
+});
+
+it('copies only the prepared page scripts into the Extension, byte for byte', () => {
+  const dirs = fixture();
+  const source = makePackage(dirs.builtinDir, 'page-fixture');
+  fs.mkdirSync(path.join(source, 'extension/internal'));
+  fs.writeFileSync(path.join(source, 'extension/internal/helpers.js'), '\uFEFFwindow.helpers = "é";\r\n');
+  makePackage(dirs.builtinDir, 'unselected-fixture');
+  const builtinDir = path.join(dirs.root, 'builtin-out');
+  writeBuiltinAdapters({ selection: selectBuiltinAdapters({ ...dirs, names: ['page-fixture'] }), outputDir: builtinDir, profile: 'public' });
+  const extensionDir = path.join(dirs.root, 'extension-dist');
+  fs.mkdirSync(path.join(extensionDir, 'managed-adapters/stale'), { recursive: true });
+
+  expect(writeExtensionPageScripts({ builtinDir, extensionDir })).toBe(2);
+  const out = path.join(extensionDir, 'managed-adapters');
+  expect(fs.readdirSync(out)).toEqual(['page-fixture']);
+  expect(fs.existsSync(path.join(out, 'page-fixture/manifest.json'))).toBe(false);
+  for (const rel of ['extension/commands/list.js', 'extension/internal/helpers.js']) {
+    expect(fs.readFileSync(path.join(out, 'page-fixture', rel)).equals(fs.readFileSync(path.join(builtinDir, 'page-fixture', rel)))).toBe(true);
+  }
 });

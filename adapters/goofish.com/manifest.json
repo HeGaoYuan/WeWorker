@@ -17,6 +17,12 @@
     "goofish.com",
     "www.goofish.com"
   ],
+  "auth": {
+    "login_url": "https://www.goofish.com/login",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "scenarios": [
     {
       "id": "item-search",

@@ -11,8 +11,7 @@ import { assertPathInsideUserDirectory } from './user-directory-guard.js'
 import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import * as store from './works-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
-import { channelManager } from './channels/channel-manager.js'
-import type { WecomChannel } from './channels/wecom-channel.js'
+import { describeUserFile, NO_FILE_DELIVERY, NO_IMAGE_DELIVERY, readUserImage, type UserMediaSink } from './user-media.js'
 import {
   getLatestCacheFile,
   readCacheResult,
@@ -223,6 +222,11 @@ interface McpServerContext {
   abortSignal?: AbortSignal | null
   askUserSSECallback?: AskUserSSECallback | null
   channelAskUserHandler?: ChannelAskUserHandler | null
+  /**
+   * Where send_image_to_user / send_file_to_user deliver: the current turn's
+   * conversation, resolved at call time (a reused session rebinds it per turn).
+   */
+  userMedia?: () => UserMediaSink | null
 }
 
 /** Names only: used by the context inspector, never sent as an extra prompt. */
@@ -274,6 +278,7 @@ export function buildMcpServer(opts?: McpServerContext) {
   const abortSignal = opts?.abortSignal ?? null
   const askUserSSECallback = opts?.askUserSSECallback ?? null
   const channelAskUserHandler = opts?.channelAskUserHandler ?? null
+  const currentUserMedia = (): UserMediaSink | null => opts?.userMedia?.() ?? null
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
   const platform = opts?.platform ?? process.platform
   const nativeCommandTool = platform === 'win32' ? 'PowerShell' : 'Bash'
@@ -512,42 +517,40 @@ export function buildMcpServer(opts?: McpServerContext) {
 
     tool(
       'send_file_to_user',
-      '通过企业微信发送文件给用户。需要企业微信通道已连接且有用户对话过。',
+      '把用户目录中的文件发给当前对话的用户：桌面端对话里显示为可打开的附件，机器人对话里发到该机器人会话。只发给当前对话，不会发到其他对话或机器人。',
       {
         file_path: z.string().describe('文件的绝对路径（必须在用户目录内）'),
       },
       async ({ file_path }) => {
         try {
           const resolved = assertPathInsideUserDirectory(file_path, 'file_path')
-          const wecom = channelManager.getChannel('wecom') as WecomChannel | undefined
-          if (!wecom) {
-            return { content: [{ type: 'text' as const, text: JSON.stringify({ error: '企业微信通道未启用' }) }] }
-          }
-          const result = await wecom.sendFile(resolved)
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
+          const sink = currentUserMedia()
+          if (!sink?.file) return toolText({ success: false, error: NO_FILE_DELIVERY, file_path: resolved })
+          const file = describeUserFile(resolved)
+          await sink.file(file)
+          return toolText({ success: true, delivered_to: 'current_conversation', name: file.name })
         } catch (e) {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e instanceof Error ? e.message : String(e) }) }] }
+          return toolText({ success: false, error: e instanceof Error ? e.message : String(e) })
         }
       }
     ),
 
     tool(
       'send_image_to_user',
-      '通过企业微信发送图片给用户。需要企业微信通道已连接且有用户对话过。',
+      '把用户目录中的图片（如截图、支付二维码）发给当前对话的用户：桌面端对话里直接显示图片，机器人对话里发到该机器人会话。只发给当前对话，不会发到其他对话或机器人。',
       {
         file_path: z.string().describe('图片文件的绝对路径（必须在用户目录内）'),
       },
       async ({ file_path }) => {
         try {
           const resolved = assertPathInsideUserDirectory(file_path, 'file_path')
-          const wecom = channelManager.getChannel('wecom') as WecomChannel | undefined
-          if (!wecom) {
-            return { content: [{ type: 'text' as const, text: JSON.stringify({ error: '企业微信通道未启用' }) }] }
-          }
-          const result = await wecom.sendImage(resolved)
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
+          const sink = currentUserMedia()
+          if (!sink?.image) return toolText({ success: false, error: NO_IMAGE_DELIVERY, file_path: resolved })
+          const image = readUserImage(resolved)
+          await sink.image(image)
+          return toolText({ success: true, delivered_to: 'current_conversation', name: image.name })
         } catch (e) {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e instanceof Error ? e.message : String(e) }) }] }
+          return toolText({ success: false, error: e instanceof Error ? e.message : String(e) })
         }
       }
     ),

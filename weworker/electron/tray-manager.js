@@ -16,7 +16,7 @@ export function resolveTrayIconPath(platform = process.platform) {
 }
 
 /** Menu template, kept separate from Electron so it can be tested. */
-export function buildTrayMenuTemplate({ summary, launchAtLogin, onOpen, onOpenAgents, onToggleLaunchAtLogin, onQuit }) {
+export function buildTrayMenuTemplate({ summary, launchAtLogin, onOpen, onOpenAgents, onToggleLaunchAtLogin, onQuit, browser = null }) {
   const agentLine = !summary || summary.total === 0
     ? '暂无专属 Agent'
     : summary.source === 'backend'
@@ -25,8 +25,10 @@ export function buildTrayMenuTemplate({ summary, launchAtLogin, onOpen, onOpenAg
   const template = [
     { label: '打开 WeWorker', click: onOpen },
     { label: agentLine, click: onOpenAgents },
-    { type: 'separator' },
   ]
+  // WeWorker 浏览器 runs off-screen; the tray is a direct way to bring it up for sign-in.
+  if (browser?.available) template.push({ label: '显示 WeWorker 浏览器', click: browser.onShow })
+  template.push({ type: 'separator' })
   if (launchAtLogin.supported) {
     template.push({ label: '开机自动启动', type: 'checkbox', checked: launchAtLogin.enabled, click: (item) => onToggleLaunchAtLogin(item.checked) })
     template.push({ type: 'separator' })
@@ -35,7 +37,7 @@ export function buildTrayMenuTemplate({ summary, launchAtLogin, onOpen, onOpenAg
   return template
 }
 
-export function createTrayManager({ Tray, Menu, nativeImage, platform = process.platform, getAgentSummary, getLaunchAtLogin, handlers, log = () => {} }) {
+export function createTrayManager({ Tray, Menu, nativeImage, platform = process.platform, getAgentSummary, getLaunchAtLogin, getBrowser = () => null, handlers, log = () => {} }) {
   let tray = null
   let timer = null
   let summary = null
@@ -46,6 +48,7 @@ export function createTrayManager({ Tray, Menu, nativeImage, platform = process.
     tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate({
       summary,
       launchAtLogin: getLaunchAtLogin(),
+      browser: getBrowser(),
       ...handlers,
     })))
   }

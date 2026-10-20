@@ -62,9 +62,10 @@ describe('public built-in Adapter v2 packages', () => {
       routeDomain: 'pc-settlement-lite-pro.pf.jd.com',
       tabDomain: 'pc-settlement-lite-pro.pf.jd.com',
     });
+    // jd.com redirects to www.jd.com, so the first declared host is the real page host.
     expect(product).toMatchObject({
-      routeDomain: 'jd.com',
-      tabDomain: 'jd.com',
+      routeDomain: 'www.jd.com',
+      tabDomain: 'www.jd.com',
       excludeTabDomain: 'pc-settlement-lite-pro.pf.jd.com',
     });
     expect(pkg.commands.find((command) => command.id === 'pay-now').aliases).toEqual(['pay_now']);

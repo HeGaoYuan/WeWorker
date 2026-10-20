@@ -58,6 +58,8 @@ function initializeRuntime(token, context) {
       return body;
     },
     setFileInput: (selector, files) => requestPrivileged('set_file_input', { selector, files }),
+    /** Report "not logged in"; WeWorker then runs the login flow and retries reads. */
+    authRequired(message = 'Login required') { throw error('AUTH_REQUIRED', message, { phase: 'handler' }); },
   };
   window.__webmcpRegister = (adapter) => {
     for (const tool of adapter?.tools || []) if (typeof tool.handler === 'function') handlers.set(tool.handlerName || tool.name, tool.handler);

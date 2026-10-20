@@ -50,7 +50,8 @@ describe('generateCustomSkillSkillContent', () => {
     expect(content).toContain('Execution: type=api, runtime=background')
     expect(content).toContain('Execution: mode=direct')
     expect(content).toContain('can run without opening the target website first')
-    expect(content).toContain('open the website only when a direct call reports')
+    expect(content).toContain('WeWorker handles login')
+    expect(content).toContain('do not check login first')
   })
 
   it('treats manifest API background execution metadata as direct', () => {

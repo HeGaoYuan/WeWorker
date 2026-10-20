@@ -1882,7 +1882,7 @@ window.__webmcpRegister({
     {
       name: "mail.qq.com.check_login_status",
       description:
-        "检测QQ邮箱是否已登录。打开QQ邮箱后应首先调用此工具确认登录状态，未登录时需提醒用户先在浏览器中登录。",
+        "检测QQ邮箱是否已登录并返回登录状态。仅在用户明确询问登录状态时调用；调用其他工具前无需先调用它，未登录时 WeWorker 会自动打开登录页并在登录后继续。",
       parameters: { type: "object", properties: {}, required: [] },
       handler: withToolWarmup(() => {
         const login = detectLoggedIn();

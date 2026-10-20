@@ -4,6 +4,7 @@
  */
 import { getSettings } from './config.js'
 import { streamChat } from './agent.js'
+import { userFileBlock, userImageBlock } from './user-media.js'
 import { resolveStyleId } from './style-settings.js'
 import * as store from './works-store.js'
 import type { ScheduledTask, ContentBlock } from './works-store.js'
@@ -170,6 +171,17 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
       memoryExpectedType: 'task_execution',
       memoryTriggerHint: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',
       previousTaskFailed: previousExecution?.status === 'failed',
+      // The task's own work shows its images and files on the desktop.
+      userMedia: {
+        image: (image) => {
+          if (currentText) { assistantContent.push({ type: 'text', text: currentText }); currentText = '' }
+          assistantContent.push(userImageBlock(image))
+        },
+        file: (file) => {
+          if (currentText) { assistantContent.push({ type: 'text', text: currentText }); currentText = '' }
+          assistantContent.push(userFileBlock(file))
+        },
+      },
     })) {
       if (event.type === 'skill_context' && event.skillContext) {
         assistantContent.push(event.skillContext)

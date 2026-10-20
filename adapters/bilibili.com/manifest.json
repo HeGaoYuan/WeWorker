@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "bilibili.com",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Bilibili / B 站：登录检查、搜索视频、打开视频详情、读取评论、点赞/收藏视频",
   "discovery_terms": [
     "B站",
@@ -11,8 +11,24 @@
     "收藏视频"
   ],
   "match": [
-    "bilibili.com"
+    "www.bilibili.com",
+    "bilibili.com",
+    "search.bilibili.com"
   ],
+  "auth": {
+    "login_url": "https://passport.bilibili.com/login",
+    "login_hosts": [
+      "passport.bilibili.com"
+    ],
+    "check": {
+      "cookies": {
+        "url": "https://bilibili.com/",
+        "all": [
+          "SESSDATA"
+        ]
+      }
+    }
+  },
   "requires_auth": false,
   "commands": [
     {

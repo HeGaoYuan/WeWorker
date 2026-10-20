@@ -1,3 +1,5 @@
+import { adapterHelperPatterns, adapterPagePatterns, hostMatchesPattern } from './host-scope.js';
+
 /** Serialize page replacement and calls so an update cannot replace a running command's globals. */
 export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, query, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
   const queues = new Map();
@@ -86,8 +88,9 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
  * This is the single source of truth for the allowed-host rule; both the
  * strict assertion below and the fail-fast wait guard reuse it.
  *
- * - `allowed`: host is declared by `manifest.match` (always) or by
- *   `runtime_allowed_hosts` (terminal navigation only, i.e. `resume === false`).
+ * - `allowed`: host is declared by `manifest.match` or `manifest.domains`
+ *   (always) or by `runtime_allowed_hosts` (terminal navigation only, i.e.
+ *   `resume === false`).
  * - `forbidden`: a real http(s) page whose host is not declared.
  * - `unknown`: not judgeable yet (about:blank, chrome-error, data:, an
  *   unparseable value): the tab has not reached a page we can judge.
@@ -97,9 +100,10 @@ export function classifyNavigationTarget(manifest, value, resume = true) {
   try { url = new URL(String(value ?? '')); } catch { return 'unknown'; }
   if (!['http:', 'https:'].includes(url.protocol)) return 'unknown';
   if (url.username || url.password) return 'forbidden';
-  const hosts = [...(manifest.match || []), ...(resume ? [] : (manifest.runtime_allowed_hosts || []))];
-  const allowed = hosts.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))));
-  return allowed ? 'allowed' : 'forbidden';
+  // Page scope: `match` plus every subdomain of `domains`; helper hosts allow terminal navigation only.
+  // The host rules themselves live in host-scope.js (`*.x` is x and every subdomain).
+  const patterns = resume ? adapterPagePatterns(manifest) : adapterHelperPatterns(manifest);
+  return patterns.some((pattern) => hostMatchesPattern(url.hostname, pattern)) ? 'allowed' : 'forbidden';
 }
 
 /** Navigation is limited to declared page hosts; helper hosts allow terminal navigation only. */
@@ -107,7 +111,13 @@ export function assertAdapterNavigationUrl(manifest, value, resume = true) {
   let url;
   try { url = new URL(value); } catch { throw new Error('Invalid Adapter navigation URL.'); }
   if (classifyNavigationTarget(manifest, url.href, resume) !== 'allowed') {
-    throw new Error('Adapter navigation host is not allowed.');
+    // Name the host (never the full URL): the caller must see that this is a package
+    // declaration problem that retrying cannot fix.
+    const host = ['http:', 'https:'].includes(url.protocol) ? url.hostname : url.protocol;
+      const message = `Adapter navigation host is not allowed. Host: ${host}（页面跳转到了该 Adapter 未声明的网站，这是 Adapter 配置问题，重试无效；开发者可在 manifest 的 domains 中声明该网站的域名）`;
+    throw Object.assign(new Error(message), {
+      code: 'ADAPTER_HOST_NOT_ALLOWED',
+    });
   }
   return url.href;
 }

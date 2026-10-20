@@ -44,6 +44,12 @@ export function buildAllowedOpenBrowserOrigins(
     for (const match of Array.isArray(manifest?.match) ? manifest.match : []) {
       for (const origin of hostToOrigins(match)) origins.add(origin);
     }
+    // A site domain opens at its apex or www host; deeper pages are reached by Adapter commands.
+    for (const domain of Array.isArray(manifest?.domains) ? manifest.domains : []) {
+      for (const host of [domain, `www.${domain}`]) {
+        for (const origin of hostToOrigins(host)) origins.add(origin);
+      }
+    }
   }
 
   for (const raw of extraCsv.split(",")) {

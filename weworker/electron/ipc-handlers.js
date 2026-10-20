@@ -375,7 +375,11 @@ function parseClipboardUriEntry(entry) {
   return trimmed
 }
 
-export function registerIpcHandlers(bridgeManager, pythonManager, webwrightManager, httpAuthToken, updateManager) {
+/**
+ * `browserControls.openBrowser` handles "open Chrome" when WeWorker manages its
+ * own browser; it returns false to fall back to the user's Chrome.
+ */
+export function registerIpcHandlers(bridgeManager, pythonManager, webwrightManager, httpAuthToken, updateManager, browserControls = {}) {
   ipcMain.handle('get-status', () => ({
     bridge: bridgeManager.getStatus(),
     python: pythonManager.getStatus(),
@@ -595,7 +599,8 @@ export function registerIpcHandlers(bridgeManager, pythonManager, webwrightManag
   })
 
   // Open Chrome browser (without navigating to a specific URL)
-  ipcMain.handle('open-chrome', () => {
+  ipcMain.handle('open-chrome', async () => {
+    if (await browserControls.openBrowser?.()) return
     if (process.platform === 'darwin') {
       spawn('open', ['-a', 'Google Chrome'], { detached: true, stdio: 'ignore' }).unref()
     } else if (process.platform === 'win32') {

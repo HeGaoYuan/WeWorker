@@ -15,15 +15,15 @@ Skill `MASTER.md` purple palette is reference only; shipped CSS uses the tokens 
 
 ## Layout (ui-ux-pro-max landing)
 
-1. Hero + primary CTA  
-2. Product demo (center, pause offscreen / reduced motion)  
-3. Bento feature grid (#F5F5F7 cards, glass optional)  
-4. Quick start steps  
-5. Final CTA  
+1. Hero + primary CTA
+2. Product demo (center, pause offscreen / reduced motion)
+3. Bento feature grid (#F5F5F7 cards, glass optional)
+4. Quick start steps
+5. Final CTA
 
 ## Accessibility (required)
 
-- `focus-visible:ring-2` on all controls  
-- `scroll-padding-top` for sticky nav  
-- Contrast ≥ 4.5:1 for body text  
-- No emoji icons; SVG only  
+- `focus-visible:ring-2` on all controls
+- `scroll-padding-top` for sticky nav
+- Contrast ≥ 4.5:1 for body text
+- No emoji icons; SVG only

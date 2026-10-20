@@ -7,6 +7,9 @@ import { usesWorkflowControl } from './page-workflow-control.js';
  *
  * 架构：
  *   webcli call / service ---> ws://localhost:3711 <--- Chrome Extension (service worker)
+ *
+ * WeWorker 浏览器（默认模式）也由 Bridge 管理：需要浏览器时按需启动独立 profile 的
+ * Chrome（见 dedicated-browser.js），桌面端和 webcli 只通过 `browser_control` 消息控制它。
  */
 
 import { WebSocketServer } from "ws";
@@ -23,7 +26,10 @@ import os from "os";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
 import XLSX from "xlsx";
-import { resolveAdaptersDir, resolveAdapterPaths, resolveUserAdaptersDir } from "./paths.js";
+import { resolveAdaptersDir, resolveAdapterPaths, resolveExtensionDir, resolveUserAdaptersDir } from "./paths.js";
+import { BrowserHost } from "./dedicated-browser.js";
+import { SiteLoginCoordinator, DEFAULT_LOGIN_WAIT_MS, MAX_LOGIN_WAIT_MS } from "./site-login.js";
+import { CredentialVault } from "./credential-vault.js";
 import { watchAdapterState } from './adapter-state-watch.js';
 import { describeAdapterCatalog, readAdapterBundle, resolveAdapterCall } from './adapter-host.js';
 import { reportMetric, buildUploadConfig } from "./metrics.js";
@@ -65,6 +71,9 @@ const ADAPTER_ROOT_WRITABLE_FILES = new Set([
 const GENERATED_WRITABLE_FILE_RE = /^webcli-generated\/[a-zA-Z0-9._/-]+\.(?:js|json|md|txt)$/;
 const API_REPLAY_BODY_LIMIT = 2 * 1024 * 1024;
 const API_REPLAY_TIMEOUT_MS = 30000;
+const SCREENSHOT_TARGET_TIMEOUT_MS = 10000;
+// Read by the model: the desktop user opens the browser from the app, not from a terminal.
+const SCREENSHOT_FAILURE_HINT = "可以请用户直接在浏览器里查看这个页面（WeWorker 桌面端：点击左侧栏底部的浏览器图标），不要让桌面端用户运行命令";
 const API_REPLAY_CURL_BODY_LIMIT = 8 * 1024 * 1024;
 const API_REPLAY_ALLOWED_HEADER_RE = /^[!#$%&'*+\-.^_`|~0-9a-zA-Z]+$/;
 const API_REPLAY_BLOCKED_HEADERS = new Set([
@@ -627,11 +636,19 @@ export class WebSocketBridge extends EventEmitter {
             if (msg.type === 'extension_hello') {
               try {
                 const alreadyRegistered = Boolean(ws._browserConnection);
+                const previousInstance = ws._browserConnection?.instance;
                 const connection = this._profiles.register(ws, msg);
+                connection.instance = this._instanceForHello(msg);
+                this._extensionConnectionMap().set(ws, connection);
                 ws.send(JSON.stringify({ type: 'extension_hello_ack', contextId: connection.contextId, connectionId: connection.connectionId,
                   ts: Date.now(), capabilities: ['adapter_catalog_v1', 'browser_profiles_v1'] }));
                 sendInitialState();
-                if (!alreadyRegistered) this._broadcast({ type: 'extension_connected', contextId: connection.contextId, version: connection.version, capabilities: connection.capabilities });
+                if (!alreadyRegistered || previousInstance !== connection.instance) {
+                  if (!alreadyRegistered) process.stderr.write(`[${ts()}] [Bridge] Identified Chrome extension connection #${connectionId}${connection.version ? ` (v${connection.version})` : ''}${connection.instance === 'dedicated' ? ' in WeWorker browser' : ''}\n`);
+                  this._broadcast({ type: 'extension_connected', contextId: connection.contextId, connectionId: connection.connectionId,
+                    version: connection.version, capabilities: connection.capabilities, instance: connection.instance });
+                  this._notifyBrowserStatus();
+                }
               } catch (error) {
                 ws.send(JSON.stringify({ type: 'extension_hello_error', error: { code: error.code || 'PROFILE_STORE_INVALID', message: error.message } }));
                 ws.close(1008, error.code || 'PROFILE_STORE_INVALID');
@@ -691,6 +708,11 @@ export class WebSocketBridge extends EventEmitter {
                 this._routeWorkerRequest(msg, ws, () => this._handleCancelGenerationRun(msg, ws));
               } else if (msg.type === 'publish_generation_run') {
                 this._routeWorkerRequest(msg, ws, () => this._handlePublishGenerationRun(msg, ws));
+              } else if (msg.type === 'browser_control') {
+                if (ws._browserConnection) throw profileError('LOCAL_CLIENT_REQUIRED', 'Extension connections cannot submit browser control commands.');
+                this._handleBrowserControl(msg, ws);
+              } else if (msg.type === 'auth_control') {
+                this._routeAuthControl(msg, ws);
               } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze') {
                 // Local-only credential-bearing request; never forward this envelope.
                 this._routeClientRequest(msg, ws);
@@ -711,26 +733,41 @@ export class WebSocketBridge extends EventEmitter {
 
         ws.on("close", () => {
           this._clients.delete(ws);
+          this._browserControlClients?.delete(ws);
+          this._browserHost?.detach(ws);
+          this._extensionConnectionMap().delete(ws);
           const disconnected = this._profiles.disconnect(ws);
           if (disconnected) {
             for (const [id, pending] of this._pendingRequests) {
               if (pending.ws !== ws) continue;
-              clearTimeout(pending.timer); this._pendingRequests.delete(id);
+              clearTimeout(pending.timer);
+              this._pendingRequests.delete(id);
               pending.reject(profileError('PROFILE_DISCONNECTED', 'The selected browser connection ended. Inspect state before explicitly retrying; actions are never replayed.'));
             }
-            for (const [id, context] of this._captureModelContexts) if (context.connection === disconnected) this._deleteCaptureModelContext(id);
-            this._broadcast({ type: 'extension_disconnected', contextId: disconnected.contextId });
+            for (const [id, context] of this._captureModelContexts) {
+              if (context.connection === disconnected) this._deleteCaptureModelContext(id);
+            }
+            this._broadcast({ type: 'extension_disconnected', contextId: disconnected.contextId, instance: disconnected.instance || 'system' });
+            this._notifyBrowserStatus();
+            process.stderr.write(`[${ts()}] [Bridge] Chrome extension disconnected #${connectionId} (${disconnected.contextId})\n`);
+          } else {
+            process.stderr.write(`[${ts()}] [Bridge] Connection #${connectionId} closed\n`);
           }
-
         });
 
         ws.on("error", (err) => {
           process.stderr.write(`[${ts()}] [Bridge] Connection #${connectionId} error: ${err.message}\n`);
         });
 
-        for (const connection of this._profiles.connections.values()) {
-          ws.send(JSON.stringify({ type: 'extension_connected', contextId: connection.contextId,
-            version: connection.version, capabilities: connection.capabilities }));
+        for (const connection of this._profiles?.connections?.values?.() || []) {
+          ws.send(JSON.stringify({
+            type: 'extension_connected',
+            contextId: connection.contextId,
+            connectionId: connection.connectionId,
+            version: connection.version,
+            capabilities: connection.capabilities,
+            instance: connection.instance || 'system',
+          }));
         }
       });
 
@@ -786,19 +823,26 @@ export class WebSocketBridge extends EventEmitter {
     if (!pending || pending.ws !== ws) return;
     const accepted = new Set(['call_tool_result', 'call_tool_error', 'list_tools_result', 'get_active_tab_result', 'get_trace_logs_result', 'validate_generation_preview_result']);
     if (!accepted.has(msg.type)) return;
-    clearTimeout(pending.timer); this._pendingRequests.delete(msg.id);
-    if (msg.type === 'call_tool_error' || msg.ok === false) pending.reject(Object.assign(new Error(msg.error || 'Extension request failed'), { code: msg.code }));
-    else if (pending.raw) pending.resolve(msg);
+    clearTimeout(pending.timer);
+    this._pendingRequests.delete(msg.id);
+    if (msg.type === 'call_tool_error' || msg.ok === false) {
+      const error = new Error(msg.error || 'Extension request failed');
+      error.fromExtension = true;
+      if (typeof msg.code === 'string' && msg.code) error.code = msg.code;
+      if (msg.auth && typeof msg.auth === 'object') error.auth = msg.auth;
+      pending.reject(error);
+    } else if (pending.raw) pending.resolve(msg);
     else if (msg.type === 'get_active_tab_result') pending.resolve(msg.tabId);
     else if (msg.type === 'list_tools_result') pending.resolve(msg.tools);
     else pending.resolve(msg.result ?? msg);
   }
 
-  get _extensionWs() { return this._profiles ? this._currentConnection()?.ws : this._legacyWs; }
+  get _extensionWs() { return this._profiles ? this._currentConnection()?.ws || null : this._legacyWs || null; }
   set _extensionWs(value) { this._legacyWs = value; }
   get _extensionCapabilities() { return this._profiles ? this._currentConnection()?.capabilities || [] : this._legacyCapabilities || []; }
   set _extensionCapabilities(value) { this._legacyCapabilities = value; }
-  get _extensionVersion() { return this._currentConnection()?.version || null; }
+  get _extensionVersion() { return this._profiles ? this._currentConnection()?.version || null : this._legacyVersion || null; }
+  set _extensionVersion(value) { this._legacyVersion = value; }
   _currentConnection() {
     const route = this._route?.getStore();
     if (route) return route.connection;
@@ -870,12 +914,30 @@ export class WebSocketBridge extends EventEmitter {
   _handleBrowserCommand(msg, ws) { return this._handleProfileService('browser', msg, ws); }
   _handleExplorationCommand(msg, ws) { return this._handleProfileService('exploration', msg, ws); }
 
+  async _routeAuthControl(msg, ws) {
+    try {
+      if (ws._browserConnection) throw profileError('LOCAL_CLIENT_REQUIRED', 'Extension connections cannot submit login control commands.');
+      // Compatibility injection used by focused tests; production always uses profile coordinators.
+      if (this._siteLoginCoordinator) return await this._handleAuthControl(msg, ws);
+      // Status without any browser remains useful; every stateful action is fixed to one profile.
+      if (msg.action === 'status' && !msg.browserProfile && !this._profiles.state.defaultContextId && this._profiles.connections.size === 0) {
+        return await this._handleAuthControl(msg, ws);
+      }
+      if (!msg.browserProfile && !this._profiles.state.defaultContextId) await this._ensureBrowser();
+      return await this._runInProfile(msg, ws, () => this._handleAuthControl(msg, ws));
+    } catch (error) {
+      this._reply(ws, { type: 'auth_control_result', id: msg.id, ok: false, error: error.message, code: error.code });
+    }
+  }
+
   async _routeClientRequest(msg, ws) {
     try {
       if (ws._browserConnection) throw profileError('LOCAL_CLIENT_REQUIRED', 'Extension connections cannot submit client commands.');
       // Toolkit and host HTTP without cookies never select a browser.
       const command = msg.type === 'call_tool' ? resolveAdapterCall(msg.toolName)?.command : null;
       if (command?.runtime === 'wewright' || (command?.runtime === 'http' && !command.http.cookies)) return await this._handleClientRequest(msg, ws);
+      // With no explicit/default selection, start the Bridge-owned browser before profile selection.
+      if (!msg.browserProfile && !this._profiles.state.defaultContextId) await this._ensureBrowser();
       return await this._runInProfile(msg, ws, () => this._handleClientRequest(msg, ws));
     } catch (error) { this._reply(ws, { type: 'call_tool_error', id: msg.id, error: error.message, code: error.code }); }
   }
@@ -955,12 +1017,16 @@ export class WebSocketBridge extends EventEmitter {
       process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 收到调用: ${toolName}\n`);
 
       try {
-        const result = await this.callTool(toolName, args, traceID, msg.adapterSnapshot);
+        const result = await this.callTool(toolName, args, traceID, msg.adapterSnapshot, { loginWaitMs: msg.loginWaitMs });
         this._reply(ws, { type: 'call_tool_result', id, result, traceID });
         process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用成功: ${toolName}\n`);
       } catch (err) {
-        process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用失败: ${toolName} — ${err.message}\n`);
-        this._reply(ws, { type: 'call_tool_error', id, error: err.message, code: err.code, traceID });
+        process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用失败: ${toolName} — ${err.message}${err.code ? ` (${err.code})` : ''}\n`);
+        this._reply(ws, {
+          type: 'call_tool_error', id, error: err.message, traceID,
+          ...(typeof err.code === 'string' && err.code ? { code: err.code } : {}),
+          ...(err.auth && typeof err.auth === 'object' ? { auth: err.auth } : {}),
+        });
       } finally {
         this._finishCallTiming(callTiming, tracePrefix, toolName);
       }
@@ -1008,8 +1074,12 @@ export class WebSocketBridge extends EventEmitter {
     } else if (msg.type === 'capture_screenshot') {
       // 直接转发给Chrome扩展
       process.stderr.write('[Bridge] Forwarding capture_screenshot to Chrome extension\n');
-      const response = await this._request(msg, 120000, msg.traceID, true);
-      this._reply(ws, { ...response, id: msg.id });
+      try {
+        const result = await this.captureScreenshot(msg.fullPage ?? false, msg.traceID || null);
+        this._reply(ws, { type: 'call_tool_result', id: msg.id, result, traceID });
+      } catch (err) {
+        this._reply(ws, { type: 'call_tool_error', id: msg.id, error: err.message, code: err.code, traceID });
+      }
     } else if (msg.type === 'reload_extension') {
       process.stderr.write('[Bridge] Forwarding reload_extension to Chrome extension\n');
       this._send({ type: 'reload_extension' });
@@ -1025,6 +1095,15 @@ export class WebSocketBridge extends EventEmitter {
       process.stderr.write(`[${ts()}] [Bridge] Forwarding ${msg.type} to Chrome extension\n`);
       const response = await this._request(msg, 120000, msg.traceID, true);
       this._reply(ws, { ...response, id: msg.id });
+    }
+  }
+
+  /** Forwarded requests keep their old "not connected" handling when the browser cannot start. */
+  async _ensureBrowserForForward(msg) {
+    try {
+      await this._ensureBrowser();
+    } catch (err) {
+      process.stderr.write(`[${ts()}] [Bridge] WeWorker browser unavailable for ${msg.type}: ${err.message}\n`);
     }
   }
 
@@ -1536,7 +1615,13 @@ export class WebSocketBridge extends EventEmitter {
     return randomUUID();
   }
 
-  _request(msg, timeout = 120000, traceID = null, raw = false) {
+  /** Start the Bridge-owned browser only when no explicit/default profile has fixed the request elsewhere. */
+  async _request(msg, timeout = 120000, traceID = null, raw = false) {
+    if (!this._route?.getStore() && !this._profiles?.state?.defaultContextId) await this._ensureBrowser();
+    return this._requestNow(msg, timeout, traceID, raw);
+  }
+
+  _requestNow(msg, timeout = 120000, traceID = null, raw = false) {
     const id = this._nextId();
     let connection;
     try {
@@ -1566,7 +1651,7 @@ export class WebSocketBridge extends EventEmitter {
     return this._request({ type: "get_active_tab" });
   }
 
-  async callTool(toolName, args, traceID = null, adapterSnapshot = null) {
+  async callTool(toolName, args, traceID = null, adapterSnapshot = null, options = {}) {
     if (isLegacyWecliHandlerName(toolName)) {
       throw new Error(`"${toolName}" is an internal handler name. Use the public WebCLI command name without "wecli_".`);
     }
@@ -1574,13 +1659,172 @@ export class WebSocketBridge extends EventEmitter {
     // 埋点只记元数据，绝不阻塞调用（reportMetric 内部 fire-and-forget 且静默失败）。
     const t0 = Date.now();
     try {
-      const result = await this._callToolInner(toolName, args, traceID, adapterSnapshot);
+      const result = await this._callToolWithLogin(toolName, args, traceID, adapterSnapshot, options);
       const transformed = this._extractQrcodeToFile(result);
       reportMetric(this._metricsCfg, toolName, true, Date.now() - t0, traceID, null);
       return transformed;
     } catch (err) {
       reportMetric(this._metricsCfg, toolName, false, Date.now() - t0, traceID, err);
       throw err;
+    }
+  }
+
+  /**
+   * 网站登录由宿主处理：命令报告 AUTH_REQUIRED（或失败后声明的登录检查确认未登录）时，
+   * Bridge 打开登录页、等待用户完成、再自动重试一次读命令（见 site-login.js）。
+   * 模型不需要预先检测登录。
+   */
+  async _callToolWithLogin(toolName, args, traceID, adapterSnapshot, options = {}) {
+    const pinnedRoute = this._route?.getStore() || null;
+    const invoke = () => this._callToolInner(toolName, args, traceID, adapterSnapshot);
+    // Login may span an extension reconnect. Re-resolve the socket by the same
+    // contextId for the safe post-login retry; never select another profile.
+    const run = () => {
+      if (!pinnedRoute?.contextId || pinnedRoute.readOnly) return invoke();
+      const liveRoute = { ...pinnedRoute, connection: this._profiles.connections.get(pinnedRoute.contextId) || null };
+      return this._route.run(liveRoute, invoke);
+    };
+    try {
+      return await run();
+    } catch (err) {
+      let selected = null;
+      try { selected = resolveAdapterCall(toolName); } catch { selected = null; }
+      if (!selected || selected.command.runtime !== 'extension') throw err;
+      const loginWaitMs = Number.isFinite(Number(options.loginWaitMs))
+        ? Math.max(0, Math.min(MAX_LOGIN_WAIT_MS, Number(options.loginWaitMs)))
+        : DEFAULT_LOGIN_WAIT_MS;
+      return this._siteLogin().handleFailure(err, {
+        site: selected.adapter.name, command: selected.command, retry: run, loginWaitMs,
+      });
+    }
+  }
+
+  _siteManifest(site) {
+    try {
+      return describeAdapterCatalog().adapters.find((entry) => entry.name === site) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _siteLogin() {
+    // Test/legacy injection point. Production coordinators below are isolated per browser profile.
+    if (this._siteLoginCoordinator) return this._siteLoginCoordinator;
+    if (!this._siteLoginCoordinators) this._siteLoginCoordinators = new Map();
+    const route = this._route?.getStore() || null;
+    const key = route?.contextId || 'default';
+    let entry = this._siteLoginCoordinators.get(key);
+    if (!entry) {
+      const host = this._browser();
+      entry = { client: route?.client || null, coordinator: null };
+      const currentRoute = () => {
+        if (key === 'default') return null;
+        return { contextId: key, connection: this._profiles.connections.get(key) || null, client: entry.client };
+      };
+      const inRoute = (operation) => {
+        const live = currentRoute();
+        return live ? this._route.run(live, operation) : operation();
+      };
+      const isDedicated = () => currentRoute()?.connection?.instance === 'dedicated'
+        || (key === 'default' && host.mode === 'dedicated');
+      entry.coordinator = new SiteLoginCoordinator({
+        log: (line) => process.stderr.write(`[${ts()}] [Bridge] ${line}\n`),
+        broadcast: (event) => entry.client
+          ? this._reply(entry.client, event)
+          : this._broadcastToClients({ ...event, ...(key !== 'default' ? { contextId: key } : {}) }),
+        extension: (type, payload, timeoutMs) => inRoute(() => this._request({ type, ...payload }, timeoutMs)),
+        manifestFor: (site) => this._siteManifest(site),
+        runCheckCommand: async (site, commandId) => inRoute(async () => {
+          try {
+            const result = await this._callToolInner(`${site}.${commandId}`, {}, null, null);
+            return !(result && typeof result === 'object' && result.logged_in === false);
+          } catch (error) {
+            return error?.code === 'AUTH_REQUIRED' ? false : null;
+          }
+        }),
+        browser: {
+          mode: () => isDedicated() ? 'dedicated' : 'system',
+          showPage: (url) => isDedicated() ? host.showPage(url) : Promise.resolve(false),
+          hideWindows: () => isDedicated() ? host.hideWindows() : Promise.resolve(),
+          screenshot: (url) => isDedicated() ? host.screenshot(url) : Promise.resolve(null),
+          attachPage: (url) => isDedicated() ? host.attachPage(url) : Promise.resolve(null),
+        },
+        vault: new CredentialVault({ browserHome: host.browserHome }),
+        screenshotDir: path.join(os.homedir(), '.webcli', 'login', key.replace(/[^a-zA-Z0-9._-]/g, '_')),
+      });
+      this._siteLoginCoordinators.set(key, entry);
+    }
+    // A reconnect keeps contextId but replaces the socket/client. Future flow work
+    // resolves the live connection above instead of retaining the old route.
+    if (route?.client) entry.client = route.client;
+    return entry.coordinator;
+  }
+
+  _hasWaitingLoginFlow() {
+    if (this._siteLoginCoordinator?.hasWaitingFlow?.()) return true;
+    return [...(this._siteLoginCoordinators?.values?.() || [])]
+      .some((entry) => entry.coordinator.hasWaitingFlow());
+  }
+
+  /** Events for desktop and CLI clients; extensions never receive them. */
+  _broadcastToClients(event) {
+    if (!this._wss) return;
+    const extensions = this._extensionConnectionMap();
+    const payload = JSON.stringify(event);
+    for (const client of this._wss.clients) {
+      if (client.readyState !== 1 || extensions.has(client)) continue;
+      try { client.send(payload); } catch {}
+    }
+  }
+
+  /** Fixed login actions; credentials are only ever written, never returned. */
+  async _handleAuthControl(msg, ws) {
+    const reply = (payload) => {
+      try { ws.send(JSON.stringify({ type: 'auth_control_result', id: msg.id, ...payload })); } catch {}
+    };
+    try {
+      const action = String(msg.action || '');
+      const site = typeof msg.site === 'string' ? msg.site : '';
+      const login = this._siteLogin();
+      const requireSite = () => {
+        const manifest = this._siteManifest(site);
+        if (!manifest?.auth) throw new Error(`Adapter "${site}" does not declare a login.`);
+        return manifest;
+      };
+      let result;
+      if (action === 'status') {
+        let sites = [];
+        try { sites = describeAdapterCatalog().adapters; } catch { sites = []; }
+        result = await login.status({ sites, refresh: msg.refresh === true });
+      } else if (action === 'check') {
+        requireSite();
+        result = await login.check(site);
+      } else if (action === 'login') {
+        requireSite();
+        const waitMs = Number.isFinite(Number(msg.waitMs)) ? Number(msg.waitMs) : DEFAULT_LOGIN_WAIT_MS;
+        result = await login.login(site, { waitMs });
+      } else if (action === 'cancel') {
+        result = { cancelled: login.cancel(site) };
+      } else if (action === 'set_autologin') {
+        requireSite();
+        const vault = login.vault;
+        if (msg.enabled === true && !vault.hasCredential(site)) throw new Error('请先保存该网站的账号密码。');
+        result = vault.updateSite(site, {
+          enabled: msg.enabled === true,
+          ...(msg.dismissed === true ? { dismissed: true } : {}),
+        });
+      } else if (action === 'save_credential') {
+        requireSite();
+        result = await login.vault.save(site, { username: msg.username, password: msg.password });
+      } else if (action === 'forget_credential') {
+        requireSite();
+        result = { removed: login.vault.remove(site) };
+      } else {
+        throw new Error(`Unknown login action: ${action}`);
+      }
+      reply({ ok: true, result });
+    } catch (err) {
+      reply({ ok: false, error: err.message });
     }
   }
 
@@ -1632,7 +1876,7 @@ export class WebSocketBridge extends EventEmitter {
       return this.openBrowser(args?.url);
     }
     if (toolName === "capture_screenshot") {
-      return this.captureScreenshot(args?.fullPage ?? false);
+      return this.captureScreenshot(args?.fullPage ?? false, traceID);
     }
     // 开发调试工具 — 暂不对用户开放，取消拦截后这些工具会走正常的 adapter 路径（报错"找不到域名"）
     // if (toolName === "inspect_page_state") {
@@ -1677,6 +1921,9 @@ export class WebSocketBridge extends EventEmitter {
       if (completed.exitCode !== 0) throw new Error('Toolkit Adapter execution failed.');
       return completed.result;
     }
+    // Capabilities are only known once the extension has connected: with none known yet, start
+    // WeWorker 浏览器 first (a no-op in system mode), as every extension request does.
+    if (selected && !this._extensionCapabilities?.length && !this._route?.getStore()) await this._ensureBrowser();
     if (selected && !this._extensionCapabilities?.includes('adapter_catalog_v1')) {
       throw new Error('Reload the browser extension before calling managed Adapter packages.');
     }
@@ -1730,25 +1977,139 @@ export class WebSocketBridge extends EventEmitter {
     return this._extensionWs && this._extensionWs.readyState === 1;
   }
 
-  /**
-   * 截取当前浏览器标签页的屏幕截图
-   * @param {boolean} fullPage - 是否截取整个页面（包括滚动区域）
-   * @returns {Promise<{data: string, width: number, height: number}>} base64编码的PNG图片数据
-   */
-  async captureScreenshot(fullPage = false) {
-    if (!this.isExtensionConnected()) {
-      throw new Error("Chrome扩展未连接，无法截图");
-    }
+  // ─── 多个浏览器中的扩展 ───────────────────────────────────────────────────
+  // WeWorker 浏览器（桌面端管理的独立 Chrome）里的扩展在 hello 中带上实例 token；
+  // 用户自己的 Chrome 里也可能装了扩展。两者同时在线时优先使用 WeWorker 浏览器，
+  // 同类之间保持“最近连接者生效”的原有行为。
 
+  _extensionConnectionMap() {
+    if (!this._extensionConnections) this._extensionConnections = new Map();
+    return this._extensionConnections;
+  }
+
+  _dedicatedBrowserToken() {
     try {
-      process.stderr.write(`[${ts()}] [Bridge] Capturing screenshot (fullPage: ${fullPage})\n`);
-      const result = await this._request({ type: "capture_screenshot", fullPage }, 30000);
-      process.stderr.write(`[${ts()}] [Bridge] Screenshot captured successfully\n`);
+      const host = this._browser();
+      return host.mode === 'dedicated' ? host.token : '';
+    } catch {
+      return '';
+    }
+  }
+
+  _instanceForHello(msg) {
+    const token = this._dedicatedBrowserToken();
+    return token && typeof msg.instanceToken === 'string' && msg.instanceToken === token ? 'dedicated' : 'system';
+  }
+
+  _activeExtensionInstance() {
+    return this._currentConnection()?.instance || 'system';
+  }
+
+  _hasDedicatedConnection() {
+    return [...(this._profiles?.connections?.values?.() || [])]
+      .some((connection) => connection.instance === 'dedicated' && connection.ws?.readyState === 1);
+  }
+
+  // ─── WeWorker 浏览器（由 Bridge 管理） ──────────────────────────────────────
+  // 桌面端和 webcli 都只发送 browser_control；浏览器进程归当前 Bridge 所有。
+
+  _browser() {
+    if (!this._browserHost) {
+      this._browserHost = new BrowserHost({
+        log: (line) => process.stderr.write(`[${ts()}] [Bridge] ${line}\n`),
+        resolveExtensionDir: () => resolveExtensionDir(),
+        isDedicatedConnected: () => this._hasDedicatedConnection(),
+      });
+    }
+    if (!this._browserStatusWired) {
+      this._browserStatusWired = true;
+      this._browserHost.onStatus((browser) => this._sendBrowserStatus(browser));
+    }
+    return this._browserHost;
+  }
+
+  _sendBrowserStatus(browser) {
+    const clients = this._browserControlClients;
+    if (!clients?.size) return;
+    const payload = JSON.stringify({ type: 'browser_status', browser });
+    for (const client of clients) {
+      if (client.readyState !== 1) continue;
+      try { client.send(payload); } catch {}
+    }
+  }
+
+  _notifyBrowserStatus() {
+    if (this._browserControlClients?.size) this._browserHost?.notify();
+  }
+
+  /** In WeWorker 浏览器 mode, start the browser on demand and wait for its extension. */
+  async _ensureBrowser() {
+    return this._browser().ensureReady();
+  }
+
+  async _handleBrowserControl(msg, ws) {
+    if (!this._browserControlClients) this._browserControlClients = new Set();
+    this._browserControlClients.add(ws);
+    const reply = (payload) => {
+      try { ws.send(JSON.stringify({ type: 'browser_control_result', id: msg.id, ...payload })); } catch {}
+    };
+    try {
+      // A per-turn ("soft") hide leaves a login page that waits for the user on screen.
+      if (msg.action === 'hide' && msg.soft === true && this._hasWaitingLoginFlow()) {
+        reply({ ok: true, browser: this._browser().status(), skipped: 'login_waiting' });
+        return;
+      }
+      const browser = await this._browser().control(String(msg.action || ''), { mode: msg.mode }, ws);
+      reply({ ok: true, browser });
+    } catch (err) {
+      reply({ ok: false, error: err.message, browser: this._browser().status() });
+    }
+  }
+
+  /** Stop the browser this Bridge started (service shutdown). */
+  async shutdownBrowser() {
+    await this._browserHost?.shutdown();
+  }
+
+  /**
+   * 截取网站页面的屏幕截图：截最近一次 Adapter 调用所在的标签页（先在窗口内选中），
+   * 而不是窗口当前选中的标签页（Adapter 在后台标签页执行，选中的常是无关页面）。
+   * WeWorker 浏览器中由 Bridge 通过自己的 CDP 管道截图（页面不出现「正在调试」提示条，
+   * 不与扩展的 chrome.debugger 冲突）；其他情况或该方式失败时由扩展截图。
+   * @param {boolean} fullPage - 是否截取整个页面（包括滚动区域）
+   * @returns {Promise<{data: string, width: number, height: number}>} base64 编码的 JPEG
+   */
+  async captureScreenshot(fullPage = false, traceID = null) {
+    const log = (line) => process.stderr.write(`[${ts()}] ${traceID ? `[${traceID}] ` : ''}[Bridge] ${line}\n`);
+    log(`Capturing screenshot (fullPage: ${fullPage})`);
+    try {
+      if (!this._route?.getStore()) await this._ensureBrowser();
+      if (!this.isExtensionConnected()) throw new Error("Chrome扩展未连接，无法截图");
+      const host = this._browser();
+      let tabId = null;
+      if (host.pageControl && this._activeExtensionInstance() === 'dedicated') {
+        const target = await this._requestNow({ type: "screenshot_target" }, SCREENSHOT_TARGET_TIMEOUT_MS, traceID);
+        tabId = Number.isInteger(target?.tabId) ? target.tabId : null;
+        log(`Screenshot target: tab=${tabId} (${target?.reason || 'unknown'}) ${target?.url || ''}`);
+        if (target?.targetId) {
+          try {
+            const shot = await host.captureTarget(target.targetId, { fullPage: !!fullPage, log });
+            log(`Screenshot captured via the WeWorker browser (${shot.width}x${shot.height})`);
+            return { ...shot, fullPage: !!fullPage, tabId, url: target.url || '' };
+          } catch (err) {
+            log(`Browser screenshot failed, using the extension: ${err.message}`);
+          }
+        }
+      }
+      // The extension's own step timeouts end well inside this one.
+      const result = await this._requestNow({ type: "capture_screenshot", fullPage, ...(tabId != null ? { tabId } : {}) }, 30000, traceID);
+      log("Screenshot captured successfully");
       return result;
     } catch (err) {
-      throw new Error(`截图失败: ${err.message}`);
+      log(`Screenshot failed: ${err.message}`);
+      throw new Error(`截图失败: ${err.message}。${SCREENSHOT_FAILURE_HINT}`);
+    }
   }
-}
 
 /**
    * 打开浏览器并访问指定URL
@@ -1765,7 +2126,12 @@ export class WebSocketBridge extends EventEmitter {
     // A selected browser operation must never fall back to another browser or replay.
     if (this._route?.getStore()) {
       const result = await this._request({ type: 'open_tab', url }, 5000);
-      return { success: true, method: 'extension', tabId: result.tabId };
+      return { success: true, method: 'extension', message: `已在选定浏览器中打开: ${url}`, tabId: result.tabId };
+    }
+    // Without an explicit/default profile, dedicated mode always uses the Bridge-owned browser.
+    if (this._browser().mode === 'dedicated') {
+      const result = await this._request({ type: "open_tab", url }, 5000);
+      return { success: true, method: "extension", message: `已在 WeWorker 浏览器中打开: ${url}`, tabId: result.tabId };
     }
     // 方案1：如果Chrome扩展已连接，使用扩展API打开新tab
     if (this.isExtensionConnected()) {

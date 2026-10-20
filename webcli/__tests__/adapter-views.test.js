@@ -64,8 +64,8 @@ describe('effective Adapter CLI views and generated Skills', () => {
     expect(output).toContain('Input JSON Schema:');
     expect(output).toContain('webcli call demo.list --key=value');
     expect(output).not.toContain("--args '<JSON object>'");
-    expect(output).toContain('Check each command’s execution and guidance before opening a website');
-    expect(output).toContain('Background API commands can reuse login state');
+    expect(output).toContain('Check each command’s execution and guidance');
+    expect(output).toContain('background API commands may run directly');
     expect(output).toContain('"required": [');
     expect(output).not.toContain(root);
     expect(success(['demo', 'list', 'help'])).toContain('--count=<integer>');
@@ -123,6 +123,7 @@ describe('effective Adapter CLI views and generated Skills', () => {
     install();
     const bridge = {
       isExtensionConnected: () => true,
+      _browser: () => ({ mode: 'system' }),
       _request: async () => ({ tabId: 7 }),
     };
     const result = await WebSocketBridge.prototype.openBrowser.call(bridge, 'https://example.com/');

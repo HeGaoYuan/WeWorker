@@ -154,7 +154,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       ## 使用 open_browser 的规则
 
-      只有页面/DOM 工具需要先打开网站。后台 API 不要预先打开网站或检测登录；仅在实际缺登录或上下文时按 Skill 完成准备。HTTP 与 Toolkit 按各自运行时执行。
+      只有页面/DOM 工具需要先打开网站。后台 API 不要预先打开网站或检测登录（登录由 WeWorker 自动处理）；如果这类工具返回需要页面上下文，再打开 Skill 文档中的 Homepage URL。HTTP 与 Toolkit 按各自运行时执行。
 
       用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=...\` 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。
       原因：网站 adapter 需要时间注入并注册工具，过早调用会导致工具不存在而报错。
@@ -252,15 +252,12 @@ describe('System Prompt - complete output contract before externalization', () =
       如果同一个工具连续失败且错误信息相同或相似，立即停止重试，向用户说明情况，并调用 \`TodoWrite\` 更新当前计划：可将当前 todo 保持为 \`in_progress\` 并写入 \`blocked_reason\` 或 \`failure_reason\`，也可调整/删除未完成计划。
       以下错误不会因等待或重试而恢复，第一次出现就停止，不要用 \`Start-Sleep\` 等待后重试：未登录或被重定向到登录页、扩展需要重载或未连接、没有匹配的页面或标签页——直接告诉用户需要完成的操作。命令、参数或引号格式被拒绝时，先修正输入再调用，不要原样重试。
 
-      ## 登录检测规则
+      ## 网站登录
 
-      以下网站需要用户登录后才能操作：
-
-      - 示例邮箱（mail.example.com） -> 检测：\`webcli call mail.example.com.check_login_status\`
-      - 示例 API（api.example.com）：API direct 工具 \`api.example.com.list\`、\`api.example.com.detail\`，必须先直接调用
-
-      仅对于页面/DOM 命令，打开页面并等待就绪后，调用该网站实际存在的登录检查工具；后台 API 直接调用，不能使用页面就绪检查代替服务端鉴权。
-      如果返回 \`logged_in: false\`，应立即告知用户需要先在浏览器中登录该网站。
+      网站工具会自动处理登录：遇到未登录时，WeWorker 会在浏览器中打开该网站的登录页，等待用户完成（扫码、短信验证码或账号密码均可），然后自动重试原命令。
+      - 不要预先打开网站检测登录，也不要为了检测登录调用 check_login_status、check-login-status、whoami 或 login 命令；直接调用要用的工具。
+      - 工具返回 \`code: AUTH_REQUIRED\` 且 \`auth.status\` 为 \`waiting_user\` 时：告诉用户需要在浏览器中登录该网站（登录页已打开），用户完成后再执行一次原命令。\`auth.screenshot\` 是登录页截图路径，可直接展示给用户扫码。
+      - \`AUTH_CANCELLED\` 表示用户取消了登录；\`AUTH_RETRY_REQUIRED\` 表示写操作因登录中断、登录已完成，需向用户确认后再执行。
 
 
       [[MEMORY_PROTOCOL_FULL]]

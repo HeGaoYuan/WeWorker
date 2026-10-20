@@ -56,7 +56,7 @@ function makeEvent() {
   };
 }
 
-function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {}, managedCatalog = null } = {}) {
+function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {}, managedCatalog = null, cookies = [] } = {}) {
   const runtimeOnMessage = makeEvent();
   const sentToTabs = [];
   const nativeMessages = [];
@@ -107,6 +107,9 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {},
     },
     downloads: {
       download: async () => 1,
+    },
+    cookies: {
+      getAll: async () => cookies,
     },
     runtime: {
       getManifest: () => ({ version: "test" }),
@@ -241,7 +244,13 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {},
     return nativeMessages.at(-1);
   };
 
-  return { registerTools, callNativeTool, listNativeTools, sentToTabs, flushStaticRoutes, context };
+  const sendNative = async (message) => {
+    nativeMessages.length = 0;
+    await websocketInstances[0].emit("message", { data: JSON.stringify(message) });
+    return nativeMessages.at(-1);
+  };
+
+  return { registerTools, callNativeTool, listNativeTools, sendNative, sentToTabs, flushStaticRoutes, context, tabs };
 }
 
 test("adapter refresh waits for the active background call before closing offscreen", async () => {
@@ -585,6 +594,32 @@ test("managed command aliases dispatch the canonical handler with the same write
   const result = await worker.callNativeTool('fixture.write_item', { __confirmed: true, count: '007' });
   assert.equal(result.result.toolName, 'fixture.write-item');
   assert.deepEqual(plain(worker.sentToTabs.at(-1).message.args), { __confirmed: true, count: '007' });
+});
+
+test("screenshot_target points at the tab of the last Adapter call and selects it", async () => {
+  const manifest = { name: 'fixture', match: ['example.com'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'pay', aliases: ['pay'], runtime: 'extension', safety: 'read' }] };
+  // The window's active tab is the start-up about:blank; the command runs in a background tab.
+  const worker = loadServiceWorker({
+    tabs: [
+      { id: 1, windowId: 5, url: 'about:blank', active: true, status: 'complete' },
+      { id: 7, windowId: 5, url: 'https://example.com/checkout?session=placeholder', active: false, status: 'complete' },
+    ],
+    managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] },
+  });
+  const updates = [];
+  worker.context.chrome.tabs.update = async (tabId, props) => { updates.push([tabId, plain(props)]); return { id: tabId }; };
+  worker.context.chrome.debugger.getTargets = async () => [{ id: 'target-1', type: 'page', tabId: 1 }, { id: 'target-7', type: 'page', tabId: 7 }];
+  await worker.callNativeTool('fixture.pay');
+  assert.equal(worker.sentToTabs.at(-1).tabId, 7);
+
+  const reply = await worker.sendNative({ type: 'screenshot_target', id: 'shot-1', traceID: 'fixturetrace1' });
+  assert.equal(reply.type, 'call_tool_result');
+  assert.deepEqual(plain(reply.result), { tabId: 7, url: 'https://example.com/checkout', reason: 'last_tool_call', targetId: 'target-7' });
+  assert.deepEqual(updates, [[7, { active: true }]]);
+  const trace = worker.context.getTraceLogs('fixturetrace1').join('\n');
+  assert.match(trace, /截图目标: tab=7 \(last_tool_call\) https:\/\/example\.com\/checkout，在窗口内选中/);
 });
 
 function loadInjector() {
@@ -1052,4 +1087,154 @@ test("managed page calls do not select helper subdomain tabs as the execution pa
   const result = await worker.callNativeTool('gitee.com.search');
   assert.equal(result.result.tabId, 999);
   assert.equal((await worker.context.chrome.tabs.get(999)).url, 'https://gitee.com/');
+});
+
+// ─── Website login: structured AUTH_REQUIRED and the Bridge's login messages ───
+
+const loginManifest = {
+  name: 'fixture.example.com', match: ['www.example.com'], _hostSnapshot: { profile: 'public', digest: 'fixture' },
+  auth: {
+    login_url: 'https://passport.example.com/login', login_hosts: ['passport.example.com'],
+    check: { cookies: { url: 'https://www.example.com/', all: ['session_id'] } },
+  },
+  commands: [
+    { id: 'list', runtime: 'extension', routeDomain: 'www.example.com', safety: 'read' },
+    { id: 'read', runtime: 'extension', safety: 'read', execution: { type: 'api', runtime: 'background' } },
+  ],
+};
+const loginCatalog = { available: true, managedNames: [loginManifest.name], adapters: [loginManifest] };
+
+test("a page step that lands on the declared SSO host reports AUTH_REQUIRED before Adapter code runs", async () => {
+  const worker = loadServiceWorker({ tabs: [{ id: 5, url: 'https://passport.example.com/login?return=%2Forders', status: 'complete' }], managedCatalog: loginCatalog });
+  await assert.rejects(worker.context.waitForManagedPageReady(5, loginManifest, true, 2000), (error) => {
+    assert.equal(error.code, 'AUTH_REQUIRED');
+    // The return URL (which may carry tokens) never leaves the extension.
+    assert.deepEqual(plain(error.details), { site: loginManifest.name, phase: 'navigation', pageUrl: 'https://passport.example.com/login' });
+    return true;
+  });
+  // A terminal navigation (an old `login` command) may still open the login page.
+  worker.tabs[0].url = 'https://www.example.com/orders';
+  assert.equal(await worker.context.waitForManagedPageReady(5, loginManifest, true, 2000), 'https://www.example.com/orders');
+});
+
+test("Adapter AUTH_REQUIRED and HTTP 401 reach the Bridge as structured errors", async () => {
+  const page = loadServiceWorker({
+    tabs: [{ id: 6, url: 'https://www.example.com/', status: 'complete' }], managedCatalog: loginCatalog,
+    tabResponse: { error: 'Session expired', code: 'AUTH_REQUIRED', details: { phase: 'handler' } },
+  });
+  const fromPage = await page.callNativeTool('fixture.example.com.list');
+  assert.equal(fromPage.type, 'call_tool_error');
+  assert.equal(fromPage.code, 'AUTH_REQUIRED');
+  assert.deepEqual(plain(fromPage.auth), { site: loginManifest.name, phase: 'handler' });
+
+  const background = loadServiceWorker({ managedCatalog: loginCatalog });
+  background.context.getManagedBackgroundRuntime = () => ({ execute: async () => {
+    throw Object.assign(new Error('HTTP 401'), { code: 'HTTP_ERROR', details: { status: 401 } });
+  } });
+  const fromApi = await background.callNativeTool('fixture.example.com.read');
+  assert.equal(fromApi.code, 'AUTH_REQUIRED');
+  assert.equal(fromApi.auth.site, loginManifest.name);
+
+  const other = loadServiceWorker({ tabs: [{ id: 7, url: 'https://www.example.com/', status: 'complete' }], managedCatalog: loginCatalog,
+    tabResponse: { error: 'Bad input', code: 'INVALID_ARGS' } });
+  const invalid = await other.callNativeTool('fixture.example.com.list');
+  assert.equal(invalid.code, 'INVALID_ARGS');
+  assert.equal(invalid.auth, undefined);
+});
+
+test("auth_open_login reuses a redirected login tab, opens only declared login pages, and auth_check reports the cookie check", async () => {
+  const worker = loadServiceWorker({ tabs: [], managedCatalog: loginCatalog, cookies: [] });
+  // An undeclared URL is ignored in favour of the declared login page.
+  const opened = await worker.sendNative({ type: 'auth_open_login', id: 'o1', site: loginManifest.name, url: 'https://attacker.example.net/login' });
+  assert.equal(opened.type, 'call_tool_result');
+  assert.equal(opened.result.url, 'https://passport.example.com/login');
+  let checked = await worker.sendNative({ type: 'auth_check', id: 'c1', site: loginManifest.name });
+  const { fingerprint: before, ...first } = plain(checked.result);
+  assert.deepEqual(first, { loginTab: { open: true, url: 'https://passport.example.com/login', onLoginPage: true }, cookies: false });
+
+  worker.tabs[0].url = 'https://www.example.com/home';
+  worker.context.chrome.cookies.getAll = async () => [{ name: 'session_id', value: 'fixture-session' }, { name: 'other', value: 'x' }];
+  checked = await worker.sendNative({ type: 'auth_check', id: 'c2', site: loginManifest.name });
+  const { fingerprint: after, ...second } = plain(checked.result);
+  assert.deepEqual(second, { loginTab: { open: true, url: 'https://www.example.com/home', onLoginPage: false }, cookies: true });
+  // Only a hash of the checked cookies leaves the extension; a new session changes it.
+  assert.match(after, /^[0-9a-f]{8}$/);
+  assert.notEqual(after, before);
+  assert.equal(JSON.stringify(checked).includes('fixture-session'), false);
+
+  const redirected = loadServiceWorker({ tabs: [{ id: 30, url: 'https://passport.example.com/login?x=1', status: 'complete', active: false }], managedCatalog: loginCatalog });
+  const reused = await redirected.sendNative({ type: 'auth_open_login', id: 'o2', site: loginManifest.name });
+  assert.equal(reused.result.tabId, 30);
+  const unknown = await redirected.sendNative({ type: 'auth_check', id: 'c3', site: '../etc' });
+  assert.equal(unknown.type, 'call_tool_error');
+});
+
+// ─── Managed page routing across a package's hosts ───
+
+test("a route-less command reuses the package tab that moved to another declared host", async () => {
+  const manifest = { name: 'shop.example.com', match: ['www.example.com', 'order.example.com', 'pay.example.com'], _hostSnapshot: { profile: 'public', digest: 'fixture' },
+    commands: [
+      { id: 'list', runtime: 'extension', safety: 'read', excludeTabDomain: 'pay.example.com' },
+      { id: 'home', runtime: 'extension', safety: 'read', routeDomain: 'www.example.com' },
+    ] };
+  const tabs = [
+    { id: 1, url: 'https://pay.example.com/checkout', status: 'complete', lastAccessed: 30 },
+    { id: 2, url: 'https://order.example.com/list', status: 'complete', lastAccessed: 20 },
+    { id: 3, url: 'https://other.example.net/', status: 'complete', lastAccessed: 40 },
+  ];
+  const worker = loadServiceWorker({ tabs, managedCatalog: { available: true, managedNames: [manifest.name], adapters: [manifest] } });
+  const reused = await worker.callNativeTool('shop.example.com.list');
+  assert.equal(reused.result.tabId, 2);
+  // An explicit route still opens its own host.
+  const routed = await worker.callNativeTool('shop.example.com.home');
+  assert.equal(routed.result.tabId, 999);
+  assert.equal((await worker.context.chrome.tabs.get(999)).url, 'https://www.example.com/');
+});
+
+test("a redirect to an undeclared host names the host and is marked as a package problem", async () => {
+  const worker = loadServiceWorker({ tabs: [{ id: 8, url: 'https://www.example.org/home', status: 'complete' }] });
+  const manifest = { name: 'apex.example.org', match: ['example.org'] };
+  await assert.rejects(worker.context.waitForManagedPageReady(8, manifest, true, 2000), (error) => {
+    assert.equal(error.code, 'ADAPTER_HOST_NOT_ALLOWED');
+    assert.match(error.message, /Host: www\.example\.org/);
+    assert.match(error.message, /重试无效/);
+    assert.doesNotMatch(error.message, /\/home/);
+    return true;
+  });
+});
+
+// ─── Site domains: every subdomain of a declared domain, including regional domains ───
+
+test("a route redirected to another declared site domain runs there and reuses that tab", async () => {
+  const manifest = { name: 'shop.example.com', match: ['www.example.com'], domains: ['example.com', 'example.hk'],
+    _hostSnapshot: { profile: 'public', digest: 'fixture' },
+    commands: [{ id: 'orders', runtime: 'extension', safety: 'read', routeDomain: 'order.example.com' }] };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: [manifest.name], adapters: [manifest] } });
+  const created = [];
+  const tabs = worker.context.chrome.tabs;
+  const original = tabs.create;
+  // The site sends order.example.com to its regional host.
+  tabs.create = async (props) => {
+    created.push(props.url);
+    const tab = await original(props);
+    tab.url = 'https://order.example.hk/list';
+    return tab;
+  };
+  const first = await worker.callNativeTool('shop.example.com.orders');
+  assert.equal(first.result.tabId, 999);
+  const second = await worker.callNativeTool('shop.example.com.orders');
+  assert.equal(second.result.tabId, 999);
+  assert.deepEqual(created, ['https://order.example.com/']);
+});
+
+test("a redirect outside every declared site domain is still refused", async () => {
+  const manifest = { name: 'shop.example.com', match: ['www.example.com'], domains: ['example.com'],
+    _hostSnapshot: { profile: 'public', digest: 'fixture' },
+    commands: [{ id: 'orders', runtime: 'extension', safety: 'read', routeDomain: 'order.example.com' }] };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: [manifest.name], adapters: [manifest] } });
+  const original = worker.context.chrome.tabs.create;
+  worker.context.chrome.tabs.create = async (props) => Object.assign(await original(props), { url: 'https://order.example.net/list' });
+  const failed = await worker.callNativeTool('shop.example.com.orders');
+  assert.match(failed.error, /Host: order\.example\.net/);
+  assert.match(failed.error, /domains/);
 });

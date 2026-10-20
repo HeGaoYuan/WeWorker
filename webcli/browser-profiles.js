@@ -9,7 +9,7 @@ const aliasPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 const reserved = new Set(['legacy', 'auto', 'none', '__proto__', 'constructor', 'prototype']);
 
 export function profileHelp() {
-  return { schemaVersion: 1, namespace: 'profile', selection: 'flag --profile > WEBCLI_PROFILE > saved default > only online connection; never fall back from an offline selection',
+  return { schemaVersion: 1, namespace: 'profile', selection: 'flag --profile > WEBCLI_PROFILE > saved default > one Bridge-owned dedicated browser > only online connection; never fall back from an offline selection',
     commands: [
       { name: 'profile.list', params: [], description: 'Known browser contexts, aliases, online status and saved default.' },
       { name: 'profile.rename', params: ['contextId', 'name'], description: 'Assign a unique alias to a known context.' },
@@ -94,6 +94,8 @@ export class BrowserProfiles {
       return { contextId: record.contextId, connection: connection || null };
     }
     const online = [...this.connections.values()].filter(item => item.ws.readyState === 1);
+    const dedicated = online.filter(item => item.instance === 'dedicated');
+    if (dedicated.length === 1) return { contextId: dedicated[0].contextId, connection: dedicated[0] };
     if (online.length > 1) throw profileError('PROFILE_AMBIGUOUS', 'Multiple browsers are connected. Choose --profile using profile.list.');
     if (!online.length) throw profileError('EXTENSION_UNAVAILABLE', 'Connect the WeWorker extension or select an offline profile explicitly to read its history.');
     return { contextId: online[0].contextId, connection: online[0] };
@@ -122,7 +124,8 @@ export class BrowserProfiles {
     }
     if (command === 'use') this.save({ ...this.state, defaultContextId: args.name === 'auto' ? null : this.known(args.name).contextId });
     return { defaultContextId: this.state.defaultContextId, profiles: [
-      ...this.state.contexts.map(item => ({ ...item, online: this.connections.get(item.contextId)?.ws.readyState === 1, extensionVersion: this.connections.get(item.contextId)?.version || null })),
+      ...this.state.contexts.map(item => ({ ...item, online: this.connections.get(item.contextId)?.ws.readyState === 1, extensionVersion: this.connections.get(item.contextId)?.version || null,
+        ...(this.connections.get(item.contextId)?.instance ? { instance: this.connections.get(item.contextId).instance } : {}) })),
       ...[...this.connections.values()].filter(item => item.legacy).map(item => ({ contextId: item.contextId, online: true, ephemeral: true, upgradeRequired: true })),
       { contextId: 'legacy', online: false, readOnly: true, description: 'Pre-profile sessions and exploration history' },
     ] };

@@ -9,6 +9,15 @@
   "runtime_allowed_hosts": [
     "login.zhipin.com"
   ],
+  "auth": {
+    "login_url": "https://login.zhipin.com/",
+    "login_hosts": [
+      "login.zhipin.com"
+    ],
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "boss",

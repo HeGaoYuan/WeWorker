@@ -6,6 +6,8 @@ export const useStatusStore = create((set, get) => ({
   bridge: 'unknown',
   extension: 'unknown',
   extensionVersion: null,
+  /** 'dedicated' when the connected extension runs in WeWorker 浏览器. */
+  extensionInstance: 'system',
   python: 'unknown',
   toolsCount: 0,
   channels: {},
@@ -23,6 +25,7 @@ export const useStatusStore = create((set, get) => ({
           bridge: data.bridge,
           extension: data.extension,
           extensionVersion: data.extension_version ?? null,
+          extensionInstance: data.extension_instance === 'dedicated' ? 'dedicated' : 'system',
           toolsCount: data.tools_count,
           channels: data.channels ?? {},
           python: 'running',

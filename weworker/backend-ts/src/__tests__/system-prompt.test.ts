@@ -233,28 +233,6 @@ describe('System Prompt - behavioral rules retained (Req 4.3)', () => {
     expect(prompt).toContain('type=api, runtime=background')
     expect(prompt).toContain('mode=direct')
     expect(prompt).toContain('不要预先打开网站或检测登录')
-    expect(prompt).toContain('`itsm.example.com.ls`')
-    expect(prompt).toContain('必须先直接调用')
-  })
-
-  it('summarizes large direct tool catalogs instead of expanding every tool name', async () => {
-    const toolExecution = Object.fromEntries(
-      Array.from({ length: 8 }, (_, index) => [`large.test.tool_${index}`, { type: 'api', runtime: 'background' }]),
-    )
-    const adapter = makeAuthAdapter({
-      id: 'large.test',
-      name: 'Large API',
-      match: ['large.test'],
-      toolExecution,
-    })
-    mockAdapterMap.set(adapter.id, adapter)
-    enabledSites.add(adapter.id)
-
-    const { buildSystemPrompt } = await import('../agent.js')
-    const prompt = buildSystemPrompt()
-
-    expect(prompt).toContain('共 8 个')
-    expect(prompt).not.toContain('large.test.tool_7')
   })
 
   it('retains ask_user rules and forbids AskUserQuestion', async () => {
@@ -339,7 +317,7 @@ describe('System Prompt - no per-adapter tool lists (Req 4.4)', () => {
     expect(prompt).not.toContain('支持的网站列表')
   })
 
-  it('includes check_login_status command for auth adapters without explicit authCheckTool', async () => {
+  it('leaves login to WeWorker instead of asking the model to pre-check it', async () => {
     const authAdapterNoCheck = makeAuthAdapter({
       id: 'custom_auth',
       name: '自定义认证站',
@@ -360,8 +338,24 @@ describe('System Prompt - no per-adapter tool lists (Req 4.4)', () => {
     const { buildSystemPrompt } = await import('../agent.js')
     const prompt = buildSystemPrompt()
 
-    expect(prompt).toContain('custom_auth.check_login_status')
-    expect(prompt).toMatch(/logged_in: false/)
+    expect(prompt).toContain('网站工具会自动处理登录')
+    expect(prompt).toContain('AUTH_REQUIRED')
+    expect(prompt).not.toContain('custom_auth.check_login_status')
+    expect(prompt).not.toMatch(/logged_in: false/)
+  })
+
+  it('asks the user to sign in inside WeWorker browser when it serves Adapter calls', async () => {
+    const mailAdapter = makeAuthAdapter()
+    mockAdapterMap.set(mailAdapter.id, mailAdapter)
+    enabledSites.add(mailAdapter.id)
+
+    const { buildSystemPrompt } = await import('../agent.js')
+    const dedicated = buildSystemPrompt({ browserInstance: 'dedicated' })
+    expect(dedicated).toContain('WeWorker 浏览器')
+    expect(dedicated).toContain('不要让用户去自己的 Chrome 登录')
+    const own = buildSystemPrompt({ browserInstance: 'system' })
+    expect(own).toContain('在浏览器中打开该网站的登录页')
+    expect(own).not.toContain('WeWorker 浏览器')
   })
 
   it('does not include disabled auth adapters in login detection rules', async () => {

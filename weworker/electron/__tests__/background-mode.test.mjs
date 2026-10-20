@@ -226,6 +226,19 @@ test('showWindow restores the hidden window', () => {
   assert.equal(gone.showWindow(), false)
 })
 
+test('tray menu offers WeWorker browser only while it is running', () => {
+  const base = { summary: null, launchAtLogin: { supported: false, enabled: false }, onOpen() {}, onOpenAgents() {}, onToggleLaunchAtLogin() {}, onQuit() {} }
+  let shown = 0
+  const running = buildTrayMenuTemplate({ ...base, browser: { available: true, onShow: () => { shown += 1 } } })
+  const item = running.find((entry) => entry.label === '显示 WeWorker 浏览器')
+  assert.ok(item)
+  item.click()
+  assert.equal(shown, 1)
+  const has = (template) => template.some((entry) => entry.label === '显示 WeWorker 浏览器')
+  assert.equal(has(buildTrayMenuTemplate({ ...base, browser: { available: false, onShow() {} } })), false)
+  assert.equal(has(buildTrayMenuTemplate(base)), false)
+})
+
 test('tray menu lists agents, launch-at-login toggle and quit', () => {
   const handlers = { onOpen() {}, onOpenAgents() {}, onToggleLaunchAtLogin() {}, onQuit() {} }
   const template = buildTrayMenuTemplate({ summary: { total: 2, online: 1, source: 'backend' }, launchAtLogin: { supported: true, enabled: true }, ...handlers })

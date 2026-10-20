@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, Tray } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -22,6 +22,8 @@ import {
   syncLaunchAtLogin,
 } from './background-mode.js'
 import { createTrayManager } from './tray-manager.js'
+import { BrowserControlClient, normalizeBrowserMode } from './dedicated-browser.js'
+import { sanitizeSiteAuthRequest, siteAuthNotification } from './site-auth-ipc.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -168,6 +170,8 @@ const explorationInstanceId = randomUUID()
 const webwrightHome = resolveWebwrightHome()
 const userFilesDir = readConfiguredUserFilesDir()
 const bridgeManager = new BridgeManager(log, path.dirname(logFile))
+// WeWorker 浏览器 is owned by the Bridge; the desktop attaches as a client and only sends fixed actions.
+const browserClient = new BrowserControlClient({ log })
 const pythonManager = new NodeManager(log, logFile, httpAuthToken, webwrightHome, webwrightModelToken, explorationInstanceId)
 const webwrightManager = new WebwrightManager({
   log,
@@ -186,9 +190,22 @@ const updateManager = new UpdateManager({
   beforeInstall: async () => {
     isInstallingUpdate = true
     background.allowQuitWithoutPrompt('update install')
-    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop()])
+    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), stopBridgeAndBrowser()])
   },
 })
+
+/**
+ * Only the Bridge this app started is stopped, after it closed its browser.
+ * A Bridge found running on 3711 (for example standalone webcli) keeps its browser;
+ * detaching lets it stop the browser on its own once unused.
+ */
+async function stopBridgeAndBrowser() {
+  if (bridgeManager.getStatus() === 'running' && browserClient.connected) {
+    await browserClient.request('stop', {}, { timeoutMs: 10_000 }).catch((error) => log(`[browser] stop failed: ${error.message}`))
+  }
+  browserClient.stop()
+  await bridgeManager.stop()
+}
 
 // ── Background mode: keep dedicated agents online after the window closes ──
 const preferences = createPreferenceStore(path.join(app.getPath('userData'), 'app-settings.json'), { log })
@@ -236,6 +253,12 @@ const trayManager = createTrayManager({
   nativeImage,
   getAgentSummary,
   getLaunchAtLogin: () => launchAtLoginState,
+  getBrowser: () => (browserClient.getStatus().mode === 'dedicated'
+    ? {
+        available: browserClient.getStatus().status === 'running',
+        onShow: () => { void browserClient.request('show').catch((error) => log(`[browser] show failed: ${error.message}`)) },
+      }
+    : null),
   handlers: {
     onOpen: () => { background.showWindow() },
     onOpenAgents: showDedicatedAgentsFromTray,
@@ -256,18 +279,81 @@ function getAppSettings() {
     closeToTraySupported: process.platform === 'win32',
     launchAtLogin: launchAtLoginState.enabled,
     launchAtLoginSupported: launchAtLoginState.supported,
+    // The mode lives with the Bridge (~/.weworker/browser/config.json), shared with webcli.
+    browserMode: browserClient.getStatus().mode,
+  }
+}
+
+// The Bridge starts the browser off-screen and without focus. Windows keeps focus (verified);
+// on other platforms a launching browser may activate itself, so give focus back once.
+let refocusUntil = 0
+function keepFocusWhileBrowserStarts() {
+  refocusUntil = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused() ? Date.now() + 30_000 : 0
+}
+browserClient.onStatus((status) => {
+  if (status.status === 'running' && refocusUntil > Date.now()) {
+    refocusUntil = 0
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.focus()
+  }
+  trayManager.render()
+})
+
+/** IPC results keep their shape when the Bridge is unreachable. */
+async function browserAction(action, extra = {}) {
+  try {
+    if (action === 'restart') keepFocusWhileBrowserStarts()
+    return await browserClient.request(action, extra)
+  } catch (error) {
+    log(`[browser] ${action} failed: ${error.message}`)
+    return { ...browserClient.getStatus(), error: error.message }
   }
 }
 
 ipcMain.handle('app-settings:get', () => getAppSettings())
-ipcMain.handle('app-settings:set', (_event, patch = {}) => {
+ipcMain.handle('app-settings:set', async (_event, patch = {}) => {
   const next = {}
   if (typeof patch.closeToTray === 'boolean') next.closeToTray = patch.closeToTray
   if (typeof patch.launchAtLogin === 'boolean') next.launchAtLogin = patch.launchAtLogin
   preferences.update(next)
   if ('launchAtLogin' in next) applyLaunchAtLogin()
+  if (typeof patch.browserMode === 'string') {
+    const mode = normalizeBrowserMode(patch.browserMode)
+    if (mode !== browserClient.getStatus().mode) {
+      if (mode === 'dedicated') keepFocusWhileBrowserStarts()
+      // No Bridge restart: the Bridge switches modes itself.
+      await browserClient.request('set_mode', { mode })
+    }
+  }
   trayManager.render()
   return getAppSettings()
+})
+
+// Fixed actions only: the Renderer never passes URLs or paths to the browser.
+ipcMain.handle('dedicated-browser:get-status', () => browserClient.getStatus())
+ipcMain.handle('dedicated-browser:show', () => browserAction('show'))
+// `soft`: the per-turn hide, which leaves a login page that waits for the user on screen.
+ipcMain.handle('dedicated-browser:hide', (_event, options) => browserAction('hide', options?.soft === true ? { soft: true } : {}))
+ipcMain.handle('dedicated-browser:restart', () => browserAction('restart'))
+
+// Website login: fixed actions for the Bridge's login flow; events go to the Renderer.
+ipcMain.handle('site-auth:control', async (_event, action, payload) => {
+  const request = sanitizeSiteAuthRequest(action, payload)
+  return browserClient.authRequest(request.action, request.extra, { timeoutMs: 60_000 })
+})
+let lastAuthNotification = null
+browserClient.onAuthEvent((event) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('site-auth:event', event)
+  const notice = siteAuthNotification(event)
+  const focused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()
+  if (!notice || focused || !Notification.isSupported()) return
+  try {
+    lastAuthNotification?.close()
+    lastAuthNotification = new Notification({ title: notice.title, body: notice.body })
+    lastAuthNotification.on('click', () => { void browserAction('show') })
+    lastAuthNotification.show()
+  } catch (error) {
+    log(`[login] notification failed: ${error.message}`)
+  }
 })
 
 async function createWindow({ show = true } = {}) {
@@ -335,7 +421,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // mainWindow icon set below after creation
   }
 
-  registerIpcHandlers(bridgeManager, pythonManager, webwrightManager, httpAuthToken, updateManager)
+  registerIpcHandlers(bridgeManager, pythonManager, webwrightManager, httpAuthToken, updateManager, {
+    // "Open Chrome" in dedicated mode means showing WeWorker 浏览器, not the user's Chrome.
+    openBrowser: async () => {
+      if (browserClient.getStatus().mode !== 'dedicated') return false
+      await browserClient.request('show')
+      return true
+    },
+  })
   registerLocalFileProtocol()
 
   // Webwright health checks must not delay the main window. Its status remains
@@ -344,6 +437,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
   // Start bridge and backend in parallel.
   await Promise.allSettled([bridgeManager.start(), pythonManager.start()])
+  // Attaching keeps WeWorker 浏览器 running while the app runs (also with a Bridge started by webcli).
+  browserClient.start()
 
   // Launched by the OS at login: stay in the tray / background.
   const startHidden = isHiddenLaunch({
@@ -354,6 +449,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   applyLaunchAtLogin()
   await createWindow({ show: !startHidden })
   if (startHidden) log('[main] started hidden (launched at login)')
+  if (browserClient.getStatus().status !== 'running') keepFocusWhileBrowserStarts()
   trayManager.create()
   updateManager.start()
 
@@ -386,7 +482,7 @@ app.on('before-quit', async (event) => {
   event.preventDefault()
   log('[main] before-quit — stopping subprocesses')
   try {
-    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop()])
+    await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), stopBridgeAndBrowser()])
   } catch (err) {
     log(`[main] cleanup error: ${err?.message || err}`)
   }

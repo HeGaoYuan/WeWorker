@@ -27,6 +27,7 @@ import { useDedicatedAgentsStore, showDedicatedAgentsPage } from './store/dedica
 import { useSitesStore } from './store/sites.js'
 import { WebsiteExplorationGuard } from './components/website-exploration/WebsiteExplorationPage.jsx'
 import ExtensionGuide from './components/ExtensionGuide.jsx'
+import SiteLoginNotice from './components/site-login/SiteLoginNotice.jsx'
 import UpdatePrompt from './components/sidebar/UpdatePrompt.jsx'
 import InitialSetup from './components/onboarding/InitialSetup.jsx'
 import { useAntdThemeConfig } from './theme/antd-theme.js'
@@ -562,6 +563,7 @@ export default function App() {
         </>}
       </div>
       {showExtensionGuide && <ExtensionGuide onClose={() => setShowExtensionGuide(false)} />}
+      <SiteLoginNotice />
       <GlobalFileDropLayer />
       <WebsiteExplorationGuard />
       <NativeTitleTooltipLayer />

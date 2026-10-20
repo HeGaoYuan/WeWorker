@@ -442,43 +442,73 @@ SW 处理流程：`debugger.attach` → `DOM.querySelector` → `DOM.setFileInpu
 }
 ```
 
-### 8.9 `match` 与 `homepage_url` 的区别
+### 8.9 网站范围：`match`、`domains` 与 `homepage_url`
 
-- `match`：给扩展用，决定在哪些页面注入 adapter 脚本，只看 hostname
-- `homepage_url`：给 AI 用，`open_browser` 打开的完整 URL
+v2 包的页面命令只能在声明的网站范围内运行和跳转；跳到范围外会报 `ADAPTER_HOST_NOT_ALLOWED`（Adapter 配置问题，重试无效）。
 
-大多数网站只填 `match` 即可，`homepage_url` 自动生成为 `http://{match[0]}/`。
+- `match`：精确的页面主机。第一项是主主机（默认路由、无 `homepage_url` 时的首页）。`*.example.com` 表示 example.com 及其全部子域名。
+- `domains`：站点域名，例如 `["jd.com", "jd.hk"]`。每一项覆盖该域名本身和它的全部子域名，**不用再逐个列** `order.*`、`search.*`、`item.*`。同一网站的地区或品牌域名（如 `jd.hk`）要显式写出，宿主不会根据跳转自动推断归属。不允许公共后缀（`com`、`co.uk`、`com.cn`、`github.io` 等）、通配符或 IP。
+- `routeDomain` / `tabDomain` / `excludeTabDomain` 可以是 `match` 中的主机，也可以是 `domains` 覆盖的任意主机。
+- `homepage_url`：给 AI 用，`open_browser` 打开的完整 URL。`open_browser` 允许 `match` 主机、`homepage_url`，以及每个 `domains` 的根域名和 `www.` 主机。
 
-### 8.10 `auth_check_tool`：SSO 跨域登录检测
+推荐写法：`match` 只写主页主机，其余交给 `domains`：
 
-**何时需要**：网站登录页与业务页不在同一域名时。如 `itsm.example.com` session 过期后跳转到 `passport.example.com`（SSO 统一登录页），两者域名不同，`itsm` 的 adapter 不会注入到 SSO 页。
-
-登录页与业务页同域（如 `mail.163.com`）则不需要，直接在自己 adapter 里实现 `check_login_status` 即可。
-
-**工作原理**：
-
-1. 每个内部网站 adapter 提供自己的 `check_login_status`（如 `itsm.example.com.check_login_status`），靠 DOM 特征检测
-2. session 过期跳转到 SSO 后，业务页工具无法执行（tab 域名变了）
-3. 调用方检测到失败，读取 `auth_check_tool`，自动 fallback 调 SSO adapter 的工具（如 `passport.example.com.check_login_status`）
-4. SSO adapter 在登录页执行，返回确定性的 `{ logged_in: false }`
-5. 若 SSO 工具也失败（用户没打开该站），返回 `{ logged_in: false, hint: "请先打开网站" }`
-
-**配置示例**：
-
-SSO 登录页 adapter（`passport.example.com`）：
 ```json
-{ "id": "passport.example.com", "name": "ExampleOrg SSO", "match": ["passport.example.com", "uat.sso.example.org"] }
+"match": ["www.jd.com"],
+"domains": ["jd.com", "jd.hk"]
 ```
 
-内部网站引用 SSO 的检测工具：
+宿主会记住范围内的跳转（例如 `order.jd.com` 被网站跳到 `order.jd.hk`），之后的调用直接复用该标签页。`domains` 覆盖的主机上，`passport.*`、`sso.*`、`/login` 等通用登录页仍会被识别为登录页；需要用户完成的验证页（如京东的 `aq.jd.com`）请写进 `auth.login_hosts`。新增 `domains` 对用户安装的 Adapter 属于权限变更，更新时需要用户同意。匹配规则只有一份实现：`extension/background/host-scope.js`（WebCLI 中的 `webcli/host-scope.js` 是逐字节相同的副本）。
+
+### 8.10 网站登录：声明 `auth`，由宿主处理
+
+登录是宿主能力，不是 Adapter 代码。Adapter 只声明「登录页在哪」和「怎样判断已登录」；识别未登录、打开登录页、显示/隐藏 WeWorker 浏览器、等待用户完成、自动重试都由 Bridge 完成（`webcli/site-login.js`），桌面端和 `webcli` 行为一致，AI 不需要也不应该预先检测登录。
+
 ```json
-{
-  "id": "itsm.example.com",
-  "requires_auth": true,
-  "auth_check_tool": "passport.example.com.check_login_status",
-  "match": ["itsm.example.com"]
+"auth": {
+  "login_url": "https://passport.example.com/login",
+  "login_hosts": ["passport.example.com"],
+  "check": {
+    "cookies": { "url": "https://www.example.com/", "all": ["session_id"] },
+    "command": "whoami"
+  },
+  "autologin": { "switch": "#tab-password", "submit": "button[type=submit]" }
 }
 ```
+
+| 字段 | 说明 |
+|------|------|
+| `login_url` | 必填。打开登录时使用的页面（HTTPS）；主机必须在 `match`、`domains`、`runtime_allowed_hosts` 或 `login_hosts` 中 |
+| `login_hosts` | 可选。只用于登录的主机，例如 SSO 认证中心 `sso.example.com`、`passport.example.com`。命令页面被重定向到这些主机即判定为「需要登录」 |
+| `check.cookies` | 可选，最快。`url` 下的 Cookie 满足 `all`（全部存在）/ `any`（任一存在）/ `equals`（值相等）/ `not`（值不等）即视为已登录 |
+| `check.command` | 可选。本包的一个只读 Extension 命令（例如 `whoami`）。返回 `logged_in: false` 或抛出 `AUTH_REQUIRED` 表示未登录，其他成功结果表示已登录 |
+| `autologin` | 可选。通用表单识别不准时，给自动登录提供 CSS 选择器：`switch`（先点击切换到「账号密码登录」）、`username`、`password`、`submit` |
+| `display_name` | 可选。登录提示中显示的名称，默认取 `i18n.zh.name` |
+| 命令级 `auth` | 可选，`required`（默认）/ `optional` / `none`。`none` 的命令失败时不触发登录检查 |
+
+**Adapter 代码只需要做一件事**：在自己的接口返回「未登录」时报告它：
+
+```js
+// 页面命令与后台命令都可用
+window.__webmcpWecliRuntime.authRequired('会话已过期');
+// 或抛出 code 为 'AUTH_REQUIRED' 的错误（OpenCLI 移植包中的 AuthRequiredError 已经如此）
+```
+
+**宿主识别「需要登录」的方式**（命中任意一条即进入登录流程）：
+
+1. 只读命令的页面停在登录页：`login_hosts`、`login_url` 的路径，或未声明的 `passport.*` / `login.*` / `sso.*` 主机与 `/login`、`/signin`、`/cas/login` 等路径（SSO 重定向无需额外声明）；
+2. Adapter 抛出 `AUTH_REQUIRED`，或运行时 helper 收到 HTTP 401；
+3. 命令失败且声明了 `check`：宿主运行一次检查，确认未登录。
+
+**登录流程**：打开（或复用被重定向的）登录页 → 约 2 秒内若会话仍有效会自动跳走，直接继续 → 若开启了自动登录则先尝试 → 否则显示 WeWorker 浏览器，用户扫码、输入短信验证码或账号密码 → 宿主根据 `check` 与「离开登录页」判断完成 → 自动隐藏浏览器并**重试一次**。重试规则：只读命令总会重试；写命令只有在业务代码运行前被拦下（页面重定向到登录页）才会重试，否则返回 `AUTH_RETRY_REQUIRED`，由用户确认后重新执行，绝不重放写操作。
+
+**扫码与短信验证码**：不需要 Adapter 做任何事。完成登录始终发生在真实登录页上，宿主只关心「是否已登录」，与登录方式无关；扫码页会额外保存截图（`~/.webcli/login/<adapter>.jpg`，每 15 秒刷新），方便不在电脑前的用户扫码。
+
+**自动登录**（默认关闭，按网站由用户开启）：密码用系统密钥加密保存在本机（目前支持 Windows DPAPI），只有 Bridge 在填写前解密，通过 CDP 可信输入填入 HTTPS 登录页；Adapter、扩展、Backend 与模型都拿不到明文。遇到验证码、二次验证、仅扫码/短信的登录页或密码错误时自动转为人工，并在 10 分钟内不再重试。
+
+**验证**：`webcli auth check <adapter>` 运行你声明的检查；`webcli login <adapter>` 走一遍完整登录流程；`webcli adapter validate <dir>` 校验 `auth` 字段。
+
+**兼容**：`requires_auth`、`auth_check_tool`，以及 `login` / `check-login-status` / `whoami` 命令继续可用，但不再需要为登录编写新命令；AI 提示词与 Skill 中都不会再要求预先检测登录。
 
 ### 8.11 `support_files`：拆分 adapter 实现
 

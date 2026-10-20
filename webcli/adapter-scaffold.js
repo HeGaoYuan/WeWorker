@@ -1633,7 +1633,7 @@ function buildAdapterSkillMarkdown(memory, manifest, supportBundle) {
         lines.push(`Matches: ${matches.join(', ')}`, '');
     }
     if (manifest?.requires_auth) {
-        lines.push('> Requires authentication. Direct tools should reuse the browser session first; open the website only after a login or page-context error.', '');
+        lines.push('> Requires authentication. WeWorker handles login: when a tool reports AUTH_REQUIRED it opens the login page, waits for the user and retries. Call tools directly; do not check login first.', '');
     }
     lines.push(
         '## Execution Rules',
@@ -2192,7 +2192,7 @@ function buildWebCliKnowledgeMarkdown(pack) {
 function buildSkillUsageGuidance(siteKey, actionHints) {
     const lines = [];
     const loginToolName = `${siteKey}.check_login_status`;
-    lines.push(`- 进入站点后先调用 \`${loginToolName}\` 检查登录态；未登录时先让用户在浏览器里完成登录。`);
+    lines.push(`- 登录由 WeWorker 自动处理：工具返回 AUTH_REQUIRED 时会打开登录页，用户完成后自动重试；不要先调用 \`${loginToolName}\` 检测登录。`);
     const writeHints = Object.entries(actionHints || {}).filter(([, hint])=>hint?.planningHints?.kind === 'write_action');
     for (const [toolName] of writeHints){
         lines.push(`- \`${toolName}\` 可能触发真实业务动作；调用时由当前客户端或 Agent 宿主展示最终 payload 并请求确认。`);

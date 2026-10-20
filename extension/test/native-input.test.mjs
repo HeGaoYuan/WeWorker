@@ -8,6 +8,7 @@ const end = source.indexOf('\nfunction normalizeRuntimeBrowserFetchHeaders', sta
 function setup(borrowed = false, fail = false) {
   const calls = [], attached = new Set(borrowed ? [7] : []);
   const context = vm.createContext({
+    clearBrowserDebuggerState: (tabId) => attached.delete(tabId),
     cdpAttachedTabs: attached,
     createRuntimeHelperError: (code, message) => Object.assign(new Error(message), { code }),
     chrome: { debugger: {

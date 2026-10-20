@@ -100,30 +100,29 @@ export default function AppRail({ activeSection, settingsOpen = false, onOpenCon
       <div className="app-rail__spacer" />
 
       <nav className="app-rail__nav app-rail__nav--bottom" aria-label="工具">
-        {issueCount > 0 && (
-          <div className="app-rail__issues-wrap">
-            <Tooltip text={`有 ${issueCount} 个问题`} placement="right">
-              <button
-                type="button"
-                className={`app-rail__button app-rail__issues-button${issuesOpen ? ' is-active' : ''}`}
-                aria-label={`有 ${issueCount} 个问题`}
-                aria-expanded={issuesOpen}
-                onClick={handleIssuesClick}
-              >
-                <ExtensionIcon />
-                <span className="app-rail__issue-badge" aria-hidden="true">{issueCount}</span>
-              </button>
-            </Tooltip>
-            {issuesOpen && (
-              <IssuePanel
-                extensionIssue={extensionIssue}
-                portConflicts={portConflicts}
-                isWindows={isWindows}
-                onOpenExtension={onOpenExtension}
-              />
-            )}
-          </div>
-        )}
+        {/* Always reachable: the panel also shows and hides WeWorker 浏览器 (for sign-in or checking a task). */}
+        <div className="app-rail__issues-wrap">
+          <Tooltip text={issueCount > 0 ? `有 ${issueCount} 个问题` : '浏览器与扩展'} placement="right">
+            <button
+              type="button"
+              className={`app-rail__button${issueCount > 0 ? ' app-rail__issues-button' : ''}${issuesOpen ? ' is-active' : ''}`}
+              aria-label={issueCount > 0 ? `有 ${issueCount} 个问题` : '浏览器与扩展'}
+              aria-expanded={issueCount > 0 ? issuesOpen : undefined}
+              onClick={handleIssuesClick}
+            >
+              <ExtensionIcon />
+              {issueCount > 0 && <span className="app-rail__issue-badge" aria-hidden="true">{issueCount}</span>}
+            </button>
+          </Tooltip>
+          {issueCount > 0 && issuesOpen && (
+            <IssuePanel
+              extensionIssue={extensionIssue}
+              portConflicts={portConflicts}
+              isWindows={isWindows}
+              onOpenExtension={onOpenExtension}
+            />
+          )}
+        </div>
         <RailButton label="设置" active={activeKey === 'settings'} onClick={onOpenSettings}>
           <SettingsIcon />
         </RailButton>

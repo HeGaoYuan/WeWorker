@@ -24,6 +24,7 @@ import { applyAssistantStreamEvent, insertSteeringIntoMessages, updateAssistantM
 import { applyTerminalEventToMessages } from '../../utils/terminal-chat-output.js'
 import { buildTodoWriteContextPrompt, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/user-choice.js'
+import { hideBrowserForNewTurn } from '../../utils/dedicated-browser.js'
 
 /**
  * @param {object} props
@@ -185,6 +186,8 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
       created_at: new Date().toISOString(),
     })
     appendMessage(workId, { id: optimisticAssistantId, streamingTurnId: optimisticAssistantId, role: 'assistant', content: [], created_at: new Date().toISOString() })
+    // A new turn: WeWorker itself moves the browser back off-screen.
+    hideBrowserForNewTurn()
 
     let accepted = false
     let failed = false
@@ -349,6 +352,11 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
               }
             }
             return { ...msg, content: [...content, { type: 'tool_use', id: event.id, name: '', result: event.result ?? '(no result)', status: 'done', execMs: event.execMs }] }
+          }
+
+          // send_file_to_user in a desktop conversation: an attachment the user can open.
+          if (event.type === 'user_file' && event.attachment?.path) {
+            return { ...msg, content: [...content, { ...event.attachment, type: 'file_attachment' }] }
           }
 
           if (event.type === 'tool_call_image') {

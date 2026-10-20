@@ -17,6 +17,12 @@
     "weread.qq.com",
     "i.weread.qq.com"
   ],
+  "auth": {
+    "login_url": "https://weread.qq.com/",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "scenarios": [
     {
       "id": "book-search",

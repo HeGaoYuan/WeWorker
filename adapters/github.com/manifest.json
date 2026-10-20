@@ -6,6 +6,17 @@
   "match": [
     "github.com"
   ],
+  "auth": {
+    "login_url": "https://github.com/login",
+    "check": {
+      "cookies": {
+        "url": "https://github.com/",
+        "equals": {
+          "logged_in": "yes"
+        }
+      }
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "GitHub Trending",

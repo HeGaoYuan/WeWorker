@@ -69,6 +69,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openChromeUrl: (url) => ipcRenderer.invoke('open-chrome-url', url),
   openChrome: () => ipcRenderer.invoke('open-chrome'),
+  getDedicatedBrowserStatus: () => ipcRenderer.invoke('dedicated-browser:get-status'),
+  showDedicatedBrowser: () => ipcRenderer.invoke('dedicated-browser:show'),
+  hideDedicatedBrowser: (options) => ipcRenderer.invoke('dedicated-browser:hide', options?.soft === true ? { soft: true } : undefined),
+  siteAuthControl: (action, payload) => ipcRenderer.invoke('site-auth:control', action, payload),
+  onSiteAuthEvent: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const handler = (_event, event) => callback(event)
+    ipcRenderer.on('site-auth:event', handler)
+    return () => ipcRenderer.removeListener('site-auth:event', handler)
+  },
+  restartDedicatedBrowser: () => ipcRenderer.invoke('dedicated-browser:restart'),
   selectFiles: (options) => ipcRenderer.invoke('select-files', options),
   selectDirectory: (options) => ipcRenderer.invoke('select-directory', options),
   openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),

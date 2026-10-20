@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { resolveAdapterPaths } from './paths.js';
 import { readAdapterState } from './adapter-state.js';
 import { adapterError, assertManagedDirectory, assertManagedFile, assertPackagePath, readPackageDirectory } from './adapter-package-files.js';
+import { adapterPagePatterns } from './host-scope.js';
 
 export function assertAdapterIdentity(name) {
   assertPackagePath(name);
@@ -21,6 +22,8 @@ export function packageSnapshotRoot(paths, name, digest) {
 export function adapterPermissions(manifest) {
   return [...new Set([
     ...(manifest.match || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
+    // A site domain grants every subdomain, so adding one is a permission change.
+    ...(manifest.domains || []).map((domain) => 'domain:' + String(domain).toLowerCase().replace(/\.$/, '')),
     ...(manifest.runtime_allowed_hosts || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...manifest.commands.map((command) => 'runtime:' + command.runtime),
     ...manifest.commands.flatMap(command => command.pageRoute?.navigation ? ['page-navigation:' + JSON.stringify(command.pageRoute)] : []),
@@ -204,7 +207,8 @@ export function buildAdapterCatalog(options = {}) {
   const conflicts = new Set();
   for (let i = 0; i < selected.length; i++) {
     for (let j = i + 1; j < selected.length; j++) {
-      if (selected[i].manifest.match?.some((host) => selected[j].manifest.match?.some((other) => domainsOverlap(host, other)))) {
+      const left = adapterPagePatterns(selected[i].manifest), right = adapterPagePatterns(selected[j].manifest);
+      if (left.some((host) => right.some((other) => domainsOverlap(host, other)))) {
         conflicts.add(selected[i].name); conflicts.add(selected[j].name);
         diagnostics.push({ code: 'ADAPTER_DOMAIN_CONFLICT', names: [selected[i].name, selected[j].name] });
       }
@@ -222,6 +226,7 @@ export function publicAdapterCatalog(catalog) {
     profile: catalog.profile, revision: catalog.revision, diagnostics: catalog.diagnostics,
     adapters: catalog.effective.map(({ name, version, digest, source, manifest, commands }) => ({
       name, version, digest, source, description: manifest.description, match: manifest.match || [],
+      domains: manifest.domains || [],
       requires_auth: manifest.requires_auth || false,
       runtime_allowed_hosts: manifest.runtime_allowed_hosts || [],
       scenarios: manifest.scenarios || [], commands,
