@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import { createHostAdapterClient } from '../background/host-adapter-client.js';
+import { siteAuthBindings } from './helpers/service-worker-test-loader.mjs';
 
 const source = readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
 function productionFunction(name) {
@@ -23,6 +24,7 @@ function harness({ failed = false } = {}) {
     pendingWriteRequests: new Map(), setTimeout, clearTimeout,
     ws: { readyState: 1 }, WebSocket: { OPEN: 1 },
     console: { log() {} }, traceLog() {},
+    ...siteAuthBindings(),
     callManagedBackgroundTool: async () => ({ fixture: true }),
     sendToNative(message) {
       if (!['adapter_catalog', 'adapter_bundle'].includes(message.type)) { messages.push(message); return; }

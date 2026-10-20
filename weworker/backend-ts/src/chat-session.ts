@@ -29,6 +29,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { createLogger } from './logger.js'
+import type { UserMediaSink } from './user-media.js'
 import { createApiDurationTracker, type ApiDurationTracker } from './usage-metrics.js'
 
 const log = createLogger('chat-session')
@@ -46,6 +47,8 @@ export interface ChatTurnBindings {
   /** Work used by the session's MCP tools; set when a spare session is bound to a work. */
   workIdRef: { current: string | null }
   onAskUser: ((event: AskUserEvent) => void) | null
+  /** Delivery of send_image_to_user / send_file_to_user to the current turn's conversation. */
+  userMedia?: UserMediaSink | null
   extraToolGuard?: ToolGuard
   memory: { userPromptInjections: number; postToolBatchInjections: number }
 }

@@ -42,6 +42,8 @@ import { backendFetch } from '../../api/http.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
 import { getAnthropicUrlHint, getOpenAiUrlHint } from '../../utils/provider-url.js'
 import { showConfirm } from '../../store/dialog.js'
+import { BROWSER_MODE_OPTIONS, describeBrowserMode } from '../../utils/dedicated-browser.js'
+import SiteLoginSettings from '../site-login/SiteLoginSettings.jsx'
 
 const API = 'http://127.0.0.1:8765'
 const OFFICIAL_URL = 'http://weworker.weoa.com'
@@ -277,6 +279,55 @@ function BackgroundSettingsGroup() {
   )
 }
 
+/** Which browser runs website operations. Saved immediately; the desktop switches right away. */
+function BrowserSettingsGroup() {
+  const [settings, setSettings] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI?.getAppSettings?.().then((value) => { if (!cancelled) setSettings(value || null) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  if (!settings?.browserMode) return null
+  const change = async (browserMode) => {
+    if (browserMode === settings.browserMode) return
+    setError('')
+    setSaving(true)
+    try {
+      const saved = await window.electronAPI?.setAppSettings?.({ browserMode })
+      if (saved) setSettings(saved)
+    } catch (err) {
+      setError(err?.message || '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="settings-group">
+      <SettingRow title="网站操作浏览器" description={describeBrowserMode(settings.browserMode)} stacked>
+        <div className="settings-update-settings">
+          <div className="settings-pill settings-pill--wide">
+            <AppDropdownSelect
+              value={settings.browserMode}
+              options={BROWSER_MODE_OPTIONS}
+              disabled={saving}
+              onChange={change}
+              matchAnchorWidth
+              ariaLabel="网站操作浏览器"
+            />
+          </div>
+          {saving && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>正在切换…</div>}
+          {error && <div style={{ fontSize: 12, color: 'var(--error, #ef4444)' }}>{error}</div>}
+        </div>
+      </SettingRow>
+    </div>
+  )
+}
+
 function AboutTab({ appVersion, commitHash }) {
   const [updateState, setUpdateState] = useState(null)
   const [checking, setChecking] = useState(false)
@@ -404,6 +455,10 @@ function AboutTab({ appVersion, commitHash }) {
       </div>
 
       <BackgroundSettingsGroup />
+
+      <BrowserSettingsGroup />
+
+      <SiteLoginSettings />
 
       <div className="settings-group">
         <SettingRow

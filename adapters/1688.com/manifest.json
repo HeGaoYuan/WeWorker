@@ -32,6 +32,22 @@
     "detail.m.1688.com",
     "winport.m.1688.com"
   ],
+  "auth": {
+    "login_url": "https://login.1688.com/member/signin.htm",
+    "login_hosts": [
+      "login.1688.com",
+      "login.taobao.com",
+      "account.1688.com"
+    ],
+    "check": {
+      "cookies": {
+        "url": "https://www.1688.com/",
+        "equals": {
+          "__cn_logon__": "true"
+        }
+      }
+    }
+  },
   "scenarios": [
     {
       "id": "product-search",

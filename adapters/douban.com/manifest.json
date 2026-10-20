@@ -16,6 +16,15 @@
     "img3.doubanio.com",
     "img9.doubanio.com"
   ],
+  "auth": {
+    "login_url": "https://accounts.douban.com/passport/login",
+    "login_hosts": [
+      "accounts.douban.com"
+    ],
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "豆瓣",

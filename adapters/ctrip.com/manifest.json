@@ -479,6 +479,15 @@
   "runtime_allowed_hosts": [
     "passport.ctrip.com"
   ],
+  "auth": {
+    "login_url": "https://passport.ctrip.com/user/login",
+    "login_hosts": [
+      "passport.ctrip.com"
+    ],
+    "check": {
+      "command": "whoami"
+    }
+  },
   "discovery_terms": [
     "携程",
     "机票",

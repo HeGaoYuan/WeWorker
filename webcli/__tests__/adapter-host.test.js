@@ -65,7 +65,8 @@ describe('host catalog and execution snapshots', () => {
   it('binds Backend calls to a snapshot and rejects a stale CLI snapshot before forwarding', async () => {
     const installed = install();
     const request = vi.fn().mockResolvedValue('fixture result');
-    const bridge = { _request: request, _extensionCapabilities: ['adapter_catalog_v1'] };
+    // Without known capabilities the Bridge starts WeWorker 浏览器 first; here it is already running.
+    const bridge = { _request: request, _extensionCapabilities: ['adapter_catalog_v1'], _ensureBrowser: async () => {} };
     const run = (snapshot) => WebSocketBridge.prototype._callToolInner.call(bridge, 'demo.list', {}, 'fixture-trace', snapshot);
     expect(await run()).toBe('fixture result');
     const before = request.mock.calls[0][0].adapterSnapshot;

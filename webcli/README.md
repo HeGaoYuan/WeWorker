@@ -95,6 +95,14 @@ webcli service start [-d]          启动 Bridge（-d 后台运行）
 webcli service stop                停止后台服务
 webcli service status              查看服务状态
 
+# WeWorker 浏览器（默认）：Bridge 按需启动独立 profile 的 Chrome/Edge，窗口在屏幕外，不打扰你。
+# 与 WeWorker 桌面端共用同一个浏览器、登录状态和模式设置（~/.weworker/browser/）。
+webcli browser status [--json]     查看状态
+webcli browser show                把窗口移到屏幕内（登录网站、查看页面）
+webcli browser hide                把窗口移回屏幕外
+webcli browser start|stop|restart  启动 / 停止 / 重启（调用工具时自动启动；无客户端时空闲 30 分钟自动停止）
+webcli browser mode [dedicated|system]  查看或切换模式（system = 使用你自己的 Chrome 和手动安装的扩展）
+
 # 工具调用
 webcli call <tool_name> [--key=value]   调用适配器工具
 

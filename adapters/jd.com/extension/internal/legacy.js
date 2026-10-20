@@ -228,8 +228,8 @@ function checkLoginStatus() {
   try {
     const hostname = window.location.hostname;
 
-    // 不在 jd.com 域名下 → 导航到首页
-    if (!hostname.includes('jd.com')) {
+    // 不在京东域名下（jd.com，及部分地区的 jd.hk）→ 导航到首页
+    if (!/(^|\.)jd\.(com|hk)$/.test(hostname)) {
       setTimeout(() => { window.location.href = 'https://www.jd.com/'; }, 100);
       return {
         logged_in: false,
@@ -428,8 +428,8 @@ async function viewCart() {
  */
 async function viewOrders() {
   try {
-    // 如果已经在订单页面，直接解析
-    if (window.location.href.includes('order.jd.com/center/list.action')) {
+    // 如果已经在订单页面，直接解析（部分账号会被京东从 order.jd.com 跳转到 order.jd.hk）
+    if (/^order\.jd\.(com|hk)$/.test(window.location.hostname) && window.location.pathname.indexOf('/center/list.action') === 0) {
       // 等待订单列表加载
       await sleep(1000);
       const orders = parseOrderList();
@@ -922,7 +922,7 @@ window.__webmcpRegister({
         name: 'jd.com.check_login_status',
         excludeTabDomain: 'pc-settlement-lite-pro.pf.jd.com',
         description:
-          '检测京东是否已登录。打开京东后应首先调用此工具确认登录状态，未登录时需提醒用户先登录。',
+          '检测京东是否已登录并返回登录状态。仅在用户明确询问登录状态时调用；调用其他工具前无需先调用它，未登录时 WeWorker 会自动打开登录页并在登录后继续。',
         parameters: { type: 'object', properties: {}, required: [] },
         handler: () => checkLoginStatus(),
       },

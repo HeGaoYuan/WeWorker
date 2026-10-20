@@ -7,6 +7,12 @@
     "creator.douyin.com",
     "www.douyin.com"
   ],
+  "auth": {
+    "login_url": "https://creator.douyin.com/",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "抖音",

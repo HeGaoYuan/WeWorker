@@ -6,6 +6,12 @@
   "match": [
     "juejin.cn"
   ],
+  "auth": {
+    "login_url": "https://juejin.cn/login",
+    "check": {
+      "command": "check-login-status"
+    }
+  },
   "requires_auth": true,
   "scenarios": [
     {

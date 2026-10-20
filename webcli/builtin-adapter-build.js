@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertAdapterIdentity } from './adapter-catalog.js';
-import { assertManagedDirectory, readPackageDirectory, writePackageDirectory } from './adapter-package-files.js';
+import { assertManagedDirectory, assertManagedFile, readPackageDirectory, writePackageDirectory } from './adapter-package-files.js';
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const RESERVED_PROFILE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
@@ -62,6 +62,33 @@ export function writeBuiltinAdapters({ selection, outputDir, profile }) {
   });
   fs.writeFileSync(path.join(outputDir, '.profile.json'), JSON.stringify(metadata, null, 2) + '\n', { flag: 'wx' });
   return metadata;
+}
+
+/**
+ * Copy the page scripts (`extension/**`) of the prepared built-in packages into the
+ * generated Extension under managed-adapters/<name>/. The host still selects what runs:
+ * the Extension injects a copy only when it is byte-identical to the host's bundle, and
+ * then needs no chrome.debugger session on the page. Returns the number of files written.
+ */
+export function writeExtensionPageScripts({ builtinDir, extensionDir }) {
+  const metadata = validateBuiltinOutput(builtinDir);
+  assertManagedDirectory(extensionDir);
+  const outputDir = path.join(extensionDir, 'managed-adapters');
+  assertManagedDirectory(outputDir);
+  if (fs.existsSync(outputDir)) fs.rmSync(outputDir, { recursive: true, force: true });
+  let written = 0;
+  for (const entry of metadata.adapters) {
+    const pkg = readPackageDirectory(path.join(builtinDir, entry.name));
+    const root = path.join(outputDir, entry.name);
+    for (const [name, bytes] of pkg.files) {
+      if (!name.startsWith('extension/')) continue;
+      const file = assertManagedFile(root, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, bytes, { flag: 'wx' });
+      written++;
+    }
+  }
+  return written;
 }
 
 export function validateBuiltinOutput(outputDir) {

@@ -24,7 +24,6 @@ function renderTextWithLinks(text) {
         >
           地址
         </a>
-        
       </span>
     ) : (
       part

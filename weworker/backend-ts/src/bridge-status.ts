@@ -10,6 +10,8 @@ export interface AdapterScaffoldGeneratedEvent {
   adapterDir?: string
 }
 
+export type ExtensionInstance = 'dedicated' | 'system'
+
 export interface AdapterStateChangedEvent {
   profile: string
   previousRevision: number
@@ -27,6 +29,8 @@ export class BridgeStatus {
   private _connected = false
   private _extensionConnected = false
   private _extensionVersion: string | null = null
+  /** 'dedicated' when the serving extension runs in WeWorker 浏览器. */
+  private _extensionInstance: ExtensionInstance = 'system'
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _stopped = false
   private _adapterScaffoldListeners = new Set<(event: AdapterScaffoldGeneratedEvent) => void>()
@@ -77,9 +81,11 @@ export class BridgeStatus {
     if (type === 'extension_connected') {
       this._extensionConnected = true
       this._extensionVersion = (msg as { version?: string }).version ?? null
+      this._extensionInstance = msg.instance === 'dedicated' ? 'dedicated' : 'system'
     } else if (type === 'extension_disconnected') {
       this._extensionConnected = false
       this._extensionVersion = null
+      this._extensionInstance = 'system'
     } else if (type === 'adapter_scaffold_generated' || type === 'adapter_installed') {
       const siteKey = typeof msg.siteKey === 'string' ? msg.siteKey.trim() : ''
       if (!siteKey) return
@@ -129,6 +135,10 @@ export class BridgeStatus {
   isConnected(): boolean { return this._connected }
   isExtensionConnected(): boolean { return this._extensionConnected }
   getExtensionVersion(): string | null { return this._extensionVersion }
+  getExtensionInstance(): ExtensionInstance { return this._extensionInstance }
+
+  /** Test hook: feed one bridge message. */
+  handleMessageForTest(msg: Record<string, unknown>): void { this._handleMessage(msg) }
 }
 
 export const bridgeStatus = new BridgeStatus()

@@ -23,6 +23,18 @@
     "www.twitter.com",
     "mobile.twitter.com"
   ],
+  "auth": {
+    "login_url": "https://x.com/i/flow/login",
+    "check": {
+      "cookies": {
+        "url": "https://x.com/",
+        "all": [
+          "auth_token"
+        ]
+      },
+      "command": "whoami"
+    }
+  },
   "scenarios": [
     {
       "id": "search-and-trending",

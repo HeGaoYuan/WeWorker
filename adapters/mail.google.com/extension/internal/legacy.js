@@ -624,7 +624,7 @@ window.__webmcpRegister({
   tools: [
     {
       name: 'mail.google.com.check_login_status',
-      description: '检测 Gmail 是否已登录。打开 Gmail 后应首先调用此工具确认登录状态，未登录时需提醒用户先登录。',
+      description: '检测 Gmail 是否已登录并返回登录状态。仅在用户明确询问登录状态时调用；调用其他工具前无需先调用它，未登录时 WeWorker 会自动打开登录页并在登录后继续。',
       parameters: { type: 'object', properties: {}, required: [] },
       handler: () => checkLoginStatus(),
     },

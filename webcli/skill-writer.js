@@ -53,7 +53,7 @@ export function generateSkillContent(manifest, tools, options = {}) {
   lines.push("");
 
   if (manifest.requires_auth) {
-    lines.push("> Requires authentication. Direct tools should be tried first with the browser's existing session; open the website only when a direct call reports that login or page context is required.");
+    lines.push("> Requires authentication. WeWorker handles login: when a tool reports AUTH_REQUIRED it opens the login page, waits for the user and retries. Call tools directly; do not check login first.");
     lines.push("");
   }
 

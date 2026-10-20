@@ -1,6 +1,9 @@
-/* v2 command jd.com.navigate-to-homepage; delegates to the preserved executable implementation. */
+/* v2 command jd.com.navigate-to-homepage: the host opens the homepage and returns when it has loaded. */
 (function () {
-  __webcliRegisterCommand("navigate-to-homepage", async function (params) {
-    return window["__jd_com_internal"].invoke("jd.com.navigate_to_homepage", params || {});
+  __webcliRegisterCommand("navigate-to-homepage", async function () {
+    if (location.hostname === "www.jd.com" && (location.pathname === "/" || location.pathname === "")) {
+      return { status: "success", currentUrl: location.href };
+    }
+    return { __webcli_navigation: { version: 1, url: "https://www.jd.com/", resume: false, result: { status: "success", currentUrl: "https://www.jd.com/" } } };
   });
 })();

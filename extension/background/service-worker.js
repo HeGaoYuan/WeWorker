@@ -3,10 +3,49 @@ import { browserContextId } from './browser-profile.js';
 import { readHttpCookies } from './http-credentials.js';
 import { executePageRequest, pageWriteRequest } from './page-write.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
+import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from "./v2-loader.js";
 import { validateBackgroundPreview, backgroundPreviewRequest } from './generation-background-preview.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
+import { createPackagedAdapterMatcher, injectPackagedAdapter } from './packaged-adapter-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
+import {
+  adapterHelperPatterns,
+  adapterPrimaryHost,
+  createRouteRedirects,
+  hostMatchesPattern,
+  pickRecentScopeTab,
+  pickRouteTab,
+} from './host-scope.js';
+import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+import {
+  authErrorFields,
+  authRequiredError,
+  cookieFingerprint,
+  declaredHosts as authDeclaredHosts,
+  displayUrl as authDisplayUrl,
+  evaluateCookieCheck,
+  isLoginPageUrl,
+  loginStartUrl,
+  siteAuth,
+} from './site-auth.js';
+import {
+  browserInstanceHelloFields,
+  createBrowserTab,
+  focusBrowserWindow,
+  loadBrowserInstance,
+  revealWindowOnUserFocus,
+  watchBrowserInstance,
+} from './browser-instance.js';
+import {
+  captureTabViaDebugger,
+  createToolTabTracker,
+  debuggerTargetId,
+  displayPageUrl,
+  pickScreenshotTab,
+  selectTabForScreenshot,
+} from './screenshot.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 import { executeBrowserCommand } from './browser-commands.js';
@@ -86,6 +125,8 @@ function buildExtensionHello(extra = {}) {
     contextId: currentBrowserContextId,
     version: chrome.runtime.getManifest().version,
     capabilities: EXTENSION_CAPABILITIES,
+    // WeWorker 浏览器 proves itself with the token the desktop stored for it.
+    ...browserInstanceHelloFields(),
     ...extra,
   };
 }
@@ -1071,7 +1112,7 @@ async function runExploreWorkflow({ tabId = null, url = null, includeTelemetry =
   let opened = null;
 
   if (!targetTabId && url) {
-    const created = await chrome.tabs.create({ url: 'about:blank', active: true });
+    const created = await createBrowserTab({ url: 'about:blank', active: true });
     targetTabId = created?.id ?? null;
     opened = { tabId: targetTabId, url };
   }
@@ -1315,7 +1356,7 @@ async function runLegacyActiveExploreWorkflow({ tabId = null, url = null } = {})
   let opened = null;
 
   if (!targetTabId && url) {
-    const created = await chrome.tabs.create({ url: 'about:blank', active: true });
+    const created = await createBrowserTab({ url: 'about:blank', active: true });
     targetTabId = created?.id ?? null;
     opened = { tabId: targetTabId, url };
   }
@@ -1889,7 +1930,7 @@ async function runActionCaptureWorkflow({
   let opened = null;
 
   if (!targetTabId && url) {
-    const created = await chrome.tabs.create({ url: 'about:blank', active: true });
+    const created = await createBrowserTab({ url: 'about:blank', active: true });
     targetTabId = created?.id ?? null;
     opened = { tabId: targetTabId, url };
   }
@@ -2557,6 +2598,9 @@ function connectToNativeHost() {
     try { currentBrowserContextId = await browserContextId(chrome.storage.local); }
     catch (error) { console.error('[WebMCP] Browser profile unavailable:', error.message); socket.close(1008, 'PROFILE_ID_INVALID'); return; }
     if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+    // 每次连接都重新读取 WeWorker 浏览器标记，避免启动时错过存储变更事件。
+    await loadBrowserInstance();
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
     sendToNative(buildExtensionHello());
 
     chrome.tabs.query({}, (tabs) => {
@@ -2710,8 +2754,10 @@ async function handleNativeMessage(msg) {
     const tracePrefix = traceID ? `[${traceID}] ` : '';
     console.log(`${tracePrefix}[WebMCP] <- native: call_tool ${toolName}`);
     traceLog(traceID, `[ServiceWorker] 收到 call_tool: ${toolName}`);
+    let selectedManifest = null;
     try {
       const selected = await getHostAdapterClient().tool(toolName);
+      if (selected.managed) selectedManifest = selected.manifest;
       if (msg.adapterSnapshot && (!selected.managed || msg.adapterSnapshot.name !== selected.manifest.name
         || msg.adapterSnapshot.digest !== selected.manifest._hostSnapshot.digest
         || msg.adapterSnapshot.profile !== selected.manifest._hostSnapshot.profile)) {
@@ -2726,7 +2772,9 @@ async function handleNativeMessage(msg) {
           return;
         }
         const tabs = await chrome.tabs.query({});
-        const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        const declaredRoute = selected.command.tabDomain || selected.command.routeDomain;
+        const route = declaredRoute || adapterPrimaryHost(selected.manifest);
+        const excludeTabDomain = selected.command.excludeTabDomain;
         let pageTab;
         if (selected.command.pageRoute) {
           const { origin, pathname } = selected.command.pageRoute;
@@ -2745,26 +2793,23 @@ async function handleNativeMessage(msg) {
             return;
           }
         }
-        // 先精确匹配 hostname，再回退到 manifest.match 声明的页面主机（含 *.wildcard）。
-        // 回退必须限定在声明的主机内：runtime_allowed_hosts 里的辅助域（如 so.gitee.com）
-        // 不是页面主机，不得被选为执行页。语义与 assertAdapterNavigationUrl 的白名单一致。
-        let tab = pageTab || tabs.find(entry => {
-          try { return new URL(entry.url).hostname === route; } catch { return false; }
-        });
-        if (!tab?.id) {
-          const declaredHosts = selected.manifest.match || [];
-          tab = tabs.find(entry => {
-            try {
-              const hostname = new URL(entry.url).hostname;
-              return declaredHosts.some(host => hostname === host
-                || (host.startsWith('*.') && hostname.endsWith(host.slice(1))));
-            } catch { return false; }
-          });
-        }
+        // The route host, or the host it was last redirected to (order.jd.com → order.jd.hk).
+        let tab = pageTab || pickRouteTab(tabs, route, { aliases: managedRouteRedirects.aliases(selected.manifest, route), excludeTabDomain });
+        // A command without a declared route runs on any page of its package (match and
+        // domains, never runtime_allowed_hosts helpers): a page command may have moved its
+        // tab to another host in its scope (search.*, order.* …).
+        if (!tab && !declaredRoute) tab = pickRecentScopeTab(tabs, selected.manifest, excludeTabDomain);
         if (!tab?.id) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
-          tab = await chrome.tabs.create({ url: startUrl, active: false });
+          tab = await createBrowserTab({ url: startUrl, active: false });
+          // Learn where the site sends this host (regional or brand domains) before the first call.
+          const landed = await waitForManagedPageReady(tab.id, selected.manifest, true, 25000);
+          managedRouteRedirects.note(selected.manifest, startUrl, landed);
+          tab = { ...tab, url: landed };
         }
+        // All managed foreground commands, including pageWrite/uiWrite, become the
+        // target of a following capture_screenshot call.
+        screenshotToolTabs.note(tab.id);
         if (selected.command.pageWrite || selected.command.uiWrite) {
           const connection = ws, request = (selected.command.uiWrite ? uiWriteRequest : pageWriteRequest)(selected.command, args || {}), deadline = Date.now() + 30000;
           const reply = await getHostAdapterRuntime().exclusive(tab.id, () => executePageRequest({ chrome, ensureCdpAttached, tabId: tab.id,
@@ -2873,9 +2918,33 @@ async function handleNativeMessage(msg) {
       if (resultError) throw new Error(resultError);
       sendToNative({ type: "call_tool_result", id: msg.id, result, traceID });
       traceLog(traceID, `[ServiceWorker] call_tool 完成: ${toolName}`);
+    } catch (caught) {
+      // An HTTP 401 from Adapter helpers means the session is missing or expired.
+      const err = caught?.code === 'HTTP_ERROR' && Number(caught?.details?.status) === 401
+        ? authRequiredError({ site: selectedManifest?.name, phase: 'handler', message: caught.message })
+        : caught;
+      const auth = authErrorFields(err, selectedManifest);
+      sendToNative({
+        type: "call_tool_error", id: msg.id, error: err.message,
+        ...(typeof err?.code === 'string' && err.code ? { code: err.code } : {}),
+        ...(auth ? { auth } : {}),
+        traceID,
+      });
+      traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}${err?.code ? ` (${err.code})` : ''}`);
+    }
+
+  } else if (msg.type === 'auth_open_login') {
+    try {
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: await openSiteLoginTab(msg) });
     } catch (err) {
-      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
-      traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}`);
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'auth_check') {
+    try {
+      sendToNative({ type: 'call_tool_result', id: msg.id, result: await checkSiteLogin(msg) });
+    } catch (err) {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
   } else if (msg.type === 'http_credentials') {
@@ -3207,43 +3276,49 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === "open_tab") {
     try {
-      const tab = await chrome.tabs.create({ url: msg.url, active: true });
+      const tab = await createBrowserTab({ url: msg.url, active: true });
       sendToNative({ type: "call_tool_result", id: msg.id, result: { tabId: tab.id, url: tab.url } });
     } catch (err) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
+  } else if (msg.type === "screenshot_target") {
+    // WeWorker 浏览器: the Bridge captures through its own CDP pipe (no "being debugged"
+    // bar, no chrome.debugger); the extension only picks and selects the tab.
+    const traceID = msg.traceID || null;
+    try {
+      const { tab, reason } = await prepareScreenshotTab(msg.tabId, traceID);
+      const targetId = await debuggerTargetId({ api: chrome, tabId: tab.id });
+      traceLog(traceID, `[ServiceWorker] screenshot_target: tab=${tab.id} target=${targetId || 'none'}`);
+      sendToNative({
+        type: "call_tool_result", id: msg.id, traceID,
+        result: { tabId: tab.id, url: displayPageUrl(tab.url), reason, targetId },
+      });
+    } catch (err) {
+      traceLog(traceID, `[ServiceWorker] screenshot_target 失败: ${err.message}`);
+      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
+    }
   } else if (msg.type === "capture_screenshot") {
+    const traceID = msg.traceID || null;
+    const log = (line) => traceLog(traceID, `[ServiceWorker] capture_screenshot: ${line}`);
     // captureVisibleTab 在 MV3 下需要 <all_urls> 或带用户手势的 activeTab，
     // 仅按域名授予的 host 权限不满足（会抛 "Either the '<all_urls>' or 'activeTab' permission is required."）。
     // 项目安全策略禁止 <all_urls>，故权限不足时回退到已授权的 chrome.debugger（CDP Page.captureScreenshot）。
-    async function captureTabViaDebugger(tabId, { format = "jpeg", quality = 80 } = {}) {
-      const target = { tabId };
-      await chrome.debugger.attach(target, "1.3");
-      try {
-        await chrome.debugger.sendCommand(target, "Page.enable");
-        const { data } = await chrome.debugger.sendCommand(target, "Page.captureScreenshot", { format, quality });
-        return `data:image/${format === "png" ? "png" : "jpeg"};base64,${data}`;
-      } finally {
-        try { await chrome.debugger.detach(target); } catch (_) { /* 已分离 */ }
-      }
-    }
     async function captureVisible(tab, { format = "jpeg", quality = 80 } = {}) {
       try {
         return await chrome.tabs.captureVisibleTab(tab.windowId, { format, quality });
       } catch (err) {
         const m = err?.message || "";
         if (m.includes("'<all_urls>'") || m.includes("activeTab") || m.includes("permission")) {
-          return await captureTabViaDebugger(tab.id, { format, quality });
+          log('captureVisibleTab not permitted; using chrome.debugger');
+          // A session another feature holds on this tab is borrowed, never detached.
+          return await captureTabViaDebugger({ api: chrome, tabId: tab.id, borrowed: cdpAttachedTabs.has(tab.id), format, quality, log });
         }
         throw err;
       }
     }
     try {
-      // 获取当前活动的tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) {
-        throw new Error("未找到活动的标签页");
-      }
+      const { tab } = await prepareScreenshotTab(msg.tabId, traceID);
+      const shotTab = { tabId: tab.id, url: displayPageUrl(tab.url) };
 
       // 使用chrome.tabs.captureVisibleTab截图（使用JPEG格式以获得更好的压缩）
       // 若权限不足，captureVisible 会自动回退到 chrome.debugger (CDP) 截图
@@ -3293,7 +3368,9 @@ async function handleNativeMessage(msg) {
           sendToNative({
             type: "call_tool_result",
             id: msg.id,
+            traceID,
             result: {
+              ...shotTab,
               data: cropped.data,
               width: cropped.width,
               height: cropped.height,
@@ -3314,7 +3391,9 @@ async function handleNativeMessage(msg) {
           sendToNative({
             type: "call_tool_result",
             id: msg.id,
+            traceID,
             result: {
+              ...shotTab,
               data: cropped.data,
               width: cropped.width,
               height: cropped.height,
@@ -3335,7 +3414,9 @@ async function handleNativeMessage(msg) {
         sendToNative({
           type: "call_tool_result",
           id: msg.id,
+          traceID,
           result: {
+            ...shotTab,
             data: cropped.data,
             width: cropped.width,
             height: cropped.height,
@@ -3349,8 +3430,10 @@ async function handleNativeMessage(msg) {
           }
         });
       }
+      log('done');
     } catch (err) {
-      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
+      log(`失败: ${err.message}`);
+      sendToNative({ type: "call_tool_error", id: msg.id, error: err.message, traceID });
     }
   } else if (msg.type === "reload_extension") {
     console.log("[WebMCP] Reloading extension by request from native host...");
@@ -3512,6 +3595,17 @@ function logCallToolTiming(msg) {
 // ─── Trace 日志存储（按需拉取，不主动推送） ──────────────────────────────────
 
 const traceLogs = new Map(); // traceID -> string[]
+// Tab of the last Adapter command; capture_screenshot captures it (see screenshot.js).
+const screenshotToolTabs = createToolTabTracker(typeof chrome !== 'undefined' ? chrome : undefined);
+
+/** The tab capture_screenshot shows, selected in its window so that it paints. */
+async function prepareScreenshotTab(tabId, traceID) {
+  const toolTabId = await screenshotToolTabs.get();
+  const picked = await pickScreenshotTab({ api: chrome, tabId: Number.isInteger(tabId) ? tabId : null, toolTabId });
+  traceLog(traceID, `[ServiceWorker] 截图目标: tab=${picked.tab.id} (${picked.reason}) ${displayPageUrl(picked.tab.url)}${picked.tab.active ? '' : '，在窗口内选中'}`);
+  const tab = await selectTabForScreenshot({ api: chrome, tab: picked.tab });
+  return { tab, reason: picked.reason };
+}
 
 function traceLog(traceID, message) {
   if (!traceID) return;
@@ -4482,7 +4576,7 @@ async function findDirectRuntimeContextTab() {
 }
 
 async function createDirectBrowserFetchTab(traceID = null) {
-  const created = await chrome.tabs.create({ url: "about:blank", active: false });
+  const created = await createBrowserTab({ url: "about:blank", active: false });
   if (!Number.isInteger(created?.id)) {
     throw createRuntimeHelperError("BROWSER_FETCH_ERROR", "Failed to create direct browser fetch tab");
   }
@@ -4871,7 +4965,7 @@ async function findTabByDomain(domain, excludeTabDomain, requiredTabDomain) {
     try {
       await chrome.tabs.update(tab.id, { active: true });
       // 激活该tab所在的窗口
-      await chrome.windows.update(tab.windowId, { focused: true });
+      await focusBrowserWindow(tab.windowId);
     } catch {
       // Tab may have been closed between query and update — skip it
       domainData.tabIds.delete(tab.id);
@@ -4937,7 +5031,7 @@ async function waitForToolRegistry(domain, timeoutMs = 10000) {
 async function autoOpenHomepageTab(domain) {
   const homepageUrl = await getHomepageUrlForDomain(domain) || `http://${domain}/`;
   try {
-    const tab = await chrome.tabs.create({ url: homepageUrl, active: true });
+    const tab = await createBrowserTab({ url: homepageUrl, active: true });
     const ready = await waitForToolRegistry(domain, 10000);
     if (ready) return tab.id;
     // 即使未确认注入完成，也返回 tabId 让后续重试 findTabByDomain 判定
@@ -5032,6 +5126,8 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
 async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null, continuation = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
+  // capture_screenshot shows this page, not whatever tab the window has selected.
+  screenshotToolTabs.note(tabId);
 
   const message = { type: "call_tool", toolName, args, ...(continuation ? { continuation } : {}) };
   if (traceID) message.traceID = traceID;
@@ -5058,7 +5154,13 @@ async function callToolInTab(tabId, toolName, args, traceID = null, allowTranspo
         ...(Number.isFinite(timeoutMs) ? [new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter command timed out; execution was not replayed.')), timeoutMs); })] : []),
       ]).finally(() => clearTimeout(timer));
       // 成功 —— 继续处理响应
-      if (response?.error) throw createAdapterError(response.error);
+      if (response?.error) {
+        const adapterError = createAdapterError(response.error);
+        // Codes such as AUTH_REQUIRED drive host behaviour (login flow); keep them.
+        if (typeof response.code === 'string' && response.code) adapterError.code = response.code;
+        if (response.details && typeof response.details === 'object') adapterError.details = response.details;
+        throw adapterError;
+      }
 
       const result = response?.result;
 
@@ -5110,7 +5212,7 @@ async function callToolInTab(tabId, toolName, args, traceID = null, allowTranspo
             tabUrlChanged = true;
           }
           if (tab.windowId) {
-            await chrome.windows.update(tab.windowId, { focused: true });
+            await focusBrowserWindow(tab.windowId);
           }
           await chrome.tabs.update(tabId, { active: true });
         } catch {
@@ -6284,7 +6386,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const { url, downloadPath } = msg;
 
         // 1. 创建新的诺诺网标签页（扩展创建，不会被拦截）
-        const nuonuoTab = await chrome.tabs.create({
+        const nuonuoTab = await createBrowserTab({
           url: url,
           active: false // 在后台打开
         });
@@ -7079,22 +7181,32 @@ function assertManagedRuntimeRequest(action, payload, context) {
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Unsupported Adapter helper URL.');
       host = url.hostname;
     }
-    if (!context.declaredHosts.some((entry) => {
-      const pattern = entry.toLowerCase();
-      return pattern.startsWith('*.') ? host === pattern.slice(2) || host.endsWith(pattern.slice(1)) : host === pattern;
-    })) throw new Error('Adapter helper host is not declared in the current package.');
+    if (!context.declaredHosts.some((pattern) => hostMatchesPattern(host, pattern))) {
+      throw new Error('Adapter helper host is not declared in the current package.');
+    }
   }
 }
 
 async function callManagedBackgroundTool(manifest, command, args, traceID) {
-  const routeDomain = manifest.match[0].replace(/^\*\./, '');
+  const routeDomain = adapterPrimaryHost(manifest);
+  const declaredHosts = adapterHelperPatterns(manifest);
   const context = { adapterId: manifest.name, routeDomain, tabDomain: routeDomain, traceID,
-    declaredHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])],
-    allowedHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])].map(host => host.replace(/^\*\./, '')) };
+    declaredHosts,
+    allowedHosts: declaredHosts.map(host => host.replace(/^\*\./, '')) };
   // The runtime owns the shared queue. Set global legacy helper context only
   // while its queued task runs, including settlement of in-flight helpers.
   const runtime = getManagedBackgroundRuntime();
   return runtime.execute(manifest, command, args, context);
+}
+
+/** Where the site redirected a requested host inside the package scope (see host-scope.js). */
+const managedRouteRedirects = createRouteRedirects();
+
+/** A read step that lands on a login page (redirect or SSO) has not run Adapter code yet. */
+function assertNotOnLoginPage(manifest, url) {
+  if (isLoginPageUrl(manifest, url)) {
+    throw authRequiredError({ site: manifest.name, pageUrl: authDisplayUrl(url), phase: 'navigation' });
+  }
 }
 
 async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs, traceID = null) {
@@ -7109,9 +7221,13 @@ async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs, trace
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab) throw new Error('Adapter tab was closed.');
-    if (tab.status === 'complete' && stableUrl === tab.url) return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    if (tab.status === 'complete' && stableUrl === tab.url) {
+      if (resume) assertNotOnLoginPage(manifest, tab.url);
+      return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    }
     stableUrl = tab.status === 'complete' ? tab.url : null;
     if (guard.observe(tab.url, Date.now()) === 'reject') {
+      if (resume) assertNotOnLoginPage(manifest, tab.url);
       traceLog(traceID, `[ServiceWorker] 页面目标 host 不在白名单，提前结束等待: ${tab.url}`);
       return assertAdapterNavigationUrl(manifest, tab.url, resume);
     }
@@ -7135,8 +7251,96 @@ function getHostAdapterRuntime() {
       assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
       return executePageQuery({ chrome, ensureCdpAttached, tabId, payload: { ...payload, metadataOnly: false } });
     },
-    navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
+    navigate: async (tabId, url, manifest, resume, timeoutMs) => {
+      try {
+        const landed = await navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs);
+        managedRouteRedirects.note(manifest, url, landed);
+        return landed;
+      } catch (error) {
+        // A read continuation redirected to an undeclared login host (SSO).
+        if (resume) {
+          const tab = await chrome.tabs.get(tabId).catch(() => null);
+          if (tab?.url) assertNotOnLoginPage(manifest, tab.url);
+        }
+        throw error;
+      }
+    },
   });
+}
+
+// ─── Website login (driven by the Bridge's login flow) ───────────────────────
+
+/** Login tabs opened per site; reused while the user signs in. */
+const siteLoginTabs = new Map();
+
+function isDeclaredHostUrl(manifest, value) {
+  let url;
+  try { url = new URL(String(value)); } catch { return false; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  return authDeclaredHosts(manifest).some((pattern) => hostMatchesPattern(url.hostname, pattern));
+}
+
+async function managedSiteManifest(site) {
+  if (typeof site !== 'string' || !SAFE_ADAPTER_ID_RE.test(site)) throw new Error('Invalid site.');
+  const { managed, manifest } = await getHostAdapterClient().manifest(site);
+  if (!managed || !manifest) throw new Error(`Adapter "${site}" is not available.`);
+  return manifest;
+}
+
+async function findSiteLoginTab(manifest) {
+  // A tab from an earlier login has usually moved on to the site; only a tab that is
+  // on a login page now is reused.
+  siteLoginTabs.delete(manifest.name);
+  const tabs = await chrome.tabs.query({});
+  return tabs.find((tab) => tab?.id && isLoginPageUrl(manifest, tab.url || tab.pendingUrl, { root: true })) || null;
+}
+
+/** Open (or reuse) the login page. Only declared hosts or recognised login pages are opened. */
+async function openSiteLoginTab(msg) {
+  const manifest = await managedSiteManifest(msg.site);
+  let tab = await findSiteLoginTab(manifest);
+  if (!tab) {
+    // Only declared hosts are opened from a request; an undeclared SSO page is used only
+    // when the site itself redirected a tab there (found above).
+    const requested = typeof msg.url === 'string' && isDeclaredHostUrl(manifest, msg.url) ? msg.url : null;
+    const url = requested || loginStartUrl(manifest);
+    if (!url) throw new Error('This Adapter declares no login page.');
+    tab = await createBrowserTab({ url, active: true });
+  } else if (!tab.active) {
+    tab = await chrome.tabs.update(tab.id, { active: true }) || tab;
+  }
+  siteLoginTabs.set(manifest.name, tab.id);
+  // The user's own Chrome: bring the login tab forward (WeWorker 浏览器 is shown by the Bridge).
+  if (msg.focus === true && Number.isInteger(tab.windowId)) await focusBrowserWindow(tab.windowId).catch(() => {});
+  return { tabId: tab.id, url: tab.url || tab.pendingUrl || '' };
+}
+
+/** Where the login tab is, and the declared cookie check. Commands are checked by the Bridge. */
+async function checkSiteLogin(msg) {
+  const manifest = await managedSiteManifest(msg.site);
+  const auth = siteAuth(manifest);
+  let loginTab = { open: false, url: '', onLoginPage: false };
+  const known = siteLoginTabs.get(manifest.name);
+  if (Number.isInteger(known)) {
+    const tab = await chrome.tabs.get(known).catch(() => null);
+    if (tab?.id) {
+      const url = tab.url || tab.pendingUrl || '';
+      // A page that is still loading (for example right after submitting the form) counts as the login page.
+      loginTab = { open: true, url, onLoginPage: tab.status !== 'complete' || isLoginPageUrl(manifest, url, { root: true }) };
+    } else {
+      siteLoginTabs.delete(manifest.name);
+    }
+  }
+  let cookies = null;
+  let fingerprint = null;
+  const spec = auth?.check?.cookies;
+  if (spec && chrome.cookies?.getAll) {
+    if (!isDeclaredHostUrl(manifest, spec.url)) throw new Error('Login cookie check host is not declared.');
+    const jar = await chrome.cookies.getAll({ url: new URL(String(spec.url)).href });
+    cookies = evaluateCookieCheck(spec, jar);
+    fingerprint = cookieFingerprint(spec, jar);
+  }
+  return { loginTab, cookies, ...(fingerprint ? { fingerprint } : {}) };
 }
 
 // ─── 用户 adapter 目录访问（经 bridge 代理）─────────────────────────────────
@@ -7550,8 +7754,10 @@ function adapterMatchesHostname(adapterMeta, hostname) {
     const host = String(hostname).toLowerCase().replace(/\.$/, '');
     return host === normalized || host.endsWith('.' + normalized);
   };
-  return Array.isArray(adapterMeta?.match)
-    && adapterMeta.match.some(matches)
+  // Registry entries treat `match` as a domain suffix; v2 `domains` are site domains.
+  const scope = [...(Array.isArray(adapterMeta?.match) ? adapterMeta.match : []),
+    ...(Array.isArray(adapterMeta?.domains) ? adapterMeta.domains : [])];
+  return scope.some(matches)
     && !(adapterMeta.except ?? []).some(matches);
 }
 
@@ -8318,9 +8524,23 @@ async function injectAdapters(tabId, url, selection = null) {
  * @param {string} adapterId
  * @param {string[]} supportFiles 已归一化为 adapters/<id>/... 的包内路径（仅用于内置；用户 adapter 需转回相对路径）
  */
+// Built-in page scripts shipped with this Extension (see packaged-adapter-loader.js).
+const packagedAdapterFiles = createPackagedAdapterMatcher({
+  read: async (path) => {
+    const response = await fetch(chrome.runtime.getURL(path));
+    return response.ok ? response.text() : null;
+  },
+});
+
 async function injectV2AdapterWithCode(tabId, manifest, expectedUrl, suppliedBundle = null) {
   const bundle = suppliedBundle || await getHostAdapterClient().bundle(manifest);
   const { internal, commands } = v2InjectionFiles(bundle.manifest, Object.keys(bundle.files));
+  // Identical built-in copy: inject without attaching chrome.debugger to the page.
+  const packaged = await packagedAdapterFiles(bundle, [...internal, ...commands]).catch(() => null);
+  if (packaged) {
+    const modules = Object.fromEntries((bundle.manifest.commands || []).map((command) => [command.id, command.module]));
+    return injectPackagedAdapter({ tabId, expectedUrl, defs: v2CommandDefs(bundle.manifest), files: packaged, modules });
+  }
   const scripts = [{ path: 'bootstrap.js', source: buildV2Bootstrap(bundle.manifest) }];
   for (const relPath of [...internal, ...commands]) {
     const source = bundle.files[relPath];
@@ -8992,6 +9212,13 @@ initInstalledAdapterIds();
 // 预加载静态工具路由（fallback 用，避免短主机名路由错误）
 loadStaticToolRoutes();
 connectToNativeHost();
+// The desktop may write the WeWorker 浏览器 marker while this worker is already connected:
+// repeat the hello so the bridge can switch to this browser.
+watchBrowserInstance(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) sendToNative(buildExtensionHello());
+});
+// Clicking WeWorker 浏览器 in the taskbar must show the window, not an invisible off-screen one.
+revealWindowOnUserFocus();
 
 // Side panel: 点击扩展图标打开侧边栏
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });

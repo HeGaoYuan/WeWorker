@@ -121,27 +121,32 @@ Chrome 扩展的后台脚本（service-worker）是扩展的核心逻辑，负�
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `homepage_url` | `string` | AI 打开网站时使用的完整 URL，需要特殊端口或路径时必填 |
-| `requires_auth` | `boolean` | 是否需要登录，设为 `true` 时 AI 会先检测登录状态 |
+| `domains` | `string[]` | 站点域名，如 `["example.com", "example.hk"]`。每项覆盖该域名及其全部子域名，不用逐个列出子域名；同一网站的地区或品牌域名需显式写出。不允许公共后缀、通配符或 IP |
+| `auth` | `object` | 登录声明（登录页、SSO 主机、判断方式），登录由 WeWorker 自动处理，见下方「网站登录」 |
 | `except` | `string[]` | 排除的子域名 |
 | `i18n` | `object` | 国际化，支持 `zh`，包含 `name` 和 `description` |
 | `quick_prompts` | `string[]` | 旧版快速尝试任务字段，保留兼容 |
 | `scenarios` | `object[]` | 用户可见场景；欢迎页和场景总览优先使用其中的 `prompts` 作为可执行示例 |
 
 
-**关于 `requires_auth`**：设为 `true` 后，系统会在 AI 的提示词中注明"打开该网站后需先检测登录状态"。为了让 AI 能真正执行检测，你还需要在 adapter JS 中实现一个名为 `{domain}.check_login_status` 的工具：
+**网站登录**：登录由 WeWorker 统一处理，Adapter 不需要编写登录或登录检测工具。在 `manifest.json` 中声明登录页和判断方式即可：
 
-```js
-{
-  name: 'mysite.com.check_login_status',
-  description: '检测是否已登录。打开网站后应首先调用此工具，未登录时提醒用户先登录。',
-  parameters: { type: 'object', properties: {}, required: [] },
-  handler: async () => {
-    // 通过 DOM 判断登录状态，例如检查用户头像或登录按钮是否存在
-    const isLoggedIn = !!document.querySelector('.user-avatar')
-    return { logged_in: isLoggedIn }
-  },
+```json
+"auth": {
+  "login_url": "https://passport.example.com/login",
+  "login_hosts": ["passport.example.com"],
+  "check": { "cookies": { "url": "https://www.example.com/", "all": ["session_id"] } }
 }
 ```
+
+- `login_url`：打开登录时使用的页面；`login_hosts`：只用于登录的主机（例如统一认证 / SSO 主机）。
+- `check`：怎样判断已登录。`cookies` 最快；也可以用 `command` 指定本包的一个只读命令（如 `whoami`）。
+- 你的接口返回「未登录」时，调用 `window.__webmcpWecliRuntime.authRequired()`，或抛出 `code` 为 `AUTH_REQUIRED` 的错误。
+
+命令遇到未登录时，WeWorker 会打开登录页并显示 WeWorker 浏览器，用户可以扫码、输入短信验证码或账号密码；完成后自动隐藏浏览器并重试命令（写操作不会被重复执行）。用户也可以为常用网站开启「自动登录」，密码加密保存在本机，AI 与 Adapter 都读不到。
+
+用 `webcli auth check <adapter>` 验证你的检查是否正确，用 `webcli login <adapter>` 体验完整登录流程。
+
 ### 示例
 
 ```json

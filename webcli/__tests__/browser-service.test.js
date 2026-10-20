@@ -4,6 +4,7 @@ import os from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
 import { BrowserService } from '../browser-service.js';
 import { WebSocketBridge } from '../bridge.js';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const roots = [];
@@ -76,8 +77,8 @@ it('only local RPC callers receive browser results; extension peers cannot invok
   expect(execute).toHaveBeenCalledOnce();
 });
 it('actual CLI exposes browser discovery without a service or model', () => {
-  const cli = new URL('../index.js', import.meta.url);
-  const result = spawnSync(process.execPath, [cli.pathname, 'call', 'browser.help'], { encoding: 'utf8' });
+  const cli = fileURLToPath(new URL('../index.js', import.meta.url));
+  const result = spawnSync(process.execPath, [cli, 'call', 'browser.help'], { encoding: 'utf8' });
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).commands.map(item => item.name)).toContain('browser.network');
 });

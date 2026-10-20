@@ -8,6 +8,12 @@
     "www.toutiao.com",
     "mp.toutiao.com"
   ],
+  "auth": {
+    "login_url": "https://mp.toutiao.com/auth/page/login",
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "toutiao",

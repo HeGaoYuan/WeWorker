@@ -468,7 +468,8 @@ export function parseAllAdapters(): Map<string, ParsedAdapter> {
     result.set(manifest.id, {
       id: manifest.id, name: manifest.i18n?.zh?.name || manifest.display || manifest.name,
       description: manifest.i18n?.zh?.description || manifest.description || '',
-      detailDescription: manifest.description || '', match: manifest.match || [],
+      // Site domains (v2 `domains`) are also site signals and open_browser origins.
+      detailDescription: manifest.description || '', match: [...new Set([...(manifest.match || []), ...(manifest.domains || [])])],
       gateAliases: manifest.gate_aliases ?? legacy?.gateAliases ?? [],
       homepageUrl: manifest.homepage_url || (manifest.match?.[0] ? 'https://' + manifest.match[0].replace(/^\*\./, '') + '/' : ''),
       tools: manifest.commands.map(command => ({ name: command.name, aliases: (command.aliases || []).map(alias => manifest.name + '.' + alias),

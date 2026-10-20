@@ -41,7 +41,7 @@ test('packaged Extension and WebCLI preserve the certified API Adapter scope', a
 
   const prepareBuild = fs.readFileSync(path.join(weworkerRoot, 'scripts', 'prepare-build.cjs'), 'utf8')
   assert.match(prepareBuild, /const requestedIds = profile\.adapters/)
-  assert.match(prepareBuild, /copyTreeSync\(srcDir, destDir\)/)
+  assert.match(prepareBuild, /function copyTreeSync\(src, dest\)/)
   assert.match(prepareBuild, /ADAPTERS_DIST_DIR, 'index\.json'/)
   assert.match(prepareBuild, /copyTreeSync\(EXTENSION_SRC_DIR, EXTENSION_DIST_DIR\)/)
   assert.match(prepareBuild, /copyTreeSync\(ADAPTERS_DIST_DIR, extensionAdaptersDir\)/)

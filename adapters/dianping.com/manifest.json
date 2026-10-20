@@ -9,6 +9,15 @@
   "runtime_allowed_hosts": [
     "account.dianping.com"
   ],
+  "auth": {
+    "login_url": "https://account.dianping.com/pclogin",
+    "login_hosts": [
+      "account.dianping.com"
+    ],
+    "check": {
+      "command": "whoami"
+    }
+  },
   "requires_auth": false,
   "discovery_terms": [
     "大众点评",

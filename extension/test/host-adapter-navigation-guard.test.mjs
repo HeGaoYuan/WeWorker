@@ -29,8 +29,8 @@ test('classifyNavigationTarget treats declared hosts as allowed', () => {
 test('classifyNavigationTarget keeps the existing manifest.match semantics', () => {
   // 精确条目不隐含子域（与 assertAdapterNavigationUrl 原语义一致）。
   assert.equal(classifyNavigationTarget(MANIFEST, 'https://www.example.com/x'), 'forbidden')
-  // `*.example.org` 只匹配子域，裸域不匹配（原语义）。
-  assert.equal(classifyNavigationTarget(MANIFEST, 'https://example.org/x'), 'forbidden')
+  // 本项目统一约定 `*.example.org` 同时覆盖裸域及其全部子域。
+  assert.equal(classifyNavigationTarget(MANIFEST, 'https://example.org/x'), 'allowed')
   // runtime_allowed_hosts 仅用于终止性导航（resume === false）。
   assert.equal(classifyNavigationTarget(MANIFEST, 'https://helper.example.net/api'), 'forbidden')
   assert.equal(classifyNavigationTarget(MANIFEST, 'https://helper.example.net/api', false), 'allowed')
@@ -217,6 +217,7 @@ function loadWaitForManagedPageReady(samples) {
     static now() { return now }
   }
   const context = vm.createContext({
+    assertNotOnLoginPage: () => {},
     assertAdapterNavigationUrl,
     createNavigationGuard,
     console: { log() {}, warn() {}, error() {} },
