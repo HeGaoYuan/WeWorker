@@ -55,7 +55,7 @@
     },
     {
       "id": "builtin_dev",
-      "name": "内置模型（开发）",
+      "name": "内置模型（开发VDI）",
       "models": [
         "deepseek-v4-flash"
       ],
@@ -101,6 +101,22 @@
         "modelClass": "zhipu",
         "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
         "structuredOutput": "openai_json_object"
+      }
+    },
+    {
+      "id": "bank_coding",
+      "name": "行内 coding plan",
+      "models": [],
+      "defaultModel": "",
+      "weworker": {
+        "protocol": "anthropic_messages",
+        "baseUrl": ""
+      },
+      "webwright": {
+        "protocol": "anthropic_messages",
+        "modelClass": "anthropic",
+        "baseUrl": "",
+        "structuredOutput": "anthropic_json_schema"
       }
     },
     {

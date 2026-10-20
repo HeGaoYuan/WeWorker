@@ -58,6 +58,8 @@ export type CustomSkill = {
   resources: CustomSkillResource[]
   source: 'custom'
   promptOnly: true
+  enabled?: boolean
+  directoryName?: string
 }
 
 export type CustomSkillResource = {
@@ -445,6 +447,8 @@ export function listCustomSkills(siteId: string): CustomSkill[] {
     const diskName = skillNameFromCustomDirName(entry.name)
     skills.push({
       id: marker.skillId,
+      enabled: fs.existsSync(skillPath) && !fs.existsSync(disabledPath),
+      directoryName: entry.name,
       name: diskName,
       description: marker.description || '',
       parameters: marker.parameters || [],
@@ -531,9 +535,9 @@ function persistSkillResources(siteId: string, skill: CustomSkill): CustomSkill 
   const persistedSkill = { ...skill, name: diskName }
 
   try {
-    fs.writeFileSync(path.join(currentDir, 'SKILL.md'), skill.markdown.trimEnd() ? `${skill.markdown.trimEnd()}\n` : '', 'utf-8')
     const disabledPath = path.join(currentDir, 'SKILL.md.disabled')
-    if (fs.existsSync(disabledPath)) fs.rmSync(disabledPath, { force: true })
+    const markdownPath = fs.existsSync(disabledPath) ? disabledPath : path.join(currentDir, 'SKILL.md')
+    fs.writeFileSync(markdownPath, skill.markdown.trimEnd() ? `${skill.markdown.trimEnd()}\n` : '', 'utf-8')
     writeCustomSkillMarker(currentDir, persistedSkill, siteId)
   } catch (error) {
     if (previousDir && path.resolve(previousDir) !== path.resolve(currentDir) && fs.existsSync(currentDir) && !fs.existsSync(previousDir)) {

@@ -1,5 +1,5 @@
 import { migrateChannelConfigurations, type ChannelConfigurations, type ChannelType } from './channels/channel-configurations.js'
-import { resolveBuiltinSettings } from './builtin-provider.js'
+import { resolveBuiltinSettings, resolveBankCodingSettings } from './builtin-provider.js'
 import { PROVIDERS } from './provider-registry.js'
 import fs from 'node:fs'
 
@@ -248,6 +248,9 @@ export interface Settings {
 
   api_key_glm: string
 
+  api_key_bank_coding?: string
+  context_limit_bank_coding?: number
+  model_bank_coding?: string
   model_glm: string
 
   context_limit_glm: number
@@ -393,6 +396,9 @@ const DEFAULTS: Settings = {
 
   context_limit_anthropic: DEFAULT_CONTEXT_LIMIT,
 
+  api_key_bank_coding: '',
+  model_bank_coding: '',
+  context_limit_bank_coding: DEFAULT_CONTEXT_LIMIT,
   api_key_glm: '',
 
   model_glm: '',
@@ -578,6 +584,7 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   merged.context_limit_anthropic = normalizeContextLimit(raw?.context_limit_anthropic)
   merged.context_limit_glm = normalizeContextLimit(raw?.context_limit_glm)
+  merged.context_limit_bank_coding = normalizeContextLimit(raw?.context_limit_bank_coding)
   merged.context_limit_deepseek = normalizeContextLimit(raw?.context_limit_deepseek)
   merged.context_limit_custom = normalizeContextLimit(raw?.context_limit_custom)
   merged.context_limit = merged.active_provider === 'glm'
@@ -636,6 +643,7 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
     const hasConfiguredModelKey = Boolean(
       resolved.api_key
       || resolved.api_key_anthropic
+      || resolved.api_key_bank_coding
       || resolved.api_key_glm
       || resolved.api_key_deepseek
       || resolved.api_key_custom
@@ -746,7 +754,7 @@ export function resetSettingsStateForTests(): void {
 
 export function getSettings(): Settings {
   if (!_settings) _settings = loadSettingsFromRaw(readRawSettingsFile())
-  return resolveBuiltinSettings(_settings, PROVIDERS)
+  return resolveBankCodingSettings(resolveBuiltinSettings(_settings, PROVIDERS), PROVIDERS)
 }
 
 
@@ -786,6 +794,7 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings.context_limit = normalizeContextLimit(_settings.context_limit)
   _settings.context_limit_anthropic = normalizeContextLimit(_settings.context_limit_anthropic)
   _settings.context_limit_glm = normalizeContextLimit(_settings.context_limit_glm)
+  _settings.context_limit_bank_coding = normalizeContextLimit(_settings.context_limit_bank_coding)
   _settings.context_limit_deepseek = normalizeContextLimit(_settings.context_limit_deepseek)
   _settings.context_limit_custom = normalizeContextLimit(_settings.context_limit_custom)
   _settings.paste_text_attachment_threshold = normalizePasteTextAttachmentThreshold(_settings.paste_text_attachment_threshold)

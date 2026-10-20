@@ -114,6 +114,10 @@ const MODEL_AUTH_ENV_KEYS = [
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   'CLAUDE_CODE_OAUTH_TOKEN',
 ]
 
@@ -155,7 +159,7 @@ export function buildClaudeNativeShellEnv(
 }
 
 export function buildConfiguredModelEnv(
-  settings: Pick<Settings, 'api_key' | 'base_url'> & Partial<Pick<Settings, 'active_provider' | 'custom_auth_type' | 'active_auth_type'>>,
+  settings: Pick<Settings, 'api_key' | 'base_url'> & Partial<Pick<Settings, 'active_provider' | 'custom_auth_type' | 'active_auth_type' | 'model'>>,
   extraEnv?: NodeJS.ProcessEnv,
   claudeConfigDir?: string,
 ): NodeJS.ProcessEnv {
@@ -171,6 +175,15 @@ export function buildConfiguredModelEnv(
     env.ANTHROPIC_AUTH_TOKEN = settings.api_key
   } else {
     env.ANTHROPIC_API_KEY = settings.api_key
+  }
+  if (settings.active_provider === 'bank_coding') {
+    const model = settings.model
+    if (!model) throw new Error('模型服务尚未配置')
+    env.ANTHROPIC_MODEL = model
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = model
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = model
+    env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1'
   }
   env.CLAUDE_CONFIG_DIR = claudeConfigDir
     ? ensureIsolatedClaudeConfigDir(process.platform, claudeConfigDir)

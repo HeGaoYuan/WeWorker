@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { CheckCircleFilled, KeyOutlined, DisconnectOutlined, LinkOutlined, LoadingOutlined, QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { PROVIDERS, useSettingsStore } from '../../store/settings.js'
-import { isBuiltinProvider } from '../../store/settings.js'
+import { isBuiltinProvider, hasFixedModel } from '../../store/settings.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
 import { buildModelOptions, buildSettingsProviderLists, buildChatProviderOptions, isFixedProvider } from '../../utils/model-selection.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
@@ -47,7 +47,7 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         void checkModels(activeProvider, buildModelOptions(data.models, model).map(item => item.value))
       }
     }
-    if (isBuiltinProvider(activeProvider)) {
+    if (hasFixedModel(activeProvider)) {
       finishCatalog({ models: [model || definition?.defaultModel].filter(Boolean) })
       return () => controller.abort()
     }
@@ -65,7 +65,7 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
       if (isFixedProvider(value)) { setError(''); setKeyProvider(value) }
       return
     }
-    if (kind === 'model' && isBuiltinProvider(activeProvider)) return
+    if (kind === 'model' && hasFixedModel(activeProvider)) return
     if (value === (kind === 'provider' ? activeProvider : model)) return
     pendingRef.current = true
     setPending(true)

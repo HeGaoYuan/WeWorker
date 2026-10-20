@@ -6,6 +6,7 @@ import { backendFetch } from '../api/http.js'
 import { leaveWebsiteExploration } from './website-exploration.js'
 import { showAlert } from './dialog.js'
 import { discardMessageQueue } from './message-queue.js'
+import { useChatDraftStore } from './chat-drafts.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -179,6 +180,7 @@ export const useWorksStore = create((set, get) => ({
       const res = await backendFetch(`${API}/works/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Failed to delete work')
       discardMessageQueue(id)
+      useChatDraftStore.getState().discard(`work:${id}`)
       get().abortControllers[id]?.abort()
       set((s) => {
         const works = s.works.filter((w) => w.id !== id)

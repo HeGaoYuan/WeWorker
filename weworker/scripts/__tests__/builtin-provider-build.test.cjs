@@ -58,3 +58,16 @@ test('build profile accepts providers without a built-in model but keeps non-emp
     p.id === 'deepseek' ? { ...p, models: ['fixture-model'], defaultModel: 'other-model' } : p) };
   assert.throws(() => validateBuildProfile(mismatched), /must exist in models or be empty/);
 });
+
+
+test('fixed coding provider survives profile compilation without deployment data', () => {
+  const provider = profile.providers.find(p => p.id === 'bank_coding');
+  assert.ok(provider);
+  assert.equal(provider.defaultModel, '');
+  assert.deepEqual(provider.models, []);
+  assert.equal(provider.weworker.baseUrl, '');
+  assert.equal(provider.webwright.baseUrl, '');
+  assert.deepEqual(registryFor(profile).PROVIDERS.find(p => p.id === 'bank_coding'), provider);
+  const excluded = mergeBuildProfile(profile, { providers: { remove: ['bank_coding'] } });
+  assert.equal(registryFor(excluded).getProvider('bank_coding'), undefined);
+});

@@ -114,6 +114,9 @@ const LOGOS = {
       <text x="12" y="16" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">GLM</text>
     </svg>
   ),
+  bank_coding: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="5" fill="currentColor" fillOpacity="0.2"/><text x="12" y="16" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">GLM</text></svg>
+  ),
   builtin: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor" fillOpacity="0.18"/><path d="M7 12.5 10.2 15 17 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
   ),
@@ -2054,7 +2057,7 @@ function ModelTab() {
                   <div className="model-settings-header-info">
                     <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
                       {configurationName}{builtinActive && <span className="settings-badge-active">使用中</span>}
-                      <span className="settings-card-inline-subtitle"> · {p.defaultModel} · {stored.has_key
+                      <span className="settings-card-inline-subtitle"> · {stored.model || p.defaultModel} · {stored.has_key
                         ? (builtinActive ? '当前使用' : '服务已配置，可直接使用')
                         : '服务尚未配置，请联系应用提供方或使用其他模型'}</span>
                     </div>

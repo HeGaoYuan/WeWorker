@@ -18,7 +18,7 @@ import {
   getChatBangCompletionCandidates,
 } from '../../utils/terminal-completion.js'
 import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeIcon.jsx'
-import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
+import { getChatCompletionPlacement } from '../../utils/chat-completion-placement.js'
 import ContextPanel from './ContextPanel.jsx'
 import ModelSelector from './ModelSelector.jsx'
 import { normalizeThinkingEffort, THINKING_EFFORT_STORAGE_KEY } from '../../utils/thinking-effort.js'
@@ -28,10 +28,6 @@ const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
 const DEFAULT_MAX_ATTACHMENTS = 60
 const DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD = 20000
-const SLASH_MENU_MAX_HEIGHT = 208
-const SLASH_MENU_GAP = 8
-const SLASH_MENU_INSET_X = 10
-const SLASH_MENU_SHELL_PADDING = 6
 
 // 命令路由友好别名。**生效口径以后端 `/router/aliases` 为准**（它读的是
 // `router-config/aliases.json` + 用户覆盖层，经 Adapter 作用域过滤）；随包的
@@ -62,11 +58,6 @@ function getPlatformShell() {
   return platform.includes('win') ? 'powershell' : 'bash'
 }
 
-function estimateSlashMenuHeight(itemCount) {
-  const visibleItems = Math.max(1, Math.min(Number(itemCount) || 1, 5))
-  return Math.min(SLASH_MENU_MAX_HEIGHT, 34 + visibleItems * 40)
-}
-
 export default function InputBar({
   onSend,
   onStop,
@@ -88,6 +79,8 @@ export default function InputBar({
   allowQueue = false,
 }) {
   const textareaRef = useRef(null)
+  const composerRef = useRef(null)
+  const inputSurfaceRef = useRef(null)
   const slashMenuRef = useRef(null)
   const composingRef = useRef(false)
   const attachmentsRef = useRef(attachments)
@@ -233,35 +226,20 @@ export default function InputBar({
   }
 
   const syncSlashMenuPlacement = useCallback(() => {
-    const textarea = textareaRef.current
-    if (!textarea || !slashMenuState) {
+    const composer = composerRef.current
+    const surface = inputSurfaceRef.current
+    if (!composer || !surface || !slashMenuState) {
       setSlashMenuPlacement(null)
       return
     }
-    const caret = getTextareaCaretRect(textarea, slashMenuState.end)
-    if (!caret) {
-      setSlashMenuPlacement(null)
-      return
-    }
-    const textareaRect = textarea.getBoundingClientRect()
-    const menuHeight = Math.min(
-      SLASH_MENU_MAX_HEIGHT,
-      Math.max(
-        56,
-        slashMenuRef.current?.getBoundingClientRect?.().height || estimateSlashMenuHeight(slashItems.length),
-      ),
-    )
-    const topBelow = caret.bottom + SLASH_MENU_GAP
-    const fitsBelow = topBelow + menuHeight <= window.innerHeight - 8
-    const top = fitsBelow
-      ? topBelow
-      : Math.max(8, caret.top - menuHeight - SLASH_MENU_GAP)
-    setSlashMenuPlacement({
-      top,
-      left: textareaRect.left + SLASH_MENU_INSET_X,
-      width: Math.max(280, textareaRect.width - SLASH_MENU_INSET_X * 2),
-    })
-  }, [slashItems.length, slashMenuState])
+    const composerRect = composer.getBoundingClientRect()
+    const surfaceRect = surface.getBoundingClientRect()
+    setSlashMenuPlacement(getChatCompletionPlacement({
+      anchor: { top: composerRect.top, bottom: composerRect.bottom, left: surfaceRect.left, width: surfaceRect.width },
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    }))
+  }, [slashMenuState])
 
   useEffect(() => {
     attachmentsRef.current = attachments
@@ -319,9 +297,12 @@ export default function InputBar({
       return undefined
     }
     syncSlashMenuPlacement()
+    const observer = new ResizeObserver(syncSlashMenuPlacement)
+    observer.observe(composerRef.current)
     window.addEventListener('resize', syncSlashMenuPlacement)
     window.addEventListener('scroll', syncSlashMenuPlacement, true)
     return () => {
+      observer.disconnect()
       window.removeEventListener('resize', syncSlashMenuPlacement)
       window.removeEventListener('scroll', syncSlashMenuPlacement, true)
     }
@@ -485,6 +466,7 @@ export default function InputBar({
   }
 
   const handleKeyDown = (e) => {
+    if (composingRef.current || e.nativeEvent?.isComposing || e.keyCode === 229) return
     if (slashMenuState) {
       if (
         slashMenuState.kind === 'bang'
@@ -499,12 +481,6 @@ export default function InputBar({
         setSlashActiveIndex(0)
         return
       }
-      if (slashMenuState.kind === 'bang' && e.key === 'Enter' && !e.shiftKey) {
-        if (composingRef.current) return
-        e.preventDefault()
-        submit()
-        return
-      }
       if (e.key === 'ArrowDown' && slashItems.length > 0) {
         e.preventDefault()
         setSlashActiveIndex((current) => (current + 1) % slashItems.length)
@@ -515,19 +491,21 @@ export default function InputBar({
         setSlashActiveIndex((current) => (current - 1 + slashItems.length) % slashItems.length)
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
         const items = slashItems.length > 0
           ? slashItems
           : slashMenuState.kind === 'bang'
             ? buildBangSlashItems(slashMenuState.query)
             : filterChatSlashCommands(webcliSlashCommands, slashMenuState.query)
-        if (!items.length) {
-          if (e.key === 'Tab') e.preventDefault()
+        if (items.length) {
+          e.preventDefault()
+          applySlashItem(items[Math.min(slashActiveIndex, items.length - 1)])
           return
         }
-        e.preventDefault()
-        applySlashItem(items[Math.min(slashActiveIndex, items.length - 1)])
-        return
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          return
+        }
       }
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -702,12 +680,13 @@ export default function InputBar({
       style={{
         width: '100%',
         flex: '1 1 auto',
+        minWidth: 0,
         minHeight: isWelcome ? 58 : 48,
         padding: '14px 16px 12px',
         background: 'none',
         border: 'none',
         outline: 'none',
-        color: 'var(--text-primary)',
+        color: isCommandMode ? 'var(--accent)' : 'var(--text-primary)',
         fontSize: 14,
         resize: 'none',
         maxHeight: maxTaHeight,
@@ -839,15 +818,8 @@ export default function InputBar({
 
     const panelStyle = {
       position: 'fixed',
-      top: slashMenuPlacement.top,
-      left: slashMenuPlacement.left,
-      width: slashMenuPlacement.width,
-      maxHeight: SLASH_MENU_MAX_HEIGHT,
+      ...slashMenuPlacement,
       zIndex: 4000,
-      border: '1px solid color-mix(in srgb, var(--border) 75%, var(--text-muted))',
-      borderRadius: 12,
-      boxShadow: 'none',
-      padding: SLASH_MENU_SHELL_PADDING,
     }
 
     if (slashMenuState.kind === 'bang') {
@@ -862,13 +834,16 @@ export default function InputBar({
 
       return createPortal(
         <div className="skill-slash-menu chat-slash-menu" style={panelStyle}>
+          <div className="chat-slash-menu-header">
+            <span>{bangCompletionSource === 'files' ? '文件补全' : '命令补全'}</span>
+            <span className="chat-slash-menu-shortcut"><kbd>Shift Tab</kbd> 切换命令 / 文件</span>
+          </div>
           <div
             ref={slashMenuRef}
             className="skill-slash-menu-scroll chat-slash-menu-scroll scrollbar-hover-only"
             role="listbox"
             aria-label="Shell 命令提示"
           >
-            <div className="skill-slash-menu-group-title">! Shell 提示 · Shift+Tab 切换命令/文件 · Esc 关闭提示</div>
             <div className="chat-slash-menu-list">
               {slashItems.map((item, index) => {
                 const active = index === slashActiveIndex
@@ -890,11 +865,16 @@ export default function InputBar({
                       <span className="chat-slash-menu-item__title">{item.title}</span>
                       <span className="chat-slash-menu-item__hint">{item.description}</span>
                     </span>
-                    <code className="chat-slash-menu-item__command">{commandCompletionKindLabel(item)}</code>
+                    <span className="chat-slash-menu-item__command">{commandCompletionKindLabel(item)}</span>
                   </button>
                 )
               })}
             </div>
+          </div>
+          <div className="chat-slash-menu-footer">
+            <span><kbd>↑</kbd> <kbd>↓</kbd> 选择</span>
+            <span><kbd>Enter</kbd> / <kbd>Tab</kbd> 补全</span>
+            <span><kbd>Esc</kbd> 关闭</span>
           </div>
         </div>,
         document.body,
@@ -952,20 +932,16 @@ export default function InputBar({
   }
 
   return (
-    <div className="chat-input-composer" style={outerStyle}>
+    <div ref={composerRef} className="chat-input-composer" style={outerStyle}>
       {queuePanel}
       <div
+        ref={inputSurfaceRef}
         data-chat-input-surface
         data-chat-command-mode={isCommandMode ? 'true' : 'false'}
         className={`chat-input-surface${isCommandMode ? ' chat-input-surface--command' : ''}`}
         style={innerStyle}
         onPointerDownCapture={handleInputSurfacePointerDown}
       >
-        {isCommandMode && (
-          <div className="chat-command-mode-bar" aria-live="polite">
-            <span className="chat-command-mode-bar__label">命令行模式</span>
-          </div>
-        )}
         {hasAttachments && (
           <div style={{ padding: '12px 14px 0' }}>
             <AttachmentTray
@@ -977,8 +953,7 @@ export default function InputBar({
             />
           </div>
         )}
-        <div className={isCommandMode ? 'chat-command-input-wrap' : undefined}>
-          {isCommandMode && <span className="chat-command-input-prompt" aria-hidden="true">$</span>}
+        <div>
           {textareaEl}
         </div>
         {toolbarEl}
@@ -1009,15 +984,15 @@ function TerminalCommandIcon() {
 }
 
 function commandCompletionKindLabel(item) {
-  if (item?.kind === 'cmd') return 'cmd'
-  if (item?.kind === 'webcli') return 'webcli'
-  if (item?.kind === 'subcommand') return 'sub'
-  if (item?.kind === 'option') return 'arg'
-  if (item?.kind === 'tool') return 'tool'
-  if (item?.kind === 'site') return 'site'
-  if (item?.kind === 'alias') return 'route'
-  if (item?.isDirectory) return 'dir'
-  return 'file'
+  if (item?.kind === 'cmd') return '命令'
+  if (item?.kind === 'webcli') return '命令'
+  if (item?.kind === 'subcommand') return '子命令'
+  if (item?.kind === 'option') return '参数'
+  if (item?.kind === 'tool') return '工具'
+  if (item?.kind === 'site') return '站点'
+  if (item?.kind === 'alias') return '快捷指令'
+  if (item?.isDirectory) return '文件夹'
+  return '文件'
 }
 
 function AttachmentTray({ attachments, maxAttachments, notice, onRemove, disabled = false }) {

@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import type { Settings } from './config.js'
 import { createDecipheriv } from 'node:crypto'
 import { DEFAULT_CONTEXT_LIMIT } from './context-window.js'
@@ -17,9 +20,18 @@ export const BUILTIN_PROVIDER: ProviderEntry = {
 // and renderer metadata never receive it.
 export const BUILTIN_DEV_PROVIDER: ProviderEntry = {
   id: 'builtin_dev',
-  name: '内置模型（开发）',
+  name: '内置模型（开发VDI）',
   models: ['deepseek-v4-flash'],
   defaultModel: 'deepseek-v4-flash',
+  weworker: { protocol: 'anthropic_messages', baseUrl: '' },
+  webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: '', structuredOutput: 'anthropic_json_schema' },
+}
+
+export const BANK_CODING_PROVIDER: ProviderEntry = {
+  id: 'bank_coding',
+  name: '行内 coding plan',
+  models: [],
+  defaultModel: '',
   weworker: { protocol: 'anthropic_messages', baseUrl: '' },
   webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: '', structuredOutput: 'anthropic_json_schema' },
 }
@@ -45,6 +57,19 @@ export function isBuiltinProvider(id: string | undefined): boolean {
   return id === 'builtin' || id === 'builtin_dev'
 }
 
+// Deployment values are local to the Backend and never part of provider metadata.
+function bankCodingDeployment(env: NodeJS.ProcessEnv): { baseUrl: string } {
+  let local: Record<string, unknown> = {}
+  try {
+    const file = env.WEWORKER_PROVIDER_DEPLOYMENTS_FILE || path.join(os.homedir(), '.weworker', 'provider-deployments.json')
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'))?.bank_coding
+    if (value && typeof value === 'object' && !Array.isArray(value)) local = value
+  } catch { /* Unconfigured deployments remain unavailable. */ }
+  return {
+    baseUrl: (env.WEWORKER_BANK_CODING_BASE_URL || (typeof local.baseUrl === 'string' ? local.baseUrl : '')).trim(),
+  }
+}
+
 export function getBuiltinApiKey(id: string, env: NodeJS.ProcessEnv = process.env): string {
   const variable = id === 'builtin' ? 'WEWORKER_BUILTIN_API_KEY'
     : id === 'builtin_dev' ? 'WEWORKER_BUILTIN_DEV_API_KEY' : ''
@@ -57,8 +82,7 @@ export function getBuiltinApiKey(id: string, env: NodeJS.ProcessEnv = process.en
 
 function getBuiltinRuntimeProvider(provider: ProviderEntry, env: NodeJS.ProcessEnv = process.env): ProviderEntry {
   if (provider.id !== 'builtin_dev') return provider
-  const baseUrl = (env.WEWORKER_BUILTIN_DEV_BASE_URL || '').trim()
-    || decryptEmbeddedSecret(EMBEDDED_SECRETS.builtin_dev_base_url)
+  const baseUrl = (env.WEWORKER_BUILTIN_DEV_BASE_URL || '').trim() || decryptEmbeddedSecret(EMBEDDED_SECRETS.builtin_dev_base_url)
   if (!baseUrl) throw new Error('内置模型服务尚未配置，请联系应用提供方或使用其他模型')
   const normalized = normalizeLlmBaseUrl(baseUrl)
   return {
@@ -135,5 +159,27 @@ export function resolveBuiltinSettings(settings: Settings, providers: ProviderEn
     model: access?.provider.defaultModel || '',
     active_auth_type: access?.anthropicAuthType || settings.active_auth_type,
     context_limit: DEFAULT_CONTEXT_LIMIT,
+  }
+}
+
+// The deployment supplies only the gateway address. User keys follow normal settings storage.
+export function resolveBankCodingProvider(provider: ProviderEntry, env: NodeJS.ProcessEnv = process.env): ProviderEntry {
+  if (provider.id !== 'bank_coding') return provider
+  const baseUrl = bankCodingDeployment(env).baseUrl || provider.weworker.baseUrl
+  const normalized = baseUrl ? normalizeLlmBaseUrl(baseUrl) : ''
+  return { ...provider, weworker: { ...provider.weworker, baseUrl: normalized }, webwright: { ...provider.webwright, baseUrl: normalized } }
+}
+
+export function resolveBankCodingSettings(settings: Settings, providers: ProviderEntry[], env: NodeJS.ProcessEnv = process.env): Settings {
+  if (settings.active_provider !== 'bank_coding' || settings.active_model_configuration) return settings
+  const provider = providers.find(p => p.id === 'bank_coding')
+  return {
+    ...settings,
+    api_key: provider ? settings.api_key_bank_coding || '' : '',
+    model: provider ? settings.model_bank_coding || '' : '',
+    base_url: provider ? resolveBankCodingProvider(provider, env).weworker.baseUrl : '',
+    active_auth_type: 'auth_token',
+    base_url_is_full: false,
+    context_limit: settings.context_limit_bank_coding || DEFAULT_CONTEXT_LIMIT,
   }
 }

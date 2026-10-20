@@ -60,6 +60,7 @@ export function resolveWebwrightModelConfig(settings: Settings) {
     base_url: fullUrl ? normalizeLlmUrlInput(baseUrl, true) : assertAllowedLlmBaseUrl(
       baseUrl,
       buildRuntimeAllowedLlmBaseUrls(
+        isBuiltinProvider(provider.id) ? provider.webwright.baseUrl : undefined,
         customBaseUrlIsFull ? undefined : customBaseUrl,
         customOpenAiBaseUrlIsFull ? undefined : customOpenAiBaseUrl,
         independentFullUrl ? undefined : settings.exploration_base_url,

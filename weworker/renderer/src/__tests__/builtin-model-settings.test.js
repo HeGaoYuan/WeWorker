@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { mergeDevelopmentBuiltinProviders, PROVIDERS, useSettingsStore } from '../store/settings.js'
+import { isBuiltinProvider, hasFixedModel, mergeDevelopmentBuiltinProviders, PROVIDERS, useSettingsStore } from '../store/settings.js'
 import { buildSettingsProviderLists } from '../utils/model-selection.js'
 
 const initialState = useSettingsStore.getState()
@@ -21,14 +21,14 @@ test('built-in metadata is visible before configuration without claiming a key e
 
 test('renderer initial state lists built-ins and the three fixed presets before settings load', () => {
   const { visible } = buildSettingsProviderLists(PROVIDERS, initialState.providers)
-  assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev', 'anthropic', 'glm', 'deepseek'])
+  assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev', 'anthropic', 'glm', 'bank_coding', 'deepseek'])
 })
 
 test('development restores built-ins missing from a stale injected provider list', () => {
   const oldProfile = [{ id: 'anthropic', name: 'Anthropic', models: [], defaultModel: '' }]
   const providers = mergeDevelopmentBuiltinProviders(oldProfile, true)
 
-  assert.deepEqual(providers.map((provider) => provider.id), ['builtin', 'builtin_dev', 'anthropic'])
+  assert.deepEqual(providers.map((provider) => provider.id), ['builtin', 'builtin_dev', 'anthropic', 'bank_coding'])
   assert.deepEqual(mergeDevelopmentBuiltinProviders(oldProfile, false), oldProfile)
 })
 
@@ -51,4 +51,23 @@ test('built-in activation uses server state and does not send credentials from t
   await useSettingsStore.getState().activateProvider('builtin')
   assert.equal(useSettingsStore.getState().activeProvider, 'builtin')
   assert.equal(useSettingsStore.getState().model, 'ark-code-latest')
+})
+
+
+test('fixed coding provider is fixed, visible and cannot be added twice', () => {
+  const { visible, addable } = buildSettingsProviderLists(PROVIDERS, {})
+  const entry = visible.find(provider => provider.id === 'bank_coding')
+  assert.ok(entry)
+  assert.equal(entry.defaultModel, '')
+  assert.deepEqual(entry.models, [])
+  assert.equal(addable.some(provider => provider.id === 'bank_coding'), false)
+  assert.notEqual(initialState.providers.bank_coding.readonly, true)
+  assert.equal(isBuiltinProvider('bank_coding'), false)
+  assert.equal(initialState.providers.bank_coding.has_key, false)
+})
+
+test('user-configured coding provider supports model selection', () => {
+  assert.equal(hasFixedModel('bank_coding'), false)
+  assert.equal(hasFixedModel('builtin'), true)
+  assert.equal(hasFixedModel('builtin_dev'), true)
 })

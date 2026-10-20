@@ -1,4 +1,7 @@
-import { RightOutlined, FileTextOutlined, FolderOutlined, PlusOutlined, EyeOutlined, UploadOutlined } from '@ant-design/icons'
+import AppSwitch from '../common/AppSwitch.jsx'
+import SkillAddMenu from './SkillAddMenu.jsx'
+import { skillDirectoryName, withInstalledSkillState, publicSkillEntries } from '../../utils/skill-management.js'
+import { RightOutlined, FileTextOutlined, FolderOutlined, PlusOutlined, EyeOutlined } from '@ant-design/icons'
 import './skill-files.css'
 import SkillTags from './SkillTags.jsx'
 import { SKILL_TAGS_STORAGE_KEY, skillTagKey, normalizeSkillTags, skillTags, matchesSkillSearch, loadSkillTagOverrides } from '../../utils/skill-tags.js'
@@ -119,6 +122,9 @@ function normalizeTool(tool, source = 'official') {
     parameters: normalizeParams(tool.parameters),
     markdown: typeof tool.markdown === 'string' ? tool.markdown : customSkillTemplateMarkdown,
     resources: normalizeResources(tool.resources),
+    enabled: tool.enabled !== false,
+    draft: tool.draft === true,
+    directoryName: tool.directoryName,
     promptOnly: tool.promptOnly === true,
     source: resolvedSource,
   }
@@ -239,24 +245,11 @@ function createEmptySkill(siteId) {
   }
 }
 
-function createEmptyPublicSkill() {
-  const id = makeSkillId()
-  const name = `public-${id.replace(/^custom-/, '')}`
-  return {
-    id: name,
-    name,
-    description: '',
-    parameters: [{ ...EMPTY_PARAM }],
-    markdown: customSkillTemplateMarkdown,
-    resources: [],
-    source: 'public-custom',
-    promptOnly: true,
-  }
-}
-
 function cloneAsCustom(tool) {
   return {
     ...normalizeTool(tool, 'custom'),
+    directoryName: undefined,
+    draft: false,
     id: makeSkillId(),
     name: `${tool.name || 'custom.skill'}_copy`,
     markdown: buildOfficialToolMarkdown({ ...tool, name: `${tool.name || 'custom.skill'}_copy` }),
@@ -792,10 +785,6 @@ function computeEffectiveRightPaneWidth({
   return Math.min(preferredRightWidth, maxRight)
 }
 
-function isPublicInstalledSkillName(name) {
-  return name === 'webcli' || (typeof name === 'string' && !name.startsWith('webcli-'))
-}
-
 function isPublicBuiltinSkillName(name) {
   return PUBLIC_BUILTIN_SKILL_NAMES.has(name)
 }
@@ -814,12 +803,14 @@ function buildPublicBuiltinSkillTool(entry) {
     promptOnly: false,
     siteId: '',
     siteName: '',
-    enabled: entry.enabled !== false,
+    enabled: entry.enabled === true,
+    draft: entry.draft === true,
+    directoryName: entry.name,
   }
 }
 
 function buildPublicCustomSkillTool(entry) {
-  const markdown = typeof entry.content === 'string' ? entry.content : customSkillTemplateMarkdown
+  const markdown = entry.draft ? '' : typeof entry.content === 'string' ? entry.content : customSkillTemplateMarkdown
   const meta = parseSkillMarkdownMeta(markdown)
   const name = entry.name || entry.id || makeSkillId()
   return {
@@ -833,7 +824,9 @@ function buildPublicCustomSkillTool(entry) {
     promptOnly: true,
     siteId: '',
     siteName: '',
-    enabled: entry.enabled !== false,
+    enabled: entry.enabled === true,
+    draft: entry.draft === true,
+    directoryName: entry.name,
   }
 }
 
@@ -866,29 +859,17 @@ function buildScenarioSiteMetaPrefix(scenario) {
 }
 
 async function fetchPublicSkillsFromApi() {
-  try {
-    const res = await backendFetch(`${SKILLS_API}/skills`)
-    if (!res.ok) return { builtin: [], custom: [] }
-    const data = await res.json()
-    const entries = Array.isArray(data) ? data : []
-    const publicEntries = entries.filter((entry) => entry?.name && isPublicInstalledSkillName(entry.name))
-    return {
-      builtin: publicEntries
-        .filter((entry) => isPublicBuiltinSkillName(entry.name))
-        .map((entry) => buildPublicBuiltinSkillTool(entry)),
-      custom: publicEntries
-        .filter((entry) => !isPublicBuiltinSkillName(entry.name))
-        .map((entry) => buildPublicCustomSkillTool(entry)),
-    }
-  } catch {
-    return { builtin: [], custom: [] }
-  }
+  const res = await backendFetch(`${SKILLS_API}/skills`)
+  if (!res.ok) throw new Error('读取 Skill 列表失败，请重试')
+  const entries = await res.json()
+  if (!Array.isArray(entries)) throw new Error('Skill 列表格式异常')
+  return entries
 }
 
 async function persistPublicCustomSkill(skill, previousName = '') {
   const diskName = String(skill?.id || skill?.name || '').trim()
   const content = typeof skill?.markdown === 'string' ? skill.markdown : ''
-  if (!diskName || !content.trim()) return null
+  if (!diskName) return null
   const res = await backendFetch(`${SKILLS_API}/skills`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -975,6 +956,10 @@ export default function ToolPackageEditor({
   const workspaceRef = useRef(null)
   const scenarioSiteIdRef = useRef('')
   const customSkillsSaveTimerRef = useRef(null)
+  const [installedSkills, setInstalledSkills] = useState([])
+  const [skillsLoadError, setSkillsLoadError] = useState('')
+  const [togglingSkills, setTogglingSkills] = useState(new Set())
+  const togglingSkillsRef = useRef(new Set())
   const [publicBuiltinSkills, setPublicBuiltinSkills] = useState([])
   const [publicCustomSkills, setPublicCustomSkills] = useState([])
   const [publicCustomSaveName, setPublicCustomSaveName] = useState('')
@@ -982,23 +967,29 @@ export default function ToolPackageEditor({
   const publicCustomSkillsRef = useRef(publicCustomSkills)
   publicCustomSkillsRef.current = publicCustomSkills
 
-  const reloadPublicSkills = React.useCallback(async () => {
-    const { builtin, custom } = await fetchPublicSkillsFromApi()
-    setPublicBuiltinSkills(builtin)
-    setPublicCustomSkills(custom)
+  const applyInstalledSkills = React.useCallback((entries) => {
+    setInstalledSkills(entries)
+    setPublicBuiltinSkills(entries.filter(entry => isPublicBuiltinSkillName(entry.name)).map(buildPublicBuiltinSkillTool))
+    setPublicCustomSkills(entries.filter(entry => !isPublicBuiltinSkillName(entry.name)).map(buildPublicCustomSkillTool))
+    setSkillsLoadError('')
   }, [])
+  const reloadPublicSkills = React.useCallback(async () => {
+    const entries = await fetchPublicSkillsFromApi()
+    applyInstalledSkills(entries)
+  }, [applyInstalledSkills])
 
   React.useEffect(() => {
     let cancelled = false
-    fetchPublicSkillsFromApi().then(({ builtin, custom }) => {
-      if (cancelled) return
-      setPublicBuiltinSkills(builtin)
-      setPublicCustomSkills(custom)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    fetchPublicSkillsFromApi().then(entries => {
+      if (!cancelled) applyInstalledSkills(entries)
+    }).catch(error => { if (!cancelled) setSkillsLoadError(error.message) })
+    return () => { cancelled = true }
+  }, [applyInstalledSkills])
+
+  const siteSkillDirectoryNames = useMemo(() => new Set(siteList.flatMap(toolSite => [
+    `webcli-${toolSite.id}`,
+    ...(customSkillsBySite[toolSite.id] || loadCustomSkillsForSite(toolSite)).map(skill => skillDirectoryName({ ...skill, source: 'custom' })),
+  ])), [siteList, customSkillsBySite])
 
   const catalogPublicBuiltinSkills = useMemo(
     () => publicBuiltinSkills,
@@ -1006,12 +997,12 @@ export default function ToolPackageEditor({
   )
 
   const catalogPublicCustomSkills = useMemo(
-    () => publicCustomSkills.map((skill) => normalizeTool(skill, 'public-custom')),
-    [publicCustomSkills],
+    () => publicCustomSkills.filter(skill => !siteSkillDirectoryNames.has(skill.id)).map((skill) => normalizeTool(skill, 'public-custom')),
+    [publicCustomSkills, siteSkillDirectoryNames],
   )
   const publicDuplicateCheckSkills = useMemo(
-    () => [...catalogPublicBuiltinSkills, ...publicCustomSkills],
-    [catalogPublicBuiltinSkills, publicCustomSkills],
+    () => [...catalogPublicBuiltinSkills, ...catalogPublicCustomSkills],
+    [catalogPublicBuiltinSkills, catalogPublicCustomSkills],
   )
 
   const catalogOfficialSkills = useMemo(() => (
@@ -1051,8 +1042,13 @@ export default function ToolPackageEditor({
   }, [siteList, customSkillsBySite])
 
   const allSkills = useMemo(
-    () => [...catalogPublicBuiltinSkills, ...catalogPublicCustomSkills, ...catalogOfficialSkills, ...catalogCustomSkills],
-    [catalogPublicBuiltinSkills, catalogPublicCustomSkills, catalogOfficialSkills, catalogCustomSkills],
+    () => {
+      const siteSkills = [...catalogOfficialSkills, ...catalogCustomSkills]
+      const publicNames = new Set(publicSkillEntries(installedSkills, siteSkills).map(entry => entry.name))
+      return [...catalogPublicBuiltinSkills, ...catalogPublicCustomSkills].filter(tool => publicNames.has(tool.id))
+        .concat(siteSkills).map(tool => withInstalledSkillState(tool, installedSkills))
+    },
+    [catalogPublicBuiltinSkills, catalogPublicCustomSkills, catalogOfficialSkills, catalogCustomSkills, installedSkills],
   )
 
   const selectedScenario = scenarioList.find((scenario) => scenarioKey(scenario) === selectedScenarioId) || scenarioList[0]
@@ -1207,6 +1203,7 @@ export default function ToolPackageEditor({
           ...current,
           [siteId]: normalizeCustomSkills(saved),
         }))
+        setInstalledSkills(await fetchPublicSkillsFromApi())
         await onReloadSites?.()
       } catch (e) {
         console.error('[tool-package] update custom skills failed:', e)
@@ -1632,18 +1629,52 @@ export default function ToolPackageEditor({
     if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     setToolSearchQuery('')
-    const next = baseTool
-      ? { ...cloneAsCustom(baseTool), id: `public-${makeSkillId().replace(/^custom-/, '')}`, source: 'public-custom', siteId: '', siteName: '' }
-      : createEmptyPublicSkill()
+    const next = { ...cloneAsCustom(baseTool), id: `public-${makeSkillId().replace(/^custom-/, '')}`, source: 'public-custom', siteId: '', siteName: '' }
     setPublicCustomSkills((current) => [next, ...current])
     setSelectedToolKey(toolKey(next))
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
     try {
-      await persistPublicCustomSkill(next)
+      const saved = await persistPublicCustomSkill(next)
       await reloadPublicSkills()
-      setSelectedToolKey(toolKey(next))
+      setSelectedToolKey(toolKey({ ...next, id: saved.name }))
     } catch (e) {
       void showAlert(e instanceof Error ? e.message : '新增 Skill 失败，请重试')
+    }
+  }
+
+  const createBlankSkill = async (name) => {
+    const res = await backendFetch(`${SKILLS_API}/skills/folders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '新增 Skill 失败')
+    setInstalledSkills(current => [...current, data])
+    const next = buildPublicCustomSkillTool(data)
+    setPublicCustomSkills(current => [...current, next])
+    setToolSearchQuery('')
+    setSelectedToolKey(toolKey(next))
+    setWorkspaceTab(WORKSPACE_TAB_SKILLS)
+    setRightPaneView('skill')
+    setRightPaneOpen(true)
+  }
+
+  const toggleSkill = async (tool, enabled) => {
+    const name = skillDirectoryName(tool)
+    if (togglingSkillsRef.current.has(name)) return
+    togglingSkillsRef.current.add(name)
+    setTogglingSkills(new Set(togglingSkillsRef.current))
+    try {
+      const res = await backendFetch(`${SKILLS_API}/skills/${encodeURIComponent(name)}/toggle`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || '更新 Skill 状态失败')
+      setInstalledSkills(current => current.map(entry => entry.name === name ? { ...entry, enabled: data.enabled } : entry))
+    } catch (error) {
+      void showAlert(error instanceof Error ? error.message : '更新 Skill 状态失败')
+    } finally {
+      togglingSkillsRef.current.delete(name)
+      setTogglingSkills(new Set(togglingSkillsRef.current))
     }
   }
 
@@ -1781,13 +1812,10 @@ export default function ToolPackageEditor({
             <>
           <div className="skill-catalog-toolbar">
             <input type="search" aria-label="搜索 Skill 名称、描述或标签" placeholder="搜索名称、描述或标签" value={toolSearchQuery} onChange={event => setToolSearchQuery(event.target.value)} />
-            <button type="button" aria-label="导入 Skill ZIP" title="导入 Skill ZIP" onClick={importSkillZipFile} disabled={importingSkillZip}>
-              <span className="skill-add-icon" aria-hidden="true">
-                <UploadOutlined />
-              </span>
-            </button>
+            <SkillAddMenu busy={importingSkillZip} onUpload={importSkillZipFile} onCreate={createBlankSkill} />
           </div>
-          <ToolList tools={visibleSkills} selectedTool={selectedTool} onSelect={selectTool} getTags={getTags} />
+          {skillsLoadError && <div role="alert">{skillsLoadError}<button type="button" onClick={() => reloadPublicSkills().catch(error => setSkillsLoadError(error.message))}>重试</button></div>}
+          <ToolList tools={visibleSkills} selectedTool={selectedTool} onSelect={selectTool} getTags={getTags} onToggle={toggleSkill} togglingSkills={togglingSkills} />
           {!visibleSkills.length && <div style={emptyEditorStyle}>没有匹配的 skill。</div>}
             </>
           )}
@@ -2242,7 +2270,7 @@ function ScenarioSidebarList({ scenarios, selectedScenarioId, onSelect, searchQu
   )
 }
 
-function ToolList({ tools, selectedTool, onSelect, getTags }) {
+function ToolList({ tools, selectedTool, onSelect, getTags, onToggle, togglingSkills }) {
   return (
     <div className="skill-catalog-grid" style={toolListStyle}>
       {tools.map((tool) => {
@@ -2257,8 +2285,11 @@ function ToolList({ tools, selectedTool, onSelect, getTags }) {
             className={`tool-package-list-item skill-catalog-item${active ? ' is-active' : ''}`}
           >
             <span style={toolNameStyle}>{tool.name}</span>
-            <span style={toolDescStyle}>{tool.description || summarizeParams(tool.parameters)}</span>
+            <span style={toolDescStyle}>{tool.draft ? '空白文件夹 · 待编写 SKILL.md' : tool.description || summarizeParams(tool.parameters)}</span>
             <span className="skill-catalog-list-tags">{getTags(tool).map(tag => <span key={tag}>{tag}</span>)}</span>
+            <span className="skill-card-switch" title={tool.draft ? '请先编写 SKILL.md，再启用' : !tool.installed ? 'Skill 尚未安装，请刷新后重试' : tool.enabled ? '已启用，下次对话可加载' : '已关闭，下次对话不再加载'} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+              <AppSwitch aria-label={`启用 ${tool.name}`} checked={tool.enabled} disabled={!tool.installed || tool.draft || togglingSkills.has(skillDirectoryName(tool))} onChange={event => onToggle(tool, event.target.checked)} />
+            </span>
             <button type="button" className="skill-card-view" aria-label={`查看 ${tool.name || '未命名 skill'}`} onClick={(event) => { event.stopPropagation(); onSelect(tool) }}>
               <EyeOutlined aria-hidden="true" />查看
             </button>
@@ -3196,7 +3227,7 @@ function SkillDocumentEditor({ tags, onTagsChange, tool, site, scenarios, editab
     >
         <div className="skill-files-group">
       <CollapsibleSection
-        title="SKILL.md"
+        title={tool.draft ? "SKILL.md（尚未创建，输入后保存）" : "SKILL.md"}
         fileIcon={<FileTextOutlined />}
         stickyPath={SKILL_MD_PATH}
         meta={`${countLines(markdown)} 行`}

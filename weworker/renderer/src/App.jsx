@@ -86,9 +86,14 @@ export default function App() {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
   const loadWorks = useWorksStore((s) => s.loadWorks)
+  const activeWorkId = useWorksStore((s) => s.activeWorkId)
   const createWork = useWorksStore((s) => s.createWork)
+  const scheduledTasks = useScheduledTasksStore((s) => s.tasks)
+  const activeTaskId = useScheduledTasksStore((s) => s.activeTaskId)
+  const tasksStatus = useScheduledTasksStore((s) => s.tasksStatus)
   const loadSettings = useSettingsStore((s) => s.load)
   const settingsLoaded = useSettingsStore((s) => s.loaded)
+  const settingsLoadError = useSettingsStore((s) => s.loadError)
   const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted)
   const poll = useStatusStore((s) => s.poll)
   const toggleUserFilesPanel = useUserFilesStore((s) => s.togglePanel)
@@ -113,7 +118,11 @@ export default function App() {
     useTerminalStore.getState().closePanel()
   }, [websiteOpen])
 
-  useEffect(() => window.electronAPI?.onWebsiteExplorationOpen?.(() => useWebsiteExplorationStore.setState({ open: true })), [])
+  useEffect(() => window.electronAPI?.onWebsiteExplorationOpen?.(() => {
+    const settings = useSettingsStore.getState()
+    if (!settings.loaded || !settings.onboardingCompleted) return
+    useWebsiteExplorationStore.setState({ open: true })
+  }), [])
 
   // Tray menu → 专属 Agent
   useEffect(() => window.electronAPI?.onOpenDedicatedAgents?.(() => { void handleOpenDedicatedAgentsRef.current() }), [])
@@ -127,6 +136,11 @@ export default function App() {
     const interval = setInterval(poll, 3000)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    if (activeSidebarSection !== 'tasks' || focusedWorkspaceOpen || activeWorkId || tasksStatus !== 'ready' || activeTaskId || !scheduledTasks[0]?.id) return
+    void useScheduledTasksStore.getState().selectTask(scheduledTasks[0].id)
+  }, [activeSidebarSection, focusedWorkspaceOpen, activeWorkId, tasksStatus, activeTaskId, scheduledTasks])
 
   useEffect(() => {
     document.documentElement.classList.remove('dark', 'light')
@@ -246,6 +260,23 @@ export default function App() {
     }
   }
 
+  const handleCompleteOnboarding = async (provider) => {
+    await useSettingsStore.getState().completeOnboarding(provider)
+    // Initialization always lands in the main conversation, even if another
+    // page was requested while the setup screen covered the workspace.
+    setShowSettings(false)
+    setActiveSidebarSection('conversation')
+    useDedicatedAgentsStore.getState().closePage()
+    useExplorationPageStore.getState().closePage()
+    useToolPackagePageStore.getState().closePage()
+    useWebsiteExplorationStore.setState({ open: false })
+    useScheduledTasksStore.setState({ activeTaskId: null })
+    useWorksStore.setState({ activeWorkId: null })
+    useCapabilitiesPanelStore.getState().closePanel()
+    useTerminalStore.getState().closePanel()
+    useUserFilesStore.getState().closePanel()
+  }
+
   const handleOpenTasks = async () => {
     setShowSettings(false)
     if (!await leaveWebsiteExploration()) return
@@ -286,6 +317,8 @@ export default function App() {
   }
 
   const handleOpenDedicatedAgents = async () => {
+    const settings = useSettingsStore.getState()
+    if (!settings.loaded || !settings.onboardingCompleted) return
     setShowSettings(false)
     if (!await showDedicatedAgentsPage()) return
     useUserFilesStore.getState().closePanel()
@@ -442,9 +475,14 @@ export default function App() {
 
       <div className="app-workspace" data-workspace-content style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {!settingsLoaded ? (
-          <div className="initial-setup-loading" aria-label="正在加载初始化配置">正在加载…</div>
+          <div className="initial-setup-loading" aria-label={settingsLoadError ? '初始化配置加载失败' : '正在加载初始化配置'}>
+            {settingsLoadError ? <div role="alert">
+              <p>{settingsLoadError}</p>
+              <button type="button" className="btn btn-secondary" onClick={loadSettings}>重试</button>
+            </div> : '正在加载…'}
+          </div>
         ) : !onboardingCompleted ? (
-          <InitialSetup />
+          <InitialSetup onComplete={handleCompleteOnboarding} />
         ) : <>
         <AppRail
           activeSection={showSettings ? 'settings' : activeSidebarSection}
@@ -520,7 +558,7 @@ export default function App() {
           )}
           {showSettings
             ? <SettingsPage onClose={() => setShowSettings(false)} />
-            : <MainArea sidebarWidth={sidebarWidth} onOpenSettings={() => setShowSettings((current) => !current)} />}
+            : <MainArea activeSidebarSection={activeSidebarSection} sidebarWidth={sidebarWidth} onOpenSettings={() => setShowSettings((current) => !current)} />}
         </div>
         </>}
       </div>

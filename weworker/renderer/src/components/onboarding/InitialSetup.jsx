@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { CheckCircleFilled, KeyOutlined, LoadingOutlined } from '@ant-design/icons'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import { isBuiltinProvider, PROVIDERS, useSettingsStore } from '../../store/settings.js'
 import { isFixedProvider } from '../../utils/model-selection.js'
+import { fetchProviderModels } from '../../api/provider-models.js'
 import './initial-setup.css'
 
-const INITIAL_PROVIDER_IDS = new Set(['builtin', 'builtin_dev', 'anthropic', 'glm', 'deepseek'])
+const INITIAL_PROVIDER_IDS = new Set(['builtin', 'builtin_dev', 'anthropic', 'glm', 'bank_coding', 'deepseek'])
 
 function providerOptions() {
   return PROVIDERS
@@ -17,25 +18,45 @@ function providerOptions() {
     }))
 }
 
-export default function InitialSetup() {
+export default function InitialSetup({ onComplete }) {
   const providers = useSettingsStore(state => state.providers)
   const saveProvider = useSettingsStore(state => state.saveProvider)
-  const completeOnboarding = useSettingsStore(state => state.completeOnboarding)
   const options = useMemo(providerOptions, [])
   const [provider, setProvider] = useState(() => options.find(option => option.value === 'builtin')?.value || options[0]?.value || '')
   const [apiKey, setApiKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [error, setError] = useState('')
+  const [models, setModels] = useState([])
+  const [model, setModel] = useState('')
+  const [loadingModels, setLoadingModels] = useState(false)
 
   const selectedIsBuiltin = isBuiltinProvider(provider)
   const selectedProvider = PROVIDERS.find(item => item.id === provider)
   const hasSavedKey = Boolean(providers[provider]?.has_key)
-  const canContinue = selectedIsBuiltin || hasSavedKey
+  const needsModelCatalog = provider === 'bank_coding'
+  const canContinue = selectedIsBuiltin || (hasSavedKey && (!needsModelCatalog || Boolean(model)))
+
+  useEffect(() => {
+    if (!needsModelCatalog || !hasSavedKey) return
+    const controller = new AbortController()
+    setLoadingModels(true)
+    fetchProviderModels({ provider }, controller.signal).then(result => {
+      if (controller.signal.aborted) return
+      setModels(result.models || [])
+      setModel(current => current || providers[provider]?.model || result.models?.[0] || '')
+      if (!result.models?.length) setError('模型列表获取失败，请检查 Key 后重新保存重试')
+    }).catch(failure => {
+      if (!controller.signal.aborted) setError(failure.message || '模型列表获取失败')
+    }).finally(() => { if (!controller.signal.aborted) setLoadingModels(false) })
+    return () => controller.abort()
+  }, [provider, hasSavedKey, providers])
 
   const handleProviderChange = value => {
     setProvider(value)
     setApiKey('')
+    setModels([])
+    setModel('')
     setError('')
   }
 
@@ -66,7 +87,8 @@ export default function InitialSetup() {
     setCompleting(true)
     setError('')
     try {
-      await completeOnboarding(provider)
+      if (needsModelCatalog) await saveProvider(provider, { model })
+      await onComplete(provider)
     } catch (failure) {
       setError(failure.message || '初始化失败')
       setCompleting(false)
@@ -120,6 +142,13 @@ export default function InitialSetup() {
           </form>
         )}
 
+        {needsModelCatalog && hasSavedKey && (
+          <div className="initial-setup__field">
+            <label>模型{loadingModels ? '（获取中…）' : ''}</label>
+            <AppDropdownSelect value={model} options={models.map(value => ({ value, label: value }))}
+              onChange={setModel} ariaLabel="选择模型" matchAnchorWidth minMenuWidth={320} />
+          </div>
+        )}
         {error && <div className="initial-setup__error" role="alert">{error}</div>}
         <button type="button" className="initial-setup__continue" onClick={handleContinue} disabled={completing || !canContinue}>
           {completing ? <><LoadingOutlined spin /> 正在进入</> : '下一步'}

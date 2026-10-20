@@ -389,7 +389,7 @@ export class NodeManager {
           WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
           WEWORKER_CLAUDE_CODE_PATH: claudeCodePath,
           WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
-          WEWORKER_RENDERER_ORIGIN: process.env.WEWORKER_DEV_SERVER_URL || '',
+          WEWORKER_RENDERER_ORIGIN: new URL(process.env.WEWORKER_RENDERER_DEV_URL || process.env.WEWORKER_DEV_SERVER_URL || 'http://localhost:5173').origin,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,

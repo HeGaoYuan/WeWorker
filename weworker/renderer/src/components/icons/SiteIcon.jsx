@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { resolveSiteIcon } from '../../utils/site-icon-resolve.js'
+import { SITE_ICON_ASSETS } from '../../utils/site-icon-assets.js'
 
 /** Minimal silhouette SVGs — single color via currentColor */
 const ICONS = {
@@ -108,6 +109,28 @@ const COLOR_META = {
  */
 export default function SiteIcon({ site, size = 20, className, style }) {
   const resolved = resolveSiteIcon(site)
+  const source = SITE_ICON_ASSETS[site?.id]
+  const [failedSource, setFailedSource] = useState(null)
+
+  if (source && failedSource !== source) {
+    return (
+      <span className={className} aria-hidden style={{
+        ...wrapStyle(size, style),
+        background: '#fff',
+        borderRadius: Math.max(4, Math.round(size * 0.2)),
+      }}>
+        <img
+          src={source}
+          alt=""
+          draggable={false}
+          width={size}
+          height={size}
+          onError={() => setFailedSource(source)}
+          style={{ display: 'block', width: size, height: size, objectFit: 'contain', borderRadius: 'inherit' }}
+        />
+      </span>
+    )
+  }
 
   if (resolved.mode === 'literal') {
     return (

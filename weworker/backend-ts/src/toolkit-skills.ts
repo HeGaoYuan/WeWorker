@@ -18,6 +18,7 @@ import { formatSiteToolkitPrompt, type SiteToolkit } from './site-gate.js'
 export interface ToolkitSkill {
   id: string
   name: string
+  directoryName?: string
   /** `allowed_domains` 小写归一；兼作 siteGate 的 `match` 候选。 */
   hosts: string[]
   /** 已映射为 `StaticToolDef` 形状（toolkit 走本地 Toolkit Runtime，无扩展页面依赖）。 */
@@ -75,7 +76,7 @@ function scanToolkitSkills(skillsDir: string): ToolkitSkill[] {
           directCapable: true,
           executionMode: 'direct',
         }))
-      result.push({ id, name: String(manifest.name || id), hosts, tools })
+      result.push({ id, name: String(manifest.name || id), directoryName: entry.name, hosts, tools })
     } catch {
       // 坏 JSON / 缺字段：跳过该 skill。
     }
@@ -94,10 +95,11 @@ export function clearToolkitSkillsCache(): void {
 export function listToolkitSkills(deps: ToolkitSkillsDeps = {}): ToolkitSkill[] {
   const skillsDir = deps.skillsDir ?? path.join(getUserDirectory(), '.claude', 'skills')
   const cached = toolkitSkillsCache.get(skillsDir)
-  if (cached && Date.now() - cached.at < TOOLKIT_SKILLS_TTL_MS) return cached.skills
-  const skills = scanToolkitSkills(skillsDir)
-  toolkitSkillsCache.set(skillsDir, { skills, at: Date.now() })
-  return skills
+  const skills = cached && Date.now() - cached.at < TOOLKIT_SKILLS_TTL_MS
+    ? cached.skills : scanToolkitSkills(skillsDir)
+  if (skills !== cached?.skills) toolkitSkillsCache.set(skillsDir, { skills, at: Date.now() })
+  // Keep manifests cached, but apply the on-disk switch on every conversation.
+  return skills.filter(skill => !fs.existsSync(path.join(skillsDir, skill.directoryName || skill.id, 'SKILL.md.disabled')))
 }
 
 /** siteGate 候选形状（`matchSiteAdapter` 只读 id/name/match）。 */
