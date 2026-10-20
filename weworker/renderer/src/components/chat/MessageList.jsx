@@ -377,7 +377,7 @@ export default function MessageList({ messages, streaming, compactionStatus, wor
             <MessageItem
               message={msg}
               isLast={i === messages.length - 1}
-              streaming={streaming && i === messages.length - 1}
+              streaming={streaming && (i === messages.length - 1 || (!!msg.streamingTurnId && msg.streamingTurnId === messages.at(-1)?.streamingTurnId))}
               compacting={compactionStatus === 'compacting'}
               compactAssistant={msg.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
               plan={planAnchor?.messageIndex === i ? displayPlan : null}

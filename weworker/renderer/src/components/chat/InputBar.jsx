@@ -84,6 +84,8 @@ export default function InputBar({
   contextSnapshot = null,
   historyMessages = [],
   onWarmup,
+  queuePanel,
+  allowQueue = false,
 }) {
   const textareaRef = useRef(null)
   const slashMenuRef = useRef(null)
@@ -108,7 +110,7 @@ export default function InputBar({
     setThinkingEffort(next)
     try { window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, next) } catch {}
   }, [])
-  const inputDisabled = !!disabled || !!streaming || modelSelectionPending
+  const inputDisabled = !!disabled || (!!streaming && !allowQueue) || modelSelectionPending
   const isCommandMode = String(text || '').trimStart().startsWith('!')
   const [attachmentNotice, setAttachmentNotice] = useState('')
   const [slashMenuState, setSlashMenuState] = useState(null)
@@ -386,7 +388,7 @@ export default function InputBar({
       setHistoryIndex(-1)
     }
     // Starting to type a message: let the Backend start its model process now.
-    if (onWarmup && !inputDisabled && shouldWarmupOnTextChange(text, nextText)) onWarmup(thinkingEffort)
+    if (onWarmup && !streaming && !inputDisabled && shouldWarmupOnTextChange(text, nextText)) onWarmup(thinkingEffort)
     onTextChange(nextText)
     syncSlashMenuFromText(nextText, event.target.selectionStart ?? nextText.length)
   }
@@ -694,7 +696,7 @@ export default function InputBar({
       onPaste={handlePaste}
       onCompositionStart={() => { composingRef.current = true }}
       onCompositionEnd={() => { composingRef.current = false }}
-      placeholder={streaming ? '\u6b63\u5728\u5904\u7406...' : inputDisabled ? '\u6b63\u5728\u9009\u62e9\u6d88\u606f...' : '\u8f93\u5165\u6d88\u606f...'}
+      placeholder={streaming && allowQueue ? '输入后续消息，Enter 加入队列…' : streaming ? '正在处理...' : inputDisabled ? '暂时无法输入...' : '输入消息...'}
       disabled={inputDisabled}
       rows={isWelcome ? 4 : 1}
       style={{
@@ -824,6 +826,9 @@ export default function InputBar({
           thinkingEffort={thinkingEffort}
           onThinkingEffortChange={handleThinkingEffortChange}
         />
+        {streaming && allowQueue && <button type="button" className="chat-queue-submit" title="加入队列（Enter）" aria-label="加入队列" onClick={submit}
+          disabled={inputDisabled || (!(text || '').trim() && !hasAttachments) || overAttachmentLimit}
+          style={{ border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>排队</button>}
         {actionBtn}
       </div>
     </div>
@@ -948,6 +953,7 @@ export default function InputBar({
 
   return (
     <div className="chat-input-composer" style={outerStyle}>
+      {queuePanel}
       <div
         data-chat-input-surface
         data-chat-command-mode={isCommandMode ? 'true' : 'false'}

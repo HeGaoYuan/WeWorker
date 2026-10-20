@@ -113,6 +113,9 @@ export class ChatSession {
    */
   readonly apiDuration: ApiDurationTracker = createApiDurationTracker()
   private consumed: ChatHistoryEntry[] = []
+  private acceptingSteering = false
+  private pendingSteering = new Set<string>()
+  private steeredHistory: ChatHistoryEntry[] = []
   private started = false
   private closeStarted = false
   private iterator: AsyncIterator<SDKMessage> | undefined
@@ -173,6 +176,8 @@ export class ChatSession {
     if (this.closed) throw new Error('Chat session is closed')
     this.started = true
     this.busy = true
+    this.acceptingSteering = true
+    this.steeredHistory = []
     this.lastUsedAt = Date.now()
     this.queue.push(message)
     this.iterator ??= this.query[Symbol.asyncIterator]()
@@ -181,19 +186,46 @@ export class ChatSession {
       if (next.done) {
         // The CLI exited; the caller sees an unfinished turn and disposes the session.
         this.closed = true
+        this.acceptingSteering = false
+        if (this.pendingSteering.size > 0) throw new Error('模型进程已退出，补充指令尚未确认处理，请检查对话后继续')
         return
       }
+      if (next.value.type === 'user' && next.value.uuid) this.pendingSteering.delete(next.value.uuid)
+      const terminal = next.value.type === 'result' && (this.pendingSteering.size === 0 || next.value.is_error)
+      if (terminal) this.acceptingSteering = false
       yield next.value
-      if (next.value.type === 'result') return
+      if (terminal) return
     }
   }
 
   /** Record that the CLI now holds `history` and accept the next turn. */
   complete(history: ChatHistoryEntry[]): void {
-    this.consumed = history.map((entry) => ({ ...entry }))
+    this.consumed = [...history, ...this.steeredHistory].map((entry) => ({ ...entry }))
     this.completedTurns += 1
     this.busy = false
     this.lastUsedAt = Date.now()
+  }
+
+  get canSteer(): boolean { return this.busy && this.acceptingSteering && !this.closed }
+
+  /** The CLI folds streaming input into the next model step after current tools finish. */
+  steer(message: SDKUserMessage, history: ChatHistoryEntry, previousAssistant?: ChatHistoryEntry): boolean {
+    if (!this.canSteer || !message.uuid) return false
+    this.pendingSteering.add(message.uuid)
+    if (previousAssistant?.role === 'assistant') this.steeredHistory.push({ ...previousAssistant })
+    this.steeredHistory.push({ ...history })
+    this.queue.push(message)
+    return true
+  }
+
+  /** Only refresh assistant segments registered by this turn, never arbitrary history. */
+  refreshSteeredAssistant(entry: ChatHistoryEntry): void {
+    if (entry.role !== 'assistant') return
+    const previous = this.steeredHistory.find(item => item.id === entry.id && item.role === 'assistant')
+    if (!previous) return
+    previous.digest = entry.digest
+    const consumed = this.consumed.find(item => item.id === entry.id && item.role === 'assistant')
+    if (consumed) consumed.digest = entry.digest
   }
 
   /** Idempotent: ends the prompt stream, closes the CLI process tree and runs cleanup once. */
@@ -254,6 +286,11 @@ function stopSweeperIfEmpty(): void {
 
 export function isChatSessionBusy(workId: string): boolean {
   return sessions.get(workId)?.busy === true
+}
+
+export function getSteerableChatSession(workId: string): ChatSession | undefined {
+  const session = sessions.get(workId)
+  return session?.canSteer ? session : undefined
 }
 
 /** Whether the work already has a live session (used to skip redundant warm-ups). */

@@ -3336,7 +3336,7 @@ html.dark .tool-exec-group__detail {
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 24px 168px;
+  padding: 0 24px var(--chat-dock-height, 168px);
   position: relative;
   background: var(--bg-secondary);
   box-sizing: border-box;
