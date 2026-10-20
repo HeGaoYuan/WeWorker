@@ -26,6 +26,9 @@ export async function fetchStats({ by = 'tool', since = '7d', kind = 'adapter', 
   if (top) params.set('top', String(top))
   const res = await fetch(`/api/stats?${params}`)
   if (!res.ok) throw new Error(`stats 请求失败: ${res.status}`)
+  if (!res.headers.get('content-type')?.includes('application/json')) {
+    return { rows: [], totalCalls: 0, unavailable: true }
+  }
   return res.json()
 }
 

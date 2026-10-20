@@ -26,7 +26,6 @@ vi.mock('../channels/channel-permissions.js', () => ({
   getChannelPermissionMode: mocks.getChannelPermissionMode,
 }))
 vi.mock('../config.js', () => ({ getSettings: () => mocks.settings }))
-vi.mock('../zcf-sync.js', () => ({ resolveZcfPrefs: vi.fn() }))
 vi.mock('../title-utils.js', () => ({ generateTitle: mocks.generateTitle, generateTitleWithLLM: mocks.generateTitleWithLLM }))
 vi.mock('../works-store.js', () => ({
   getLatestChannelNotifyTarget: mocks.getLatestChannelNotifyTarget,

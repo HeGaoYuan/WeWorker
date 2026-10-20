@@ -139,11 +139,11 @@ npm run build:win
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `adapters` | `string[]` | 要打包的适配器 ID 列表，对应 `extension/adapters/` 下的目录名。未列出的适配器不会进入安装包，构建时会跳过并输出 WARNING |
+| `adapters` | `string[]` | 要打包的适配器 ID 列表，对应仓库根 `adapters/` 下的目录名。未列出的适配器不会进入安装包，构建时会报错 |
 | `providers` | `object[]` | 用户可选的 AI 提供商列表。每项声明 `models`、`defaultModel`，以及 WeWorker／Webwright 各自使用的明确协议、Adapter、Base URL 和结构化输出策略 |
 | `defaultProvider` | `string` | 默认选中的提供商 ID，必须存在于 `providers` 的 `id` 中 |
 
-> **提示**：`adapters` 只控制打包哪些适配器，开发模式下（`npm run dev`）所有适配器都可用，不受此限制。如需查看所有可用适配器，见 `extension/adapters/` 目录。
+> **提示**：`adapters` 只控制打包哪些适配器，开发模式下（`npm run dev`）所有适配器都可用，不受此限制。如需查看所有可用适配器，见仓库根 `adapters/` 目录。
 
 派生发行版不要直接修改公共 Profile 或 Extension Manifest。将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
 
@@ -173,7 +173,7 @@ Webwright 中间产物位于 `weworker/build/webwright-dist/`，已被 Git 忽�
 
 ### CI/CD
 
-`.github/workflows/release-latest.yml` 在推送 `v<major>.<minor>.<patch>` tag 或手动触发时执行三套原生构建：
+`.github/workflows/release-latest.yml` 在推送 `v*` tag 或手动触发时执行三套原生构建：
 
 | 目标 | Runner | 产物 |
 |------|--------|------|
@@ -181,11 +181,9 @@ Webwright 中间产物位于 `weworker/build/webwright-dist/`，已被 Git 忽�
 | macOS arm64 | `macos-15` | arm64 `.dmg`、`.zip`、`.blockmap` |
 | macOS x64 | `macos-15-intel` | x64 `.dmg`、`.zip`、`.blockmap` |
 
-网站探索agent源码随 WeWorker 一次 checkout，不需要额外 PAT 或仓库 secret。创建 GitHub Draft Release 使用 GitHub 自动提供的 `GITHUB_TOKEN`。
+Webwright 源码随 WeWorker 一次 checkout，不需要额外 PAT 或仓库 secret。发布 `latest` prerelease 使用 GitHub 自动提供的 `GITHUB_TOKEN`。
 
-三个构建 job 全部通过后，release job 会合并两份 macOS 更新元数据，并为当前版本 tag 创建 Draft Release。维护者确认安装包、更新说明和签名状态后，再手动发布 Release；各构建 job 的原始产物也保留在对应 workflow run 的 Artifacts 中。
-
-完整发布步骤见 [发布指南](../docs/RELEASE.md)。
+三个构建 job 全部通过后，release job 会合并两份 macOS 更新元数据，并更新 `latest` tag 和 prerelease。最终用户可下载产物位于仓库 GitHub Releases 的 `latest` prerelease；各构建 job 的原始产物也保留在对应 workflow run 的 Artifacts 中。
 
 ### 发版清单
 
@@ -232,8 +230,8 @@ Webwright 中间产物位于 `weworker/build/webwright-dist/`，已被 Git 忽�
 
 发版时还需同步官网（`officialWeb/`）：
 
-- 更新 `officialWeb/src/lib/downloadConfig.js` 中的 `APP_VERSION`
-- 将安装包放入 `officialWeb/public/downloads/`（命名见该目录 README）
+- 更新 `officialWeb/package.json` 与 `officialWeb/src/lib/downloadConfig.js` 中的版本号（`APP_VERSION`）
+- 在 GitHub Release 上传安装包；若改为静态托管下载，将安装包放入 `officialWeb/public/downloads/`（命名见该目录 README）
 
 详见 [officialWeb/README.md](../officialWeb/README.md)。
 

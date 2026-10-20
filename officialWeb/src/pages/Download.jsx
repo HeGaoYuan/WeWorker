@@ -24,7 +24,6 @@ function renderTextWithLinks(text) {
         >
           地址
         </a>
-
       </span>
     ) : (
       part
@@ -55,6 +54,11 @@ export default function Download() {
 
   const fetchSummary = async ({ silent = false, cancelledRef } = {}) => {
     const cancelled = () => cancelledRef?.current === true
+    if (!DOWNLOAD_SUMMARY_URL) {
+      setSummaryLoading(false)
+      setSummaryError(false)
+      return
+    }
     if (!silent) {
       setSummaryLoading(true)
     }

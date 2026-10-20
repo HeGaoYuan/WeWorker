@@ -12,8 +12,12 @@ export default {
         muted: 'rgb(var(--color-muted) / <alpha-value>)',
         subtle: 'rgb(var(--color-subtle) / <alpha-value>)',
       },
+      maxWidth: {
+        page: '1120px',
+      },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        sans: ['Inter', 'PingFang SC', 'Microsoft YaHei UI', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
       },
     },
   },

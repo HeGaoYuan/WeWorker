@@ -13,6 +13,37 @@ WORKER_MODULES = {
     "tool-debug": "webwright.run.tool_debug",
 }
 
+_PROXY_ENV_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+_LOOPBACK_NO_PROXY_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _with_loopback_no_proxy(environment: dict[str, str]) -> dict[str, str]:
+    # Playwright's Node transport honors proxy env vars but not the Windows
+    # per-machine proxy bypass list, so with HTTP_PROXY set the worker's
+    # connect_over_cdp("http://127.0.0.1:9222") goes through the proxy and the
+    # proxy answers 400. Outbound model traffic must keep using the proxy, so
+    # only exempt the loopback hosts.
+    if not any(environment.get(name) for name in _PROXY_ENV_NAMES):
+        return environment
+    for name in ("NO_PROXY", "no_proxy"):
+        entries = [
+            item.strip()
+            for item in str(environment.get(name, "")).split(",")
+            if item.strip()
+        ]
+        for host in _LOOPBACK_NO_PROXY_HOSTS:
+            if host not in entries:
+                entries.append(host)
+        environment[name] = ",".join(entries)
+    return environment
+
 
 class RuntimeLauncher:
     def __init__(
@@ -62,7 +93,7 @@ class RuntimeLauncher:
         result = dict(os.environ if environ is None else environ)
         if extra:
             result.update(extra)
-        return result
+        return _with_loopback_no_proxy(result)
 
     def external_process_environment(
         self,

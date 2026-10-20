@@ -35,7 +35,7 @@ test('desktop quick generation tracks a run and describes validation before inst
   const context = vm.createContext({
     run: { taskId: 'fixture' }, busyAction: '', actionBusy: false, setBusyAction() {}, setActionBusy() {},
     normalizeError: error => error.message, setGenerationMessage: value => messages.push(value), setRun: value => updated.push(value),
-    generateExplorationScaffold: async () => ({ run }),
+    startExplorationGeneration: async () => run,
   })
   await handler('handleQuickGenerate', context)
   assert.equal(updated[0], run)

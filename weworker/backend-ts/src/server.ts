@@ -39,6 +39,9 @@ import {
   getOpenBrowserAllowedOrigins,
   normalizeOpenBrowserAllowedOrigin,
   normalizeOpenBrowserAllowedOrigins,
+  DEFAULT_MEMORY_BUDGETS,
+  normalizeMemoryBudgets,
+  type MemoryBudgets,
   type Settings,
 } from './config.js'
 import { normalizeDownloadSubdirectory } from './download-directory.js'
@@ -113,28 +116,29 @@ import {
   scheduleAdapterRuntimeReload,
 } from './adapter-runtime-reload.js'
 import {
-  ensureBundledZcfInstalled,
-  buildZcfCatalogResponse,
-  getZcfPackageVersion,
-  readZcfSyncMeta,
-  resolveZcfPrefs,
-  sanitizeZcfRoleSettingsPatch,
-  sanitizeWorkZcfPrefsPatch,
-  sanitizeZcfDefaultSettings,
-  syncZcfTemplates,
-  type ZcfLang,
-} from './zcf-sync.js'
+  resolveStyleId,
+  sanitizeStyleSettingsPatch,
+  sanitizeWorkStylePatch,
+} from './style-settings.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext } from './memory/memory-event-context.js'
 import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
 import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
 import type { MemoryParseOutcome } from './memory/memory-extractor.js'
-import { getMemoryStore } from './memory/memory-store.js'
+import { getMemoryStore, type MemoryStore } from './memory/memory-store.js'
+import {
+  enforceConfiguredMemoryBudget,
+  resolveMemoryBudgetKey,
+  summarizeMemoryBudgetUsage,
+  type MemoryBudgetKey,
+  type MemoryBudgetUsage,
+} from './memory/memory-capacity.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
 import { createDesktopUserMedia } from './user-media.js'
 import { inferTerminalShell, onTerminalEvent, runWeWorkerPowerShell, stopTerminalSession } from './powershell-runner.js'
+import { createTurnTimingLedger } from './turn-timing.js'
 import { channelManager } from './channels/channel-manager.js'
 import { QqQrService, FeishuQrService } from './channels/app-bot-qr.js'
 import { syncAppBotChannel } from './channels/sync-app-bot-channel.js'
@@ -146,7 +150,7 @@ import { syncWecomChannel } from './channels/sync-wecom-channel.js'
 import { FeishuChannel } from './channels/feishu-channel.js'
 import { registerDedicatedAgentRoutes } from './dedicated-agents/routes.js'
 import { buildDesktopAgentTurnOptions, startAllDedicatedAgents } from './dedicated-agents/agent-channel.js'
-import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId } from './dedicated-agents/agent-store.js'
+import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId, listAgentProjectIds } from './dedicated-agents/agent-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -372,6 +376,7 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
   const names = buildModelConfigurationNames(s)
   return {
     active_provider: s.active_model_configuration || s.active_provider,
+    onboarding_completed: s.onboarding_completed === true,
     user_directory: s.user_directory,
     download_subdirectory: getDownloadSubdirectory(),
     download_directory: getDownloadDirectory(),
@@ -397,12 +402,10 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
       ...publicModelConfigurations(s),
     }).map(([id, configuration]) => [id, { ...configuration, name: names[id] }])),
     zcf_default_role: s.zcf_default_role,
-    zcf_default_mode: s.zcf_default_mode,
-    zcf_lang: s.zcf_lang,
     zcf_enabled_roles: s.zcf_enabled_roles,
     zcf_custom_roles: s.zcf_custom_roles,
-    zcf_package_version: getZcfPackageVersion(),
-    zcf_sync: readZcfSyncMeta(),
+    // 长期记忆按档位预算（估算 token）；Renderer 设置页读取。
+    memory_budgets: normalizeMemoryBudgets(s.memory_budgets),
   }
 }
 
@@ -417,6 +420,53 @@ function saveDirectorySetting(rawValue: string | undefined, key: 'user_directory
 
 app.get('/settings', (_req, res) => {
   res.json(buildSettingsResponse(getSettings()))
+})
+
+// Complete the first-run model setup. Built-in providers need no user input;
+// predefined providers must already have a saved API key.
+app.post('/settings/onboarding/complete', (req, res) => {
+  const provider = typeof req.body?.provider === 'string' ? req.body.provider.trim() : ''
+  const isPredefined = provider === 'anthropic' || provider === 'glm' || provider === 'deepseek'
+  if (!isBuiltinProvider(provider) && !isPredefined) {
+    res.status(400).json({ detail: '请选择内置模型或预定义供应商' })
+    return
+  }
+
+  try {
+    const current = getSettings()
+    let updates: Partial<Settings>
+    if (isBuiltinProvider(provider)) {
+      const builtin = getProvider(provider)
+      if (!builtin) throw new Error('内置模型在当前构建中不可用')
+      updates = activateBuiltinProvider(builtin)
+    } else {
+      const apiKey = provider === 'anthropic' ? current.api_key_anthropic
+        : provider === 'glm' ? current.api_key_glm
+          : current.api_key_deepseek
+      if (!apiKey?.trim()) {
+        res.status(400).json({ detail: '请先填写并保存 API Key' })
+        return
+      }
+      const model = provider === 'anthropic' ? current.model_anthropic
+        : provider === 'glm' ? current.model_glm
+          : current.model_deepseek
+      updates = {
+        active_provider: provider,
+        active_model_configuration: '',
+        active_auth_type: 'api_key',
+        api_key: apiKey,
+        model,
+        context_limit: provider === 'anthropic' ? current.context_limit_anthropic
+          : provider === 'glm' ? current.context_limit_glm
+            : current.context_limit_deepseek,
+        base_url: PROVIDER_BASE_URLS[provider] || '',
+        base_url_is_full: false,
+      }
+    }
+    res.json(buildSettingsResponse(updateSettings({ ...updates, onboarding_completed: true })))
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 app.post('/settings/user-directory', (req, res) => {
@@ -506,44 +556,14 @@ app.post('/settings/permissions', (req, res) => {
   })))
 })
 
-app.get('/zcf/catalog', (_req, res) => {
-  const settings = getSettings()
-  res.json(buildZcfCatalogResponse(settings))
-})
-
-app.post('/zcf/sync', async (req, res) => {
-  const settings = getSettings()
-  const lang = (req.body as { lang?: ZcfLang })?.lang ?? settings.zcf_lang ?? 'zh-CN'
-  try {
-    const meta = await syncZcfTemplates(lang)
-    updateSettings({ zcf_lang: lang })
-    res.json({ ok: true, ...meta, package_version: getZcfPackageVersion() })
-  } catch (e) {
-    res.status(500).json({ detail: e instanceof Error ? e.message : 'zcf sync failed' })
-  }
-})
-
-app.post('/settings/zcf-defaults', (req, res) => {
-  const { zcf_default_role, zcf_default_mode, zcf_lang } = req.body as {
-    zcf_default_role?: string
-    zcf_default_mode?: string
-    zcf_lang?: ZcfLang
-  }
-  const settings = getSettings()
-  const updates: Partial<Settings> = {
-    ...sanitizeZcfDefaultSettings({ zcf_default_role, zcf_default_mode }, settings),
-  }
-  if (zcf_lang === 'zh-CN' || zcf_lang === 'en') updates.zcf_lang = zcf_lang
-  res.json(buildSettingsResponse(updateSettings(updates)))
-})
-
-app.post('/settings/zcf-roles', (req, res) => {
+// 风格设置（默认 / 预定义内置 / 自定义）。沿用既有 zcf_* 键名以避免数据迁移。
+app.post('/settings/styles', (req, res) => {
   const { zcf_enabled_roles, zcf_custom_roles, zcf_default_role } = req.body as {
     zcf_enabled_roles?: string[]
     zcf_custom_roles?: Array<{ id?: string; label: string; prompt: string }>
     zcf_default_role?: string
   }
-  const updates: Partial<Settings> = sanitizeZcfRoleSettingsPatch({
+  const updates: Partial<Settings> = sanitizeStyleSettingsPatch({
     ...(typeof zcf_default_role === 'string' ? { zcf_default_role } : {}),
     ...(Array.isArray(zcf_enabled_roles) ? { zcf_enabled_roles } : {}),
     ...(Array.isArray(zcf_custom_roles) ? { zcf_custom_roles: zcf_custom_roles as Settings['zcf_custom_roles'] } : {}),
@@ -1912,7 +1932,7 @@ app.post('/exploration/runs/:taskId/scaffold', async (req, res) => {
 
 const explorationGenerationInputSchema = z.object({
   goal: z.string().trim().min(1).max(2_000).optional(),
-  mode: z.enum(['agent', 'classic', 'quick']).optional(),
+  mode: z.enum(['auto', 'agent', 'classic', 'quick']).optional(),
 })
 
 const explorationGenerationResumeInputSchema = z.object({
@@ -2118,7 +2138,12 @@ app.get('/works', (_req, res) => {
 })
 
 app.get('/projects', (_req, res) => {
-  res.json(store.listProjects())
+  // 专属 Agent folders are generated from the Agent name: flag them so the
+  // renderer can hide the manual rename entry.
+  const agentProjectIds = listAgentProjectIds()
+  res.json(store.listProjects().map((project) => (
+    agentProjectIds.has(project.id) ? { ...project, dedicated_agent: true } : project
+  )))
 })
 
 app.post('/projects', (req, res) => {
@@ -2133,6 +2158,10 @@ app.post('/projects', (req, res) => {
 
 app.patch('/projects/:id', (req, res) => {
   try {
+    if (listAgentProjectIds().has(req.params.id)) {
+      res.status(400).json({ detail: '这个文件夹由专属 Agent 自动维护，改名请直接修改 Agent 名称' })
+      return
+    }
     const { name } = req.body as { name?: string }
     const project = store.renameProject(req.params.id, name || '')
     if (!project) { res.status(404).json({ detail: 'Not found' }); return }
@@ -2155,11 +2184,11 @@ app.delete('/projects/:id', (req, res) => {
 })
 
 app.post('/works', (req, res) => {
-  const { project_id, zcf_role, zcf_mode } = req.body as { project_id?: string | null; zcf_role?: string | null; zcf_mode?: string | null }
+  const { project_id, zcf_role } = req.body as { project_id?: string | null; zcf_role?: string | null }
   const work = store.createWork('', project_id ?? null)
-  if (zcf_role !== undefined || zcf_mode !== undefined) {
-    const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
-    const updated = store.updateWorkZcfPrefs(work.id, prefs)
+  if (zcf_role !== undefined) {
+    const prefs = sanitizeWorkStylePatch({ zcf_role }, getSettings())
+    const updated = store.updateWorkStyle(work.id, prefs)
     broadcastSSE({ type: 'works_changed', workId: work.id })
     res.json(updated ?? work)
     return
@@ -2168,10 +2197,10 @@ app.post('/works', (req, res) => {
   res.json(work)
 })
 
-app.patch('/works/:id/zcf', (req, res) => {
-  const { zcf_role, zcf_mode } = req.body as { zcf_role?: string | null; zcf_mode?: string | null }
-  const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
-  const updated = store.updateWorkZcfPrefs(req.params.id, prefs)
+app.patch('/works/:id/style', (req, res) => {
+  const { zcf_role } = req.body as { zcf_role?: string | null }
+  const prefs = sanitizeWorkStylePatch({ zcf_role }, getSettings())
+  const updated = store.updateWorkStyle(req.params.id, prefs)
   if (!updated) { res.status(404).json({ detail: 'Not found' }); return }
   res.json(updated)
 })
@@ -2784,7 +2813,7 @@ type ThinkingEffortInput = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' |
 async function prewarmChatSession(input: {
   key: string
   workId: string | null
-  zcf: { zcf_role?: string | null; zcf_mode?: string | null }
+  zcf: { zcf_role?: string | null }
   messages: store.Message[]
   thinkingEffort: ThinkingEffortInput
   dedicatedAgentOptions?: ReturnType<typeof buildDesktopAgentTurnOptions>
@@ -2793,11 +2822,10 @@ async function prewarmChatSession(input: {
   chatWarmupsInFlight.add(input.key)
   try {
     const settings = getSettings()
-    const zcfPrefs = resolveZcfPrefs(input.zcf, settings)
+    const styleId = resolveStyleId(input.zcf, settings)
     for await (const event of streamChat(input.messages, settings, undefined, {
       ...(input.workId ? { workId: input.workId } : {}),
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
       thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, input.thinkingEffort),
       reuseSession: true,
       warmupOnly: true,
@@ -2841,10 +2869,9 @@ app.post('/works/:id/warmup', (req, res) => {
 
 // Welcome screen: no work exists until the first send; keep one spare session.
 app.post('/chat/warmup', (req, res) => {
-  const { thinkingEffort, zcfRole, zcfMode } = (req.body ?? {}) as {
+  const { thinkingEffort, zcfRole } = (req.body ?? {}) as {
     thinkingEffort?: ThinkingEffortInput
     zcfRole?: string | null
-    zcfMode?: string | null
   }
   if (hasSpareChatSession() || chatWarmupsInFlight.has(SPARE_WARMUP_KEY)) {
     res.json({ status: 'ready' })
@@ -2854,7 +2881,7 @@ app.post('/chat/warmup', (req, res) => {
   void prewarmChatSession({
     key: SPARE_WARMUP_KEY,
     workId: null,
-    zcf: { zcf_role: zcfRole ?? null, zcf_mode: zcfMode ?? null },
+    zcf: { zcf_role: zcfRole ?? null },
     messages: [],
     thinkingEffort,
   })
@@ -2946,7 +2973,7 @@ app.post('/works/:id/chat', async (req, res) => {
           : msg
       ))
   const settings = getSettings()
-  const zcfPrefs = resolveZcfPrefs(work, settings)
+  const styleId = resolveStyleId(work, settings)
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream')
@@ -3010,12 +3037,14 @@ app.post('/works/:id/chat', async (req, res) => {
   const chatStartTime = Date.now()
   const turnId = Math.random().toString(36).slice(2, 8)
   let stepIndex = 0
-  let lastToolStartTime = 0
   let lastToolName = ''
-  let lastStepEndTime = chatStartTime
-  // Per-turn timing accumulators: llmMsTotal = all LLM generation segments, execMsTotal = all tool execution
-  let llmMsTotal = 0
-  let execMsTotal = 0
+  // Per-turn timing accumulators. `llmMs` (all LLM generation segments) and
+  // `execMs` (tool execution) are disjoint by construction, so
+  // llmMs + execMs === totalMs — including tools that never emit a
+  // `tool_call_result` event (see turn-timing.ts).
+  const turnTiming = createTurnTimingLedger({ startedAt: chatStartTime })
+  /** 回合结束时的冻结快照（turn_end 与持久化 timing 共用同一口径）。 */
+  let turnTimingResult: ReturnType<typeof turnTiming.finish> | null = null
 
   const tag = `[${workId}][${turnId}]`
 
@@ -3141,8 +3170,7 @@ app.post('/works/:id/chat', async (req, res) => {
     for await (const ev of tier4Source ?? streamChat(modelMessages, settings, abortController, {
       enabledAdapterIds,
       workId,
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
       thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, thinkingEffort),
       memoryScope: initialMemoryScope,
       ...(siteToolkit ? { siteToolkitPrompt: siteToolkit.prompt } : {}),
@@ -3179,9 +3207,7 @@ app.post('/works/:id/chat', async (req, res) => {
         let thinkMs: number | undefined
         if (!isUpdate) {
           stepIndex++
-          lastToolStartTime = Date.now()
-          thinkMs = lastToolStartTime - lastStepEndTime
-          llmMsTotal += thinkMs
+          thinkMs = turnTiming.toolStarted(ev.id)
         }
         // Resolve SDK tool name back to original adapter name
         const cleanName = resolveToolDisplayName(ev.name ?? '')
@@ -3208,10 +3234,8 @@ app.post('/works/:id/chat', async (req, res) => {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: cleanName, args: ev.args, status: 'running', ...(thinkMs !== undefined ? { thinkMs } : {}) })
         }
       } else if (ev.type === 'tool_call_result' && ev.id) {
-        const toolDuration = lastToolStartTime ? Date.now() - lastToolStartTime : 0
-        execMsTotal += toolDuration
+        const toolDuration = turnTiming.toolSettled(ev.id) ?? 0
         chatLog.info(`${tag} ✅ step ${stepIndex}: ${lastToolName} done (exec=${(toolDuration / 1000).toFixed(2)}s)`)
-        lastStepEndTime = Date.now()
         send({ ...ev, execMs: toolDuration })
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
@@ -3220,13 +3244,21 @@ app.post('/works/:id/chat', async (req, res) => {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration })
         }
       } else if (ev.type === 'tool_call_image' && ev.id) {
+        // 只回图片的工具（例如读图片的 Read）没有 tool_call_result 事件：
+        // 按同一口径在这里结算它的执行时间，避免这段时间被算进 llmMs。
+        const imageToolDuration = turnTiming.toolObserved(ev.id)
         send(ev)
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
           const currentStatus = (assistantContent[idx] as Extract<store.ContentBlock, { type: 'tool_use' }>).status
-          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: currentStatus === 'failed' ? 'failed' : 'done' } as store.ContentBlock
+          assistantContent[idx] = {
+            ...(assistantContent[idx] as object),
+            image: ev.data,
+            status: currentStatus === 'failed' ? 'failed' : 'done',
+            ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}),
+          } as store.ContentBlock
         } else {
-          assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done' })
+          assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done', ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}) })
         }
       } else {
         if (ev.type === 'error') streamFailed = true
@@ -3273,14 +3305,18 @@ app.post('/works/:id/chat', async (req, res) => {
     }
   } finally {
     unsubscribeTerminalEvents()
-    // Account for trailing LLM text generation after the last tool
-    // (or the entire turn when no tools ran — lastStepEndTime stays at chatStartTime)
-    const trailingLlmMs = Date.now() - lastStepEndTime
-    llmMsTotal += trailingLlmMs
+    // Close the turn: trailing LLM text generation is whatever is left after
+    // every tool interval; tools without a result event are settled here so
+    // their time is never charged to llmMs.
+    turnTimingResult = turnTiming.finish()
     // Mark as finished so that the subsequent res.end() → close event
     // does not trigger abort on the already-completed query.
-    chatLog.info(`${tag} ◼ turn end — total=${((Date.now() - chatStartTime) / 1000).toFixed(2)}s, steps=${stepIndex}`)
-    send({ type: 'turn_end', turnId, workId, totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+    chatLog.info(
+      `${tag} ◼ turn end — total=${(turnTimingResult.totalMs / 1000).toFixed(2)}s` +
+        `, llm=${(turnTimingResult.llmMs / 1000).toFixed(2)}s` +
+        `, exec=${(turnTimingResult.execMs / 1000).toFixed(2)}s, steps=${stepIndex}`,
+    )
+    send({ type: 'turn_end', turnId, workId, totalMs: turnTimingResult.totalMs, llmMs: turnTimingResult.llmMs, execMs: turnTimingResult.execMs, steps: stepIndex })
     finished = true
     res.off('close', onClose)
   }
@@ -3290,7 +3326,8 @@ app.post('/works/:id/chat', async (req, res) => {
 
   // Persist assistant message
   if (assistantContent.length > 0) {
-    assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+    const timing = turnTimingResult ?? turnTiming.finish()
+    assistantContent.push({ type: 'timing', totalMs: timing.totalMs, llmMs: timing.llmMs, execMs: timing.execMs, steps: stepIndex })
     store.appendMessage(workId, 'assistant', assistantContent)
   }
 
@@ -3314,6 +3351,8 @@ app.post('/works/:id/chat', async (req, res) => {
           ? 'present_ignore'
           : 'missing'
     : 'missing' as MemoryParseOutcome
+  // 准入被拒时也必须给出状态：否则模型会照旧对用户宣称「已写入」，而界面什么都不显示。
+  const memoryAdmitReasons: string[] = []
   const plannedMemoryEvents = memoryCandidates.flatMap((candidate, index) => {
     const planned = planCompletedChatMemoryEvents({
       baseEventId: `${savedUserMessage.id}:model-${index + 1}`,
@@ -3332,6 +3371,7 @@ app.post('/works/:id/chat', async (req, res) => {
       admit_reason: planned.admitReason,
       event_count: planned.events.length,
     })
+    if (planned.events.length === 0 && planned.admitReason) memoryAdmitReasons.push(planned.admitReason)
     return planned.events.map((event) => ({ event, candidate }))
   })
 
@@ -3409,6 +3449,9 @@ app.post('/works/:id/chat', async (req, res) => {
             status: memoryResult.status,
             ...(memoryResult.status === 'failed' ? { error: memoryResult.error } : {}),
           })
+          if (memoryResult.status === 'saved') {
+            enforceMemoryBudgetAfterWrite(memoryStore, event.expectedMemoryType, tag)
+          }
         }).catch(() => {
           broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
         })
@@ -3417,9 +3460,133 @@ app.post('/works/:id/chat', async (req, res) => {
     return
   }
 
+  // 候选被准入层拒绝时也要如实告知：模型已经回答过用户，界面若不显示状态，
+  // 用户会以为记忆已保存（"写入了却查不到"的真实成因）。
+  if (memoryCandidates.length > 0
+    && plannedMemoryEvents.length === 0
+    && memoryAdmitReasons.some((reason) => reason !== 'ignore')) {
+    const rejectionText: Record<string, string> = {
+      execution_evidence_insufficient: '本轮没有实际执行动作，不构成任务记忆',
+      task_assessment_insufficient: '任务结果信息不完整',
+      declarative_invalid: '缺少可核验的执行证据',
+      unknown_site: '目标站点不在当前支持范围内',
+      disabled_site: '目标站点的 Adapter 已停用',
+      missing_site: '缺少站点信息',
+      turn_failed: '本轮未成功完成',
+      no_candidate: '内容不满足长期记忆的保存条件',
+    }
+    const reason = memoryAdmitReasons.find((item) => item !== 'ignore') || 'no_candidate'
+    const error = `${rejectionText[reason] || '内容不满足长期记忆的保存条件'}，本次未写入长期记忆`
+    const rejectionEventId = `${savedUserMessage.id}:admission-rejected`
+    send({ type: 'memory_status', status: 'failed', workId, eventId: rejectionEventId, error })
+    broadcastSSE({ type: 'memory_status', status: 'failed', workId, eventId: rejectionEventId, error })
+  }
+
   chatLog.info(` sending res.end() for workId=${workId}`)
   broadcastSSE({ type: 'works_changed', workId })
   res.end()
+})
+
+// ── Long-term memory management (Renderer) ─────────────────────────────────
+
+/** /memory/records 单次返回上限。 */
+const MEMORY_RECORDS_LIMIT = 200
+const MEMORY_TYPE_FILTERS: MemoryBudgetKey[] = ['user_usage', 'task_execution', 'other', 'extension']
+
+function buildMemorySettingsResponse(): {
+  budgets: MemoryBudgets
+  defaults: MemoryBudgets
+  usage: Record<MemoryBudgetKey, MemoryBudgetUsage>
+} {
+  return {
+    budgets: normalizeMemoryBudgets(getSettings().memory_budgets),
+    defaults: { ...DEFAULT_MEMORY_BUDGETS },
+    usage: summarizeMemoryBudgetUsage(getMemoryStore()),
+  }
+}
+
+/**
+ * 记忆写入成功后的容量执行：① 融合近重复 → ② 按价值淘汰，全部用 supersede 保留审计。
+ * 任何异常都被吞掉并记日志，绝不能让记忆写入或聊天响应失败；
+ * 日志只记录数量与用量，不记录记忆正文。
+ */
+function enforceMemoryBudgetAfterWrite(
+  memoryStore: MemoryStore,
+  memoryType: string | undefined,
+  tag: string,
+): void {
+  enforceConfiguredMemoryBudget(memoryStore, memoryType, getSettings().memory_budgets, (payload) => {
+    chatLog.info(`${tag} memory_budget_enforced`, payload)
+  })
+}
+
+app.get('/memory/settings', (_req, res) => {
+  try {
+    res.json(buildMemorySettingsResponse())
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.post('/memory/settings', (req, res) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : null
+  const raw = body?.memory_budgets
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    res.status(400).json({ detail: 'memory_budgets must be an object' })
+    return
+  }
+  try {
+    updateSettings({ memory_budgets: normalizeMemoryBudgets(raw) })
+    res.json(buildMemorySettingsResponse())
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.get('/memory/records', (req, res) => {
+  const requested = typeof req.query.type === 'string' ? req.query.type.trim() : ''
+  if (requested && !MEMORY_TYPE_FILTERS.includes(requested as MemoryBudgetKey)) {
+    res.status(400).json({ detail: 'unsupported memory type' })
+    return
+  }
+  const filter = (requested || undefined) as MemoryBudgetKey | undefined
+  try {
+    const records = getMemoryStore().listActiveAll()
+      .filter((memory) => !filter || resolveMemoryBudgetKey(memory.type) === filter)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, MEMORY_RECORDS_LIMIT)
+      // 只返回公开字段：绝不暴露 facts 或任何内部字段。
+      .map((memory) => ({
+        id: memory.id,
+        type: memory.type,
+        key: memory.key,
+        content: memory.content,
+        confidence: memory.confidence,
+        status: memory.status,
+        createdAt: memory.createdAt,
+        updatedAt: memory.updatedAt,
+      }))
+    res.json({ records })
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.delete('/memory/records/:id', (req, res) => {
+  const id = String(req.params.id || '').trim()
+  try {
+    const memoryStore = getMemoryStore()
+    if (!id || !memoryStore.get(id)) {
+      res.status(404).json({ detail: 'memory not found' })
+      return
+    }
+    memoryStore.setStatus(id, 'superseded')
+    res.json({ ok: true })
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 // 鈹€鈹€ Logs 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -3498,11 +3665,6 @@ async function startConfiguredChannels(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   await initSettings()
-  try {
-    ensureBundledZcfInstalled(getSettings().zcf_lang)
-  } catch (e) {
-    log.warn('ZCF template sync skipped on startup:', e instanceof Error ? e.message : String(e))
-  }
   await startConfiguredChannels()
   app.listen(PORT, '127.0.0.1', () => {
     log.info(`WeWorker backend running on http://127.0.0.1:${PORT}`)

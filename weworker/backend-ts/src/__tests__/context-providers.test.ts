@@ -4,6 +4,7 @@ import {
   buildTurnEndContextSnapshot,
   calibrateContextSnapshot,
   createTurnContextCollector,
+  estimateContextTokens,
 } from '../context/context-assembler.js'
 import { createLongTermMemoryContext } from '../context/long-term-context.js'
 import { createRuntimeContext } from '../context/runtime-context.js'
@@ -101,7 +102,9 @@ describe('context providers', () => {
 
     expect(events.map((event) => event.type)).toEqual(['context_snapshot', 'done'])
     expect(events[0].context?.phase).toBe('turn_end')
-    expect(events[0].context?.actual_input_tokens).toBe(256)
+    // A normal query result usage is cumulative across the SDK's internal
+    // model/tool loop and must not be treated as this turn's context size.
+    expect(events[0].context?.actual_input_tokens).toBeUndefined()
     expect(events[0].context?.estimated_total_tokens).toBeGreaterThan(start.estimated_total_tokens)
   })
 
@@ -123,4 +126,21 @@ describe('context providers', () => {
     expect(done.type).toBe('done')
     expect(JSON.stringify(start)).toBe(startJson)
   })
+})
+
+it('counts a loaded Skill once even when its tool result arrives after the Skill event', () => {
+  const start = assembleContext({
+    runtime: createRuntimeContext({ systemPrompt: '', identityPrompt: '' }),
+    work: createWorkContext({ conversation: '' }), longTerm: createLongTermMemoryContext(),
+    sdkSystemPrompt: '', sdkPrompt: '',
+  }).snapshot
+  const collector = createTurnContextCollector(start)
+  const text = 'fixture instructions '.repeat(100)
+  collector.observe({ type: 'skill_context', id: 'fixture-read', content: text })
+  collector.observe({ type: 'tool_call_start', id: 'fixture-read', name: 'Read' })
+  collector.observe({ type: 'tool_call_result', id: 'fixture-read', result: text })
+  const result = collector.finish()[0].context
+  expect(result.categories.find(item => item.id === 'conversation')?.estimated_tokens).toBe(0)
+  expect(result.estimated_total_tokens).toBe(estimateContextTokens(text))
+  expect(result.displayed_total_tokens).toBe(result.estimated_total_tokens)
 })

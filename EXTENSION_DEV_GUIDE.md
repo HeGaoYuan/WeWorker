@@ -226,9 +226,9 @@ WeWorker 存在两条 Bridge 通信路径：BridgeClient（WebSocket 直连）�
 
 只为新网站写 adapter（不改扩展本体）时：
 
-1. 在 `extension/adapters/<domain>/` 下建 `index.js` + `manifest.json`
-2. 在 `extension/adapters/index.json` 数组里追加域名
-3. 刷新扩展 → 打开目标网页 → 看控制台确认注册
+1. 在仓库根 `adapters/<domain>/` 下建 v2 包：`manifest.json`（schema_version 2）+ `extension/commands/<tool-id>.js`
+2. 在 `weworker/build-profile.json` 的 `adapters` 数组里追加域名
+3. 运行 `node weworker/scripts/prepare-build.cjs --profile public` → 重新加载扩展 → Adapter 经 Bridge 下发
 4. 完整编写规范见下文 §8
 
 ---
@@ -348,18 +348,22 @@ SW 处理流程：`debugger.attach` → `DOM.querySelector` → `DOM.setFileInpu
   ["jd.com", "mail.163.com", "mail.google.com"]
   ```
 
-- `adapters/<id>/manifest.json` — 每个 Adapter 的元数据（每个 Adapter 目录必须有）：
+- `adapters/<id>/manifest.json` — 每个 Adapter 的元数据（每个 Adapter 目录必须有）。内置 Adapter 源码位于仓库根 `adapters/`，以 host-managed v2 包形式经 Bridge 下发：
 
   ```
-  extension/adapters/
-  ├── index.json
+  adapters/                      # 仓库根目录
   ├── jd.com/
-  │   ├── manifest.json
-  │   └── index.js
+  │   ├── manifest.json          # v2 包清单（schema_version 2）
+  │   └── extension/
+  │       ├── commands/          # 工具命令模块
+  │       └── internal/          # 包内共享运行时
   └── mail.163.com/
       ├── manifest.json
-      └── index.js
+      └── extension/
+          └── commands/
   ```
+
+  扩展内不内置 Adapter；构建时 `prepare-build` 生成的 `adapters/index.json` 恒为空清单，仅用于扩展启动初始化。
 
 ### 8.8 `manifest.json` 字段
 

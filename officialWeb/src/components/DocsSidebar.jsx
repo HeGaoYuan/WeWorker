@@ -16,20 +16,37 @@ export default function DocsSidebar() {
               </div>
             </div>
             <ul className="space-y-0.5 border-l border-border/80 ml-3 pl-2">
-              {group.items.map((item) => (
-                <li key={item.slug}>
-                  <Link
-                    to={`/docs/${item.slug}`}
-                    className={`block px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap ${
-                      activeSlug === item.slug
-                        ? 'bg-accent/15 text-accent font-semibold border border-accent/45'
-                        : 'text-muted hover:text-[rgb(var(--color-text))] hover:bg-surface'
-                    }`}
-                  >
-                    {item.title}
-                  </Link>
-                </li>
-              ))}
+              {group.items.map((item) => {
+                const key = item.slug || item.href || item.title
+                const className = `block px-3 py-1.5 rounded-lg text-sm transition-colors whitespace-nowrap ${
+                  item.slug && activeSlug === item.slug
+                    ? 'bg-accent/15 text-accent font-semibold border border-accent/45'
+                    : 'text-muted hover:text-[rgb(var(--color-text))] hover:bg-surface'
+                }`
+
+                if (item.href) {
+                  return (
+                    <li key={key}>
+                      <a
+                        href={item.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={className}
+                      >
+                        {item.title}
+                      </a>
+                    </li>
+                  )
+                }
+
+                return (
+                  <li key={key}>
+                    <Link to={`/docs/${item.slug}`} className={className}>
+                      {item.title}
+                    </Link>
+                  </li>
+                )
+              })}
             </ul>
           </div>
         ))}

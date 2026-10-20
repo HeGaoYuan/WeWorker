@@ -8,7 +8,7 @@ import MainWorkspaceShell from './MainWorkspaceShell.jsx'
 import TaskConfigView from '../scheduled/TaskConfigView.jsx'
 import ToolPackagePage from '../welcome/ToolPackagePage.jsx'
 import { useSettingsStore } from '../../store/settings.js'
-import { useZcfStore, normalizeZcfModeId } from '../../store/zcf.js'
+import { resolveStyleId } from '../../store/styles.js'
 import { useChatInputFillStore } from '../../store/chat-input-fill.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
 import { useExplorationPageStore } from '../../store/exploration-page.js'
@@ -18,6 +18,7 @@ import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 import DedicatedAgentsPage from '../dedicated-agents/DedicatedAgentsPage.jsx'
 import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
 import { requestChatWarmup } from '../../api/backend.js'
+import { buildOpenWarmupRequest } from '../../utils/chat-warmup.js'
 
 export default function MainArea({ onOpenSettings, sidebarWidth }) {
   const activeWorkId = useWorksStore((s) => s.activeWorkId)
@@ -31,22 +32,17 @@ export default function MainArea({ onOpenSettings, sidebarWidth }) {
   const closeToolPackagePage = useToolPackagePageStore((s) => s.closePage)
   const [inputText, setInputText] = React.useState('')
   const [attachments, setAttachments] = React.useState([])
-  const [zcfNotice, setZcfNotice] = React.useState('')
   const maxChatAttachments = useSettingsStore((s) => s.maxChatAttachments)
   const zcfDefaultRole = useSettingsStore((s) => s.zcfDefaultRole)
-  const zcfDefaultMode = useSettingsStore((s) => s.zcfDefaultMode)
-  const saveZcfDefaults = useSettingsStore((s) => s.saveZcfDefaults)
-  const roleLabel = useZcfStore((s) => s.roleLabel)
-  const modeLabel = useZcfStore((s) => s.modeLabel)
-  const zcfRoles = useZcfStore((s) => s.roles)
-  const zcfModes = useZcfStore((s) => s.modes)
-  const resolvePickerRole = useZcfStore((s) => s.resolvePickerRole)
-  const zcfRole = React.useMemo(
-    () => resolvePickerRole(zcfDefaultRole, zcfDefaultRole),
-    [resolvePickerRole, zcfDefaultRole],
-  )
+  const zcfCustomRoles = useSettingsStore((s) => s.zcfCustomRoles)
   const fillSeq = useChatInputFillStore((s) => s.seq)
   const fillText = useChatInputFillStore((s) => s.text)
+
+  // 已删除风格的残留 id（历史 auto-plan 等）在这里回落到仍可选的风格。
+  const styleId = React.useMemo(
+    () => resolveStyleId(zcfDefaultRole, zcfCustomRoles),
+    [zcfDefaultRole, zcfCustomRoles],
+  )
 
   React.useEffect(() => {
     if (fillSeq > 0 && !activeWorkId && !activeTaskId) {
@@ -54,12 +50,18 @@ export default function MainArea({ onOpenSettings, sidebarWidth }) {
     }
   }, [activeTaskId, activeWorkId, fillSeq, fillText])
 
+  React.useEffect(() => {
+    if (activeWorkId || activeTaskId || websiteOpen || dedicatedAgentsOpen || toolPackageOpen || explorationOpen) return
+    const request = buildOpenWarmupRequest(null, undefined, styleId)
+    requestChatWarmup(request.workId, request.payload)
+  }, [activeWorkId, activeTaskId, websiteOpen, dedicatedAgentsOpen, toolPackageOpen, explorationOpen, styleId])
+
   const handleSendFromWelcome = async (text, files = [], thinkingEffort = 'off') => {
     setInputText('')
     setAttachments([])
     closeToolPackagePage()
     useWorksStore.setState({ pendingMessage: text, pendingAttachments: files, pendingThinkingEffort: thinkingEffort })
-    await createWork({ zcf_role: zcfDefaultRole, zcf_mode: zcfDefaultMode })
+    await createWork({ styleId })
   }
 
   const handleShellCommandFromWelcome = async (command, originalText = '') => {
@@ -74,27 +76,7 @@ export default function MainArea({ onOpenSettings, sidebarWidth }) {
         originalText: originalText || `!${trimmed}`,
       },
     })
-    await createWork({ zcf_role: zcfDefaultRole, zcf_mode: zcfDefaultMode })
-  }
-
-  const handleZcfRoleChange = async (roleId) => {
-    try {
-      await saveZcfDefaults({ zcfDefaultRole: roleId })
-      setZcfNotice(`已切换风格为「${roleLabel(roleId)}」，新建任务将默认使用此风格`)
-      window.setTimeout(() => setZcfNotice(''), 4000)
-    } catch (e) {
-      console.error('[welcome] save zcf role failed:', e)
-    }
-  }
-
-  const handleZcfModeChange = async (modeId) => {
-    try {
-      await saveZcfDefaults({ zcfDefaultMode: modeId })
-      setZcfNotice(`已切换模式为「${modeLabel(modeId)}」，新建任务将默认使用此模式`)
-      window.setTimeout(() => setZcfNotice(''), 4000)
-    } catch (e) {
-      console.error('[welcome] save zcf mode failed:', e)
-    }
+    await createWork({ styleId })
   }
 
   const handleFillInput = (text) => {
@@ -148,22 +130,6 @@ export default function MainArea({ onOpenSettings, sidebarWidth }) {
   return (
     <MainWorkspaceShell>
       <WelcomeScreen onFillInput={handleFillInput} />
-      {zcfNotice && (
-        <div style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 132,
-          zIndex: 31,
-          padding: '8px 20px',
-          color: 'var(--accent)',
-          fontSize: 12,
-          background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
-          pointerEvents: 'none',
-        }}>
-          {zcfNotice}
-        </div>
-      )}
       <ChatBottomDock
         onSend={handleSendFromWelcome}
         onShellCommand={handleShellCommandFromWelcome}
@@ -172,14 +138,9 @@ export default function MainArea({ onOpenSettings, sidebarWidth }) {
         attachments={attachments}
         onAttachmentsChange={setAttachments}
         maxAttachments={maxChatAttachments}
-        zcfRole={zcfRole}
-        zcfMode={normalizeZcfModeId(zcfDefaultMode)}
-        zcfRoles={zcfRoles}
-        zcfModes={zcfModes}
-        onZcfRoleChange={handleZcfRoleChange}
-        onZcfModeChange={handleZcfModeChange}
-        // Same style/mode that handleSendFromWelcome passes to createWork.
-        onWarmup={(thinkingEffort) => requestChatWarmup(null, { thinkingEffort, zcfRole: zcfDefaultRole, zcfMode: zcfDefaultMode })}
+        // Welcome screen has no work yet; the Backend pre-warms with the same
+        // style handleSendFromWelcome will persist into the new work.
+        onWarmup={(thinkingEffort) => requestChatWarmup(null, { thinkingEffort, styleId })}
       />
     </MainWorkspaceShell>
   )

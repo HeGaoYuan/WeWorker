@@ -954,7 +954,7 @@ def create_app(
                 else str(payload.get("debug_run_evidence_id") or "")
             ),
             exploration_only=exploration_only,
-            timeout_seconds=int(payload.get("timeout_seconds") or 300),
+            timeout_seconds=int(payload.get("timeout_seconds") or 900),
         )
         return jsonify(
             {

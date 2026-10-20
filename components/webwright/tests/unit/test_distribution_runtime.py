@@ -92,6 +92,34 @@ def test_runtime_launcher_separates_internal_and_external_environment(
     assert external["TOKEN"] == "secret"
 
 
+def test_internal_worker_environment_exempts_loopback_from_proxy(
+    monkeypatch,
+) -> None:
+    launcher = RuntimeLauncher()
+    proxied = {
+        "HTTP_PROXY": "http://127.0.0.1:7890",
+        "HTTPS_PROXY": "http://127.0.0.1:7890",
+    }
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+
+    injected = launcher.internal_worker_environment(environ=proxied)
+
+    assert injected["HTTP_PROXY"] == "http://127.0.0.1:7890"
+    for host in ("127.0.0.1", "localhost", "::1"):
+        assert host in injected["NO_PROXY"].split(",")
+        assert host in injected["no_proxy"].split(",")
+
+    preserved = launcher.internal_worker_environment(
+        environ={**proxied, "NO_PROXY": "corp.example.com", "no_proxy": "corp.example.com"}
+    )
+    assert preserved["NO_PROXY"] == "corp.example.com,127.0.0.1,localhost,::1"
+
+    untouched = launcher.internal_worker_environment(environ={"PATH": "/usr/bin"})
+    assert "NO_PROXY" not in untouched
+    assert "no_proxy" not in untouched
+
+
 def test_bundled_resources_are_readable() -> None:
     resources = BundledResources()
 

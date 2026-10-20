@@ -37,6 +37,11 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
     const finishCatalog = (data) => {
       if (controller.signal.aborted) return
       setCatalog({ ...data, provider: activeProvider })
+      // 模型名不再内置默认值：首次拉到列表且当前还没选模型时，先落到第一个可用模型上。
+      const catalogModels = Array.isArray(data?.models) ? data.models.filter(Boolean) : []
+      if (!useSettingsStore.getState().model && catalogModels.length) {
+        void saveProvider(activeProvider, { model: catalogModels[0] })
+      }
       if (autoCheckProvider.current === activeProvider) {
         autoCheckProvider.current = null
         void checkModels(activeProvider, buildModelOptions(data.models, model).map(item => item.value))
@@ -165,6 +170,9 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         ariaLabel="模型选择"
         placement="top"
         minMenuWidth={280}
+        searchable
+        allowCustom
+        searchPlaceholder="搜索或输入模型名"
         renderOptionSuffix={renderModelHealth}
         menuHeader={(
           <div className="model-health-toolbar">

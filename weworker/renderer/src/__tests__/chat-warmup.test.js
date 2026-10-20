@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { createChatWarmupScheduler, shouldWarmupOnTextChange } from '../utils/chat-warmup.js'
+import { buildOpenWarmupRequest, createChatWarmupScheduler, readPersistedThinkingEffort, shouldWarmupOnTextChange } from '../utils/chat-warmup.js'
 import { warmupChat } from '../api/backend.js'
 
 const originalFetch = global.fetch
@@ -43,6 +43,22 @@ describe('chat warm-up', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
+  it('warms the session as soon as a conversation is opened', () => {
+    const storage = { getItem: (key) => (key === 'weworker-thinking-effort-v2' ? 'high' : null) }
+    assert.deepEqual(buildOpenWarmupRequest('work-a', storage), {
+      workId: 'work-a',
+      payload: { thinkingEffort: 'high' },
+    })
+    // 未持久化 / 取值非法时回落到 off，和输入框的默认值一致。
+    assert.equal(readPersistedThinkingEffort({ getItem: () => null }), 'off')
+    assert.equal(readPersistedThinkingEffort({ getItem: () => 'nonsense' }), 'off')
+    assert.equal(readPersistedThinkingEffort({ getItem: () => { throw new Error('blocked') } }), 'off')
+    assert.deepEqual(buildOpenWarmupRequest(null, storage, 'fixture-style'), {
+      workId: null, payload: { thinkingEffort: 'high', styleId: 'fixture-style' },
+    })
+    assert.equal(buildOpenWarmupRequest('', storage).workId, null)
+  })
+
   it('posts to the work or welcome warm-up endpoint', async () => {
     global.window = {}
     const calls = []
@@ -50,11 +66,11 @@ describe('chat warm-up', () => {
       calls.push({ url, body: JSON.parse(options.body) })
       return { ok: true, json: async () => ({ status: 'starting' }) }
     }
-    assert.deepEqual(await warmupChat('work-a', { thinkingEffort: 'low', zcfRole: 'ignored' }), { status: 'starting' })
-    await warmupChat(null, { thinkingEffort: 'medium', zcfRole: 'role-a', zcfMode: 'direct' })
+    assert.deepEqual(await warmupChat('work-a', { thinkingEffort: 'low', styleId: 'ignored' }), { status: 'starting' })
+    await warmupChat(null, { thinkingEffort: 'medium', styleId: 'engineer-professional' })
     assert.equal(calls[0].url, 'http://127.0.0.1:8765/works/work-a/warmup')
     assert.deepEqual(calls[0].body, { thinkingEffort: 'low' })
     assert.equal(calls[1].url, 'http://127.0.0.1:8765/chat/warmup')
-    assert.deepEqual(calls[1].body, { thinkingEffort: 'medium', zcfRole: 'role-a', zcfMode: 'direct' })
+    assert.deepEqual(calls[1].body, { thinkingEffort: 'medium', zcfRole: 'engineer-professional' })
   })
 })

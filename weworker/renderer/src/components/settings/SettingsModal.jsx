@@ -1,20 +1,39 @@
 import ModelConfigurationName from './ModelConfigurationName.jsx'
 import AppSwitch from '../common/AppSwitch.jsx'
 import AppDropdownInput from '../common/AppDropdownInput.jsx'
-import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { ApiOutlined, AppstoreAddOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DisconnectOutlined, DownOutlined, LinkOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react'
+import { createPortal } from 'react-dom'
+import { ApiOutlined, AppstoreAddOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DisconnectOutlined, DownOutlined, EditOutlined, LinkOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import { isBuiltinProvider } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
 import SkillsTab from './SkillsTab.jsx'
 import LogsTab from './LogsTab.jsx'
+import MemoryTab from './MemoryTab.jsx'
 import { useUserFilesStore } from '../../store/user-files.js'
-import { normalizeZcfModeId, useZcfStore } from '../../store/zcf.js'
+import { listSelectableStyles, isCustomStyleId, DEFAULT_STYLE_ID as DEFAULT_STYLE } from '../../store/styles.js'
 import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import { DropdownMenuPortal, useDropdownDismiss } from '../common/DropdownMenuPortal.jsx'
 import StyleKindIcon from '../common/StyleKindIcon.jsx'
 import { selectModelAfterCatalogRefresh, buildModelOptions, buildModelCatalogAccess, getModelCatalogIssue, getModelCatalogStatus, buildProbeResultRows, buildProviderProbeTargets, buildSettingsProviderLists, isFixedProvider } from '../../utils/model-selection.js'
 import { normalizePreviewExtension } from '../../utils/resource-preview-extensions.js'
+import {
+  STYLE_DELETE_CONFIRM_TITLE,
+  STYLE_DELETE_LABEL,
+  STYLE_EDIT_LABEL,
+  STYLE_NAME_PLACEHOLDER,
+  STYLE_PROMPT_PLACEHOLDER,
+  buildStyleDraft,
+  customStyleDialogTitle,
+  isEditableStyleRole,
+  removeStyleDraft,
+  resolveSavedSnapshotSync,
+  resolveSelectedStyleAfterRemove,
+  savedSnapshotSignature,
+  styleDeleteConfirmMessage,
+  upsertStyleDraft,
+  validateStyleName,
+} from '../../utils/style-draft.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
 import weworkerLogo from '../../../../asset/logo.png'
@@ -118,6 +137,12 @@ const LOGOS = {
 export default function SettingsPage({ onClose }) {
   const [tab, setTab] = useState('model')
   const [appVersion, setAppVersion] = useState('')
+  // 「配置」页签的未保存编辑（自定义风格草稿、用户目录、黑名单等）都存在面板本地 state，
+  // 而下面各页签是条件渲染：切走即卸载，切回来会用「已保存设置」重新初始化，草稿因此丢失。
+  // 所以「配置」首次进入后就保持挂载，切走只隐藏（ConfigTab 的 hidden）+ 关闭编辑弹窗，不再卸载。
+  // 首次进入前不挂载，保持「设置页打开时不触发配置页加载」的既有行为。
+  const [configMounted, setConfigMounted] = useState(false)
+  if (tab === 'config' && !configMounted) setConfigMounted(true)
 
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(v => setAppVersion(v || ''))
@@ -138,6 +163,7 @@ export default function SettingsPage({ onClose }) {
               ['model', '模型'],
               ['channels', '通道'],
               ['config', '配置'],
+              ['memory', '记忆'],
               ['permissions', '权限'],
               ['logs', '日志'],
               ['about', '关于'],
@@ -160,6 +186,7 @@ export default function SettingsPage({ onClose }) {
               ['model', '模型'],
               ['channels', '通道'],
               ['config', '配置'],
+              ['memory', '记忆'],
               ['permissions', '权限'],
               ['logs', '日志'],
               ['about', '关于'],
@@ -168,7 +195,8 @@ export default function SettingsPage({ onClose }) {
           <div className={`settings-body${tab === 'model' || tab === 'channels' ? ' settings-body--model' : ''}`}>
             {tab === 'channels' && <ChannelsTab />}
             {tab === 'permissions' && <PermissionsTab />}
-            {tab === 'config' && <ConfigTab />}
+            {configMounted && <ConfigTab active={tab === 'config'} />}
+            {tab === 'memory' && <MemoryTab />}
             {tab === 'skills' && <SkillsTab />}
             {tab === 'logs' && <LogsTab />}
             {tab === 'about' && <AboutTab appVersion={appVersion} commitHash={commitHash} />}
@@ -742,7 +770,8 @@ function OriginList({ origins = [], emptyText, onRemove, readOnly = false }) {
   )
 }
 
-function ConfigTab() {
+// active=false 表示「配置」已不是当前页签：面板保持挂载（未保存编辑不丢），仅由 hidden 隐藏。
+function ConfigTab({ active = true }) {
   const userDirectory = useSettingsStore((s) => s.userDirectory)
   const downloadSubdirectory = useSettingsStore((s) => s.downloadSubdirectory)
   const downloadDirectory = useSettingsStore((s) => s.downloadDirectory)
@@ -1099,8 +1128,8 @@ function ConfigTab() {
   const canSaveBlacklist = !blacklistHasInvalidEntries && !draftPatternError
 
   return (
-    <div className="settings-stack">
-      <ZcfSettingsPanel />
+    <div className="settings-stack" hidden={!active}>
+      <StyleSettingsPanel active={active} />
 
       <div className="settings-group">
         <SettingRow
@@ -2083,6 +2112,9 @@ function ModelTab() {
                           minMenuWidth={280}
                           matchAnchorWidth
                           className="settings-model-dropdown"
+                          searchable
+                          allowCustom
+                          searchPlaceholder="搜索或输入模型名"
                         />
                         <button type="button" onClick={() => loadModels(p.id, true)} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                           {loadingModels ? '获取中…' : '刷新模型'}
@@ -2146,6 +2178,9 @@ function ModelTab() {
                             minMenuWidth={280}
                             matchAnchorWidth
                             className="settings-model-dropdown"
+                            searchable
+                            allowCustom
+                            searchPlaceholder="搜索或输入模型名"
                           />
                           <button type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                             {loadingModels ? '获取中…' : '刷新模型'}
@@ -2340,13 +2375,198 @@ function StyleOptionCard({
       </span>
       <span className="settings-style-option__text">
         <span className="settings-style-option__title">
-          {title}
+          <span className="settings-style-option__title-text">{title}</span>
           {badge ? <span className="settings-style-option__badge">{badge}</span> : null}
         </span>
         {description ? <span className="settings-style-option__desc">{description}</span> : null}
       </span>
       <span className="settings-style-option__radio" aria-hidden="true" />
     </button>
+  )
+}
+
+// 自定义风格卡片：复用 StyleOptionCard 作为卡片本体（选中/切换行为不变），
+// 再在卡片右侧补一个明确的「编辑」入口（铅笔图标 + 文字），点击打开编辑弹窗。
+// 该入口在 CSS 里绝对定位（垂直居中、位于蓝色选择圆点左侧），脱离文档流，
+// 不参与卡片高度计算（卡片高度与内置卡片一致）。
+function EditableStyleOptionCard({
+  selected = false,
+  roleId,
+  title,
+  description,
+  badge,
+  kind = 'custom',
+  onSelect,
+  onEdit,
+}) {
+  return (
+    <div className={`settings-style-option-wrap${selected ? ' is-selected' : ''}`}>
+      <StyleOptionCard
+        selected={selected}
+        title={title}
+        description={description}
+        badge={badge}
+        kind={kind}
+        onSelect={onSelect}
+      />
+      <div className="settings-style-option-actions">
+        <button
+          type="button"
+          className="settings-style-option-edit"
+          onClick={() => onEdit(roleId)}
+          title={`${STYLE_EDIT_LABEL}自定义风格`}
+          aria-label={`${STYLE_EDIT_LABEL}自定义风格 ${title}`}
+        >
+          <EditOutlined aria-hidden="true" />
+          <span>{STYLE_EDIT_LABEL}</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// 自定义风格编辑弹窗：沿用设置页既有弹窗约定（PresetKeyDialog 的 portal + 遮罩 + Esc/Tab 处理，
+// .weworker-dialog-overlay / .weworker-dialog 外壳，settings-theme.css 的 .settings-* 表单控件）。
+// 草稿只存在弹窗内部：保存时通过 onSave 写回父级，取消不做任何写入。
+// canDelete 只在编辑已存在的自定义风格时为 true（「新增」场景不显示删除）；
+// 删除同样不写后端，交给「保存配置」统一落盘（沿用旧常驻编辑区块的行为）。
+function CustomStyleDialog({ draft: initialDraft, canDelete, onSave, onDelete, onClose }) {
+  const [draft, setDraft] = useState(() => buildStyleDraft(initialDraft))
+  const [error, setError] = useState('')
+  // 二次确认期间：确认弹窗自己处理 Esc，这里要让位，避免连编辑弹窗一起关掉。
+  const [confirming, setConfirming] = useState(false)
+  const panelRef = useRef(null)
+  const nameRef = useRef(null)
+  const titleId = useId()
+  const nameId = useId()
+  const promptId = useId()
+
+  useEffect(() => {
+    const previous = document.activeElement
+    // 只有「当前无名称」时自动聚焦名称输入框；已有名称时聚焦弹窗本身，保证键盘能进入弹窗。
+    if (String(initialDraft?.label ?? '').trim()) panelRef.current?.focus()
+    else nameRef.current?.focus()
+    return () => {
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return
+      // 弹窗上层的全局确认弹窗可见时，Esc 归确认弹窗（取消删除），不关闭编辑弹窗。
+      if (confirming) return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose, confirming])
+
+  const submit = (event) => {
+    event.preventDefault()
+    const result = validateStyleName(draft.label)
+    if (!result.ok) {
+      setError(result.error)
+      nameRef.current?.focus()
+      return
+    }
+    onSave({ label: result.label, prompt: draft.prompt })
+  }
+
+  // 复用全局确认弹窗（showConfirm），不自己造确认框；确认后才回调父级删除。
+  const requestDelete = async () => {
+    if (confirming) return
+    setConfirming(true)
+    const confirmed = await showConfirm(styleDeleteConfirmMessage(initialDraft?.label), STYLE_DELETE_CONFIRM_TITLE)
+    if (confirmed) {
+      // 父级删除后会关闭本弹窗，这里不再回写状态。
+      onDelete()
+      return
+    }
+    setConfirming(false)
+  }
+
+  const title = customStyleDialogTitle(initialDraft)
+
+  return createPortal(
+    <div
+      className="weworker-dialog-overlay settings-style-dialog-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <section
+        ref={panelRef}
+        className="weworker-dialog settings-style-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key !== 'Tab') return
+          const items = [...(panelRef.current?.querySelectorAll('input, textarea, button') || [])]
+            .filter((item) => !item.disabled)
+          const first = items[0]
+          const last = items[items.length - 1]
+          if (!first) { event.preventDefault(); return }
+          if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) {
+            event.preventDefault()
+            last.focus()
+          }
+          if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+        }}
+      >
+        <h2 id={titleId}>{title}</h2>
+        <p>填写名称与提示词，保存后可在聊天中切换</p>
+        <form onSubmit={submit}>
+          <div className="settings-style-dialog__field">
+            <label htmlFor={nameId}>风格名称</label>
+            <input
+              ref={nameRef}
+              id={nameId}
+              className="settings-input"
+              type="text"
+              autoComplete="off"
+              placeholder={STYLE_NAME_PLACEHOLDER}
+              value={draft.label}
+              onChange={(event) => { setDraft((current) => ({ ...current, label: event.target.value })); setError('') }}
+            />
+          </div>
+          <div className="settings-style-dialog__field">
+            <label htmlFor={promptId}>风格提示词</label>
+            <textarea
+              id={promptId}
+              className="settings-input settings-style-dialog__prompt"
+              placeholder={STYLE_PROMPT_PLACEHOLDER}
+              value={draft.prompt}
+              onChange={(event) => setDraft((current) => ({ ...current, prompt: event.target.value }))}
+            />
+          </div>
+          <span className={`settings-action-hint settings-style-dialog__hint${error ? ' is-error' : ''}`} role={error ? 'alert' : undefined}>
+            {error}
+          </span>
+          <footer>
+            {canDelete && (
+              <button
+                type="button"
+                className="weworker-dialog__button settings-style-dialog__delete"
+                onClick={requestDelete}
+                disabled={confirming}
+              >
+                {STYLE_DELETE_LABEL}
+              </button>
+            )}
+            <button type="button" className="weworker-dialog__button" onClick={onClose}>取消</button>
+            <button type="submit" className="weworker-dialog__button is-primary">保存</button>
+          </footer>
+        </form>
+      </section>
+    </div>,
+    document.body,
   )
 }
 
@@ -2366,45 +2586,38 @@ function getStyleOptionDescription(role, kind) {
   }
   return role.description || ''
 }
+// 把「已保存设置」单向同步进面板本地草稿：只有已保存内容签名变化时才覆盖本地草稿。
+// 设置页保存任何一项都会让后端回传整份 settings（自定义风格等字段是内容相同的新引用），
+// 若按引用变化就刷新，未点「保存配置」的新增/编辑风格会被已保存设置冲掉。
+function useSyncSavedSnapshotToDraft(savedSnapshot, applySavedSnapshot) {
+  const signatureRef = useRef(savedSnapshotSignature(savedSnapshot))
+  const { sync, signature } = resolveSavedSnapshotSync(signatureRef.current, savedSnapshot)
+  useEffect(() => {
+    if (!sync) return
+    signatureRef.current = signature
+    applySavedSnapshot()
+  }, [sync, signature])
+}
 
-function ZcfSettingsPanel() {
-  const zcfLang = useSettingsStore((s) => s.zcfLang)
-  const zcfPackageVersion = useSettingsStore((s) => s.zcfPackageVersion)
-  const zcfSync = useSettingsStore((s) => s.zcfSync)
+// active=false 表示「配置」页签已切走（面板被隐藏但未卸载）：草稿 state 保留，
+// 只把编辑弹窗关掉，避免弹窗浮在其它页签上（与旧的「切页签即卸载」观感一致）。
+function StyleSettingsPanel({ active = true }) {
   const zcfDefaultRole = useSettingsStore((s) => s.zcfDefaultRole)
-  const zcfDefaultMode = useSettingsStore((s) => s.zcfDefaultMode)
   const zcfEnabledRoles = useSettingsStore((s) => s.zcfEnabledRoles)
   const zcfCustomRoles = useSettingsStore((s) => s.zcfCustomRoles)
-  const saveZcfRoles = useSettingsStore((s) => s.saveZcfRoles)
-  const saveZcfDefaults = useSettingsStore((s) => s.saveZcfDefaults)
-  const syncMeta = useZcfStore((s) => s.syncMeta)
-  const packageVersion = useZcfStore((s) => s.packageVersion)
-  const extensionStyles = useZcfStore((s) => s.extensionStyles)
-  const coreStyles = useZcfStore((s) => s.coreStyles)
-  const zcfModes = useZcfStore((s) => s.modes)
-  const syncing = useZcfStore((s) => s.syncing)
-  const syncTemplates = useZcfStore((s) => s.syncTemplates)
-  const loadCatalog = useZcfStore((s) => s.loadCatalog)
-  const loadSettings = useSettingsStore((s) => s.load)
-  const [lang, setLang] = useState(zcfLang || 'zh-CN')
-  const [message, setMessage] = useState(null)
-  const [selectedStyleId, setSelectedStyleId] = useState(zcfDefaultRole || zcfEnabledRoles?.[0] || 'default')
-  const [selectedModeId, setSelectedModeId] = useState(normalizeZcfModeId(zcfDefaultMode))
+  const saveStyleSettings = useSettingsStore((s) => s.saveStyleSettings)
+  const [selectedStyleId, setSelectedStyleId] = useState(zcfDefaultRole || zcfEnabledRoles?.[0] || DEFAULT_STYLE)
   const [customRoles, setCustomRoles] = useState(zcfCustomRoles || [])
+  const [customEditor, setCustomEditor] = useState(null)
   const [rolesMessage, setRolesMessage] = useState(null)
   const [savingRoles, setSavingRoles] = useState(false)
 
+  // 风格清单 = 应用内置风格（默认 / 专业严谨简单明确 / 工程师专业版）+ 自定义风格。
+  // 全部是纯提示词：没有模板语言、没有扩展目录、没有「更新扩展」入口。
+  const savedSelectableStyles = useMemo(() => listSelectableStyles(zcfCustomRoles), [zcfCustomRoles])
+
   const selectableStyles = useMemo(() => {
-    const core = (coreStyles.length ? coreStyles : [
-      { id: 'default', label: '默认' },
-      { id: 'weworker-clear', label: '专业严谨简单明确' },
-    ]).map((role) => ({
-      ...role,
-      kind: role.id === 'default' ? 'default' : 'core',
-      badge: '内置',
-    }))
-    const ext = extensionStyles.map((role) => ({ ...role, kind: 'zcf', badge: 'ZCF' }))
-    const custom = customRoles.map((role) => {
+    const custom = (customRoles || []).map((role) => {
       const label = String(role.label || '').trim()
       const prompt = String(role.prompt || '').trim()
       return {
@@ -2415,118 +2628,88 @@ function ZcfSettingsPanel() {
         draft: !label || !prompt,
       }
     })
-    return [...core, ...ext, ...custom]
-  }, [coreStyles, extensionStyles, customRoles])
+    return [...listSelectableStyles([]), ...custom]
+  }, [customRoles])
 
-  const selectableModes = useMemo(() => {
-    const baseModes = zcfModes.length ? zcfModes : [
-      { id: 'direct', label: '默认', description: '直接执行，不额外注入规划工作流' },
-      { id: 'auto-plan', label: '自动规划', description: '自动判断任务复杂度，必要时先规划再执行' },
-    ]
-    const seen = new Set()
-    return baseModes
-      .map((mode) => ({
-        ...mode,
-        id: normalizeZcfModeId(mode.id),
-      }))
-      .filter((mode) => {
-        if (!mode.id || seen.has(mode.id)) return false
-        seen.add(mode.id)
-        return true
-      })
-  }, [zcfModes])
+  // 已保存设置 → 本地草稿：只在内容真正变化时刷新，避免其它保存动作新建的等价引用冲掉草稿。
+  // 已删除风格的残留 id（历史 auto-plan 等）在写回草稿前回落到默认，避免卡片列表里没有选中项。
+  useSyncSavedSnapshotToDraft(
+    [zcfDefaultRole, zcfEnabledRoles],
+    () => {
+      const saved = zcfDefaultRole || zcfEnabledRoles?.[0] || DEFAULT_STYLE
+      setSelectedStyleId(savedSelectableStyles.some((role) => role.id === saved) ? saved : DEFAULT_STYLE)
+    },
+  )
 
+  useSyncSavedSnapshotToDraft(
+    zcfCustomRoles,
+    () => setCustomRoles(zcfCustomRoles || []),
+  )
+
+  // 切走「配置」时关闭编辑弹窗（不改动 customRoles/selectedStyleId 等草稿）。
   useEffect(() => {
-    setLang(zcfLang || 'zh-CN')
-  }, [zcfLang])
-
-  useEffect(() => {
-    setSelectedStyleId(zcfDefaultRole || zcfEnabledRoles?.[0] || 'default')
-  }, [zcfDefaultRole, zcfEnabledRoles])
-
-  useEffect(() => {
-    setSelectedModeId(normalizeZcfModeId(zcfDefaultMode))
-  }, [zcfDefaultMode])
-
-  useEffect(() => {
-    setCustomRoles(zcfCustomRoles || [])
-  }, [zcfCustomRoles])
-
-  useEffect(() => {
-    if (!coreStyles.length) loadCatalog()
-  }, [coreStyles.length, loadCatalog])
-
-  const syncedAt = syncMeta?.lastExtensionSyncAt || syncMeta?.syncedAt || zcfSync?.lastExtensionSyncAt || zcfSync?.syncedAt
-  const version = packageVersion || zcfPackageVersion
-  const syncedLabel = syncedAt
-    ? new Date(syncedAt).toLocaleString()
-    : '尚未手动更新扩展'
-
-  const editingCustomIndex = customRoles.findIndex((role) => role.id === selectedStyleId)
-  const showCustomEditor = editingCustomIndex >= 0
-
-  const handleLangChange = async (nextLang) => {
-    setLang(nextLang)
-    setMessage(null)
-    try {
-      await saveZcfDefaults({ zcfLang: nextLang })
-      await loadSettings()
-      await loadCatalog()
-      setMessage({ ok: true, text: '模板语言已保存' })
-    } catch (e) {
-      setMessage({ ok: false, text: e.message || '保存失败' })
-    }
-  }
-
-  const handleSync = async () => {
-    setMessage(null)
-    try {
-      await syncTemplates(lang)
-      await loadSettings()
-      setMessage({ ok: true, text: '已更新扩展风格与工作流模板' })
-    } catch (e) {
-      setMessage({ ok: false, text: e.message || '更新失败' })
-    }
-  }
+    if (active) return
+    setCustomEditor(null)
+  }, [active])
 
   const selectStyle = (roleId) => {
     setSelectedStyleId(roleId)
     setRolesMessage(null)
   }
 
-  const addCustomRole = () => {
-    const id = `custom-${Date.now().toString(36)}`
-    setCustomRoles((items) => [
-      ...items,
-      { id, label: '', prompt: '' },
-    ])
-    setSelectedStyleId(id)
+  // 「新增自定义」与卡片上的「编辑」都走同一个弹窗；弹窗状态为空即不渲染任何常驻表单。
+  // 传 roleId 时按 id 取当前自定义风格，传条目本身时直接用它（新增场景该条目还没进 state）。
+  const openCustomEditor = (roleOrId, { isNew = false } = {}) => {
+    const role = typeof roleOrId === 'string'
+      ? (customRoles || []).find((item) => item.id === roleOrId)
+      : roleOrId
+    if (!role?.id) return
+    setCustomEditor({ roleId: role.id, draft: buildStyleDraft(role), isNew })
     setRolesMessage(null)
   }
 
-  const updateCustomRole = (index, field, value) => {
-    setCustomRoles((items) => items.map((item, i) => (
-      i === index ? { ...item, [field]: value } : item
-    )))
-    setRolesMessage(null)
+  const closeCustomEditor = () => {
+    // 取消不做任何写入：草稿只存在于弹窗内部，这里仅关闭。
+    setCustomEditor(null)
   }
 
-  const removeCustomRole = (index) => {
-    const roleId = customRoles[index]?.id
-    setCustomRoles((items) => items.filter((_, i) => i !== index))
-    if (roleId && selectedStyleId === roleId) {
-      setSelectedStyleId('default')
+  const saveCustomEditor = (draft) => {
+    const roleId = customEditor?.roleId
+    if (!roleId) {
+      setCustomEditor(null)
+      return
     }
+    setCustomRoles((items) => upsertStyleDraft(items, roleId, draft))
+    // 新增保存后沿用既有行为：新风格成为当前默认风格。
+    if (customEditor.isNew) setSelectedStyleId(roleId)
     setRolesMessage(null)
+    setCustomEditor(null)
+  }
+
+  const addCustomRole = () => {
+    // 不预先写入 customRoles：点「新增自定义」直接进同一个弹窗，保存时才落条目。
+    openCustomEditor({ id: `custom-${Date.now().toString(36)}`, label: '', prompt: '' }, { isNew: true })
+  }
+
+  // 弹窗「删除」：只删本地草稿（旧常驻编辑区块的 removeCustomRole 同样不写后端），
+  // 由「保存配置」统一落盘。删掉的若正是当前选中风格，回落到内置默认风格（沿用旧行为）。
+  const deleteCustomStyle = () => {
+    const roleId = customEditor?.roleId
+    if (!roleId) {
+      setCustomEditor(null)
+      return
+    }
+    setCustomRoles((items) => removeStyleDraft(items, roleId))
+    setSelectedStyleId((current) => resolveSelectedStyleAfterRemove(current, roleId))
+    setRolesMessage(null)
+    setCustomEditor(null)
   }
 
   const rolesDirty = JSON.stringify({
     style: selectedStyleId,
-    mode: selectedModeId,
     custom: (customRoles || []).map((r) => ({ id: r.id, label: r.label, prompt: r.prompt })),
   }) !== JSON.stringify({
-    style: zcfDefaultRole || zcfEnabledRoles?.[0] || 'default',
-    mode: normalizeZcfModeId(zcfDefaultMode),
+    style: zcfDefaultRole || zcfEnabledRoles?.[0] || DEFAULT_STYLE,
     custom: (zcfCustomRoles || []).map((r) => ({ id: r.id, label: r.label, prompt: r.prompt })),
   })
 
@@ -2534,32 +2717,34 @@ function ZcfSettingsPanel() {
     setSavingRoles(true)
     setRolesMessage(null)
     try {
-      const sanitizedCustom = customRoles
+      const sanitizedCustom = (customRoles || [])
         .map((role) => ({
           id: role.id,
           label: String(role.label || '').trim(),
           prompt: String(role.prompt || '').trim(),
         }))
         .filter((role) => role.label && role.prompt)
-      if (selectedStyleId.startsWith('custom-') && !sanitizedCustom.some((role) => role.id === selectedStyleId)) {
+      if (isCustomStyleId(selectedStyleId) && !sanitizedCustom.some((role) => role.id === selectedStyleId)) {
         setRolesMessage({ ok: false, text: '请先填写当前选中的自定义风格名称与提示词' })
         setSavingRoles(false)
         return
       }
       const availableIds = new Set([
-        ...(coreStyles.length ? coreStyles : [{ id: 'default', label: '默认' }, { id: 'weworker-clear', label: '专业严谨简单明确' }]).map((r) => r.id),
-        ...extensionStyles.map((r) => r.id),
+        ...listSelectableStyles([]).map((r) => r.id),
         ...sanitizedCustom.map((r) => r.id),
       ])
-      const activeStyle = availableIds.has(selectedStyleId) ? selectedStyleId : 'default'
-      await saveZcfRoles({
+      const activeStyle = availableIds.has(selectedStyleId) ? selectedStyleId : DEFAULT_STYLE
+      await saveStyleSettings({
         zcfDefaultRole: activeStyle,
         zcfEnabledRoles: [activeStyle],
         zcfCustomRoles: sanitizedCustom,
       })
-      await saveZcfDefaults({ zcfDefaultMode: selectedModeId })
-      await loadCatalog()
-      setRolesMessage({ ok: true, text: '风格与工作流设置已保存' })
+      // 保存成功后本地草稿与已保存内容对齐（trim、丢弃空条目），沿用旧行为：
+      // 保存前后端回传会顺带刷新面板；现在只有「内容变化」才刷新，所以这里显式对齐一次，
+      // 避免保存成功但草稿残留空白时「保存配置」按钮仍然亮着。
+      setCustomRoles(sanitizedCustom)
+      setSelectedStyleId(activeStyle)
+      setRolesMessage({ ok: true, text: '风格设置已保存' })
     } catch (e) {
       setRolesMessage({ ok: false, text: e.message || '保存失败' })
     } finally {
@@ -2567,52 +2752,16 @@ function ZcfSettingsPanel() {
     }
   }
 
+  const selectedStyleLabel = [...selectableStyles]
+    .find((role) => role.id === selectedStyleId)?.label || '默认'
+
   return (
     <div className="settings-group">
       <SettingRow
-        title="风格与工作流"
-        description="内置专业工程师风格与工作流模板；扩展风格需手动从 ZCF 更新（同名覆盖）"
-        message={message}
-        fallback={`ZCF 包版本 ${version || '未知'} · 上次扩展更新 ${syncedLabel}`}
-        stacked
-        footer={(
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={syncing}
-            className="settings-btn settings-btn-primary"
-          >
-            {syncing ? '更新中...' : '从 ZCF 更新扩展'}
-          </button>
-        )}
-      >
-        <div className="settings-pill settings-pill--wide">
-          <span className="settings-pill-prefix">模板语言</span>
-          <AppDropdownSelect
-            value={lang}
-            options={[
-              { value: 'zh-CN', label: '简体中文' },
-              { value: 'en', label: 'English' },
-            ]}
-            onChange={handleLangChange}
-            disabled={syncing}
-            ariaLabel="ZCF 模板语言"
-            minMenuWidth={140}
-            className="settings-dropdown-select"
-          />
-        </div>
-      </SettingRow>
-
-      <SettingRow
-        title="高级 · 风格与工作流"
-        description="风格与工作流作为新会话默认配置；聊天输入框不再展示切换入口"
+        title="风格"
+        description="内置与自定义风格都是应用内的提示词；风格互斥，新会话默认使用当前选中的风格"
         message={rolesMessage}
-        fallback={`当前默认：${
-          [...(coreStyles.length ? coreStyles : [{ id: 'default', label: '默认' }, { id: 'weworker-clear', label: '专业严谨简单明确' }]),
-            ...extensionStyles,
-            ...(customRoles || []).map((r) => ({ id: r.id, label: r.label }))]
-            .find((r) => r.id === selectedStyleId)?.label || '默认'
-        }`}
+        fallback={`当前默认：${selectedStyleLabel}`}
         stacked
         footer={(
           <button
@@ -2628,81 +2777,48 @@ function ZcfSettingsPanel() {
         <div className="settings-style-section">
           <div className="settings-style-section__header">
             <div className="settings-card-title">默认风格</div>
-            <div className="settings-card-subtitle">风格互斥，只能选择一个；更多 ZCF 风格需手动「从 ZCF 更新扩展」</div>
+            <div className="settings-card-subtitle">风格互斥，只能选择一个；自定义风格可编辑提示词</div>
           </div>
           <div className="settings-style-option-grid">
             {selectableStyles.map((role) => (
-              <StyleOptionCard
-                key={role.id}
-                selected={selectedStyleId === role.id}
-                title={role.label}
-                description={getStyleOptionDescription(role, role.kind)}
-                badge={role.badge}
-                kind={role.kind}
-                onSelect={() => selectStyle(role.id)}
-              />
+              isEditableStyleRole(role) ? (
+                <EditableStyleOptionCard
+                  key={role.id}
+                  selected={selectedStyleId === role.id}
+                  roleId={role.id}
+                  title={role.label}
+                  description={getStyleOptionDescription(role, role.kind)}
+                  badge={role.badge}
+                  kind={role.kind}
+                  onSelect={() => selectStyle(role.id)}
+                  onEdit={openCustomEditor}
+                />
+              ) : (
+                <StyleOptionCard
+                  key={role.id}
+                  selected={selectedStyleId === role.id}
+                  title={role.label}
+                  description={getStyleOptionDescription(role, role.kind)}
+                  badge={role.badge}
+                  kind={role.kind}
+                  onSelect={() => selectStyle(role.id)}
+                />
+              )
             ))}
             <StyleAddCard onSelect={addCustomRole} />
           </div>
         </div>
-
-        <div className="settings-style-section">
-          <div className="settings-style-section__header">
-            <div className="settings-card-title">默认工作流</div>
-            <div className="settings-card-subtitle">作为新会话的默认执行模式；聊天中不再单独展示切换入口</div>
-          </div>
-          <div className="settings-style-option-grid">
-            {selectableModes.map((mode) => (
-              <StyleOptionCard
-                key={mode.id}
-                selected={selectedModeId === mode.id}
-                title={mode.label || (mode.id === 'auto-plan' ? '自动规划' : '默认')}
-                description={mode.description || (mode.id === 'auto-plan' ? '自动判断任务复杂度，必要时先规划再执行' : '直接执行，不额外注入规划工作流')}
-                badge="内置"
-                kind={mode.id === 'auto-plan' ? 'zcf' : 'default'}
-                onSelect={() => {
-                  setSelectedModeId(mode.id)
-                  setRolesMessage(null)
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        {showCustomEditor && (
-          <div className="settings-card settings-custom-styles" style={{ padding: 12, marginTop: 10 }}>
-            <div className="settings-card-header">
-              <div>
-                <div className="settings-card-title">编辑自定义风格</div>
-                <div className="settings-card-subtitle">填写名称与提示词，保存后可在聊天中切换</div>
-              </div>
-              <button
-                type="button"
-                className="settings-btn"
-                onClick={() => removeCustomRole(editingCustomIndex)}
-              >
-                删除
-              </button>
-            </div>
-            <div className="settings-custom-style-editor">
-              <input
-                className="settings-pill-input"
-                style={{ width: '100%', marginBottom: 8 }}
-                placeholder="风格名称"
-                value={customRoles[editingCustomIndex]?.label || ''}
-                onChange={(e) => updateCustomRole(editingCustomIndex, 'label', e.target.value)}
-              />
-              <textarea
-                className="settings-pill-input"
-                style={{ width: '100%', minHeight: 96, resize: 'vertical' }}
-                placeholder="风格提示词（语气、表达习惯；建议禁止 emoji）"
-                value={customRoles[editingCustomIndex]?.prompt || ''}
-                onChange={(e) => updateCustomRole(editingCustomIndex, 'prompt', e.target.value)}
-              />
-            </div>
-          </div>
-        )}
       </SettingRow>
+
+      {customEditor && (
+        <CustomStyleDialog
+          draft={customEditor.draft}
+          canDelete={customEditor.isNew !== true}
+          onSave={saveCustomEditor}
+          onDelete={deleteCustomStyle}
+          onClose={closeCustomEditor}
+        />
+      )}
     </div>
   )
 }

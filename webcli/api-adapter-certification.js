@@ -98,7 +98,11 @@ function findTestFiles(testSources, tokens) {
 export async function loadShippedApiInventory({ repoRoot = defaultRepoRoot } = {}) {
   const profilePath = join(repoRoot, 'weworker', 'build-profile.json')
   const adaptersRoot = join(repoRoot, 'extension', 'adapters')
-  const extensionIndex = new Set(readJson(join(adaptersRoot, 'index.json')))
+  // 旧版 v1 内置目录已移除；仅当历史遗留目录仍存在时才读取其清单。
+  const legacyIndexPath = join(adaptersRoot, 'index.json')
+  const extensionIndex = existsSync(legacyIndexPath)
+    ? new Set(readJson(legacyIndexPath))
+    : new Set()
   const profile = readJson(profilePath)
   const adapterIds = Array.isArray(profile.adapters) ? profile.adapters : []
   const errors = []

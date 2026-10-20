@@ -1,24 +1,34 @@
 import { adapterHelperPatterns, adapterPagePatterns, hostMatchesPattern } from './host-scope.js';
 
 /** Serialize page replacement and calls so an update cannot replace a running command's globals. */
-export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
+export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, query, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
   const queues = new Map();
   const stamps = new Map();
   const documents = new Map();
+  function exclusive(tabId, operation) {
+    const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(operation);
+    queues.set(tabId, task);
+    void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
+    return task;
+  }
   return {
+    exclusive,
+    hasSnapshot(tabId, manifest, url) {
+      return stamps.get(tabId) === JSON.stringify([manifest.name, manifest._hostSnapshot, url]);
+    },
     invalidate(tabId) {
       stamps.delete(tabId);
       documents.set(tabId, (documents.get(tabId) || 0) + 1);
     },
-    execute(tabId, manifest, url, operation = null, command = null) {
+    execute(tabId, manifest, url, operation = null, command = null, traceID = null) {
       const deadline = now() + timeoutMs;
-      const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(async () => {
+      return exclusive(tabId, async () => {
         const policy = command && manifest.commands?.find(entry => entry.id === command.id);
-        let currentUrl = url;
+        let currentUrl = url, continuation = null;
         for (let step = 0; ; step++) {
           if (now() >= deadline) throw new Error('Adapter page execution timed out.');
           for (let attempt = 0; ; attempt++) {
-            if (ready) currentUrl = await ready(tabId, manifest, Math.min(25000, deadline - now()));
+            if (ready) currentUrl = await ready(tabId, manifest, Math.min(25000, deadline - now()), traceID);
             if (now() >= deadline) throw new Error('Adapter page execution timed out.');
             const stamp = JSON.stringify([manifest.name, manifest._hostSnapshot, currentUrl]);
             const sources = await bundle(manifest);
@@ -41,7 +51,18 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
             }
           }
           if (now() >= deadline) throw new Error('Adapter page execution timed out.');
-          const result = operation ? await operation(Math.max(1, deadline - now())) : undefined;
+          const result = operation ? await operation(Math.max(1, deadline - now()), continuation) : undefined;
+          if (result?.__webcli_page_query) {
+            if (continuation || !query || policy?.safety !== 'read' || policy.pageWorkflow !== true) throw new Error('Invalid or repeated page query continuation.');
+            const payload = result.__webcli_page_query;
+            if (payload.version !== 1) throw new Error('Unsupported page query version.');
+            const output = await query(tabId, payload, manifest, policy);
+            if (!output?.ok) return output;
+            continuation = { kind: 'page_query_result', result: output };
+            stamps.delete(tabId);
+            continue;
+          }
+          if (continuation && result?.__webcli_navigation) throw new Error('A resumed page query cannot request another navigation.');
           const next = result?.__webcli_navigation;
           if (!next) return result;
           if (!policy || !navigate || next.version !== 1 || typeof next.resume !== 'boolean') throw new Error('Invalid Adapter navigation continuation.');
@@ -58,34 +79,98 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
           if (!next.resume) return next.result ?? { status: 'navigation_complete', url: currentUrl };
         }
       });
-      queues.set(tabId, task);
-      void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
-      return task;
     },
   };
+}
+
+/**
+ * Classifies a navigation target against the package's declared hosts.
+ * This is the single source of truth for the allowed-host rule; both the
+ * strict assertion below and the fail-fast wait guard reuse it.
+ *
+ * - `allowed`: host is declared by `manifest.match` or `manifest.domains`
+ *   (always) or by `runtime_allowed_hosts` (terminal navigation only, i.e.
+ *   `resume === false`).
+ * - `forbidden`: a real http(s) page whose host is not declared.
+ * - `unknown`: not judgeable yet (about:blank, chrome-error, data:, an
+ *   unparseable value): the tab has not reached a page we can judge.
+ */
+export function classifyNavigationTarget(manifest, value, resume = true) {
+  let url;
+  try { url = new URL(String(value ?? '')); } catch { return 'unknown'; }
+  if (!['http:', 'https:'].includes(url.protocol)) return 'unknown';
+  if (url.username || url.password) return 'forbidden';
+  // Page scope: `match` plus every subdomain of `domains`; helper hosts allow terminal navigation only.
+  // The host rules themselves live in host-scope.js (`*.x` is x and every subdomain).
+  const patterns = resume ? adapterPagePatterns(manifest) : adapterHelperPatterns(manifest);
+  return patterns.some((pattern) => hostMatchesPattern(url.hostname, pattern)) ? 'allowed' : 'forbidden';
 }
 
 /** Navigation is limited to declared page hosts; helper hosts allow terminal navigation only. */
 export function assertAdapterNavigationUrl(manifest, value, resume = true) {
   let url;
   try { url = new URL(value); } catch { throw new Error('Invalid Adapter navigation URL.'); }
-  // Page scope: `match` plus every subdomain of `domains`; helper hosts allow terminal navigation only.
-  const patterns = resume ? adapterPagePatterns(manifest) : adapterHelperPatterns(manifest);
-  const allowed = patterns.some((pattern) => hostMatchesPattern(url.hostname, pattern));
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !allowed) {
+  if (classifyNavigationTarget(manifest, url.href, resume) !== 'allowed') {
     // Name the host (never the full URL): the caller must see that this is a package
     // declaration problem that retrying cannot fix.
     const host = ['http:', 'https:'].includes(url.protocol) ? url.hostname : url.protocol;
-    throw Object.assign(new Error(`Adapter navigation host is not allowed: ${host}（页面跳转到了该 Adapter 未声明的网站，这是 Adapter 配置问题，重试无效；开发者可在 manifest 的 domains 中声明该网站的域名）`), {
+      const message = `Adapter navigation host is not allowed. Host: ${host}（页面跳转到了该 Adapter 未声明的网站，这是 Adapter 配置问题，重试无效；开发者可在 manifest 的 domains 中声明该网站的域名）`;
+    throw Object.assign(new Error(message), {
       code: 'ADAPTER_HOST_NOT_ALLOWED',
     });
   }
   return url.href;
 }
 
+/**
+ * How long a URL must stay unchanged on a non-declared host before the wait is
+ * abandoned. A 302/redirect chain (the normal "hop to A, then land on the
+ * declared host" flow) changes `tab.url` within this window, which resets the
+ * timer, so a still-redirecting tab is never rejected. Only a URL that has
+ * stopped moving on a host the manifest does not declare is judged final.
+ */
+export const NAVIGATION_TARGET_SETTLE_MS = 1500;
+
+/**
+ * Tracks the URL observed while a page loads and decides when waiting can no
+ * longer succeed. State lives in the returned closure; the decision itself is a
+ * pure function of (manifest, observed URL, time).
+ *
+ * `observe(url, at)` returns `'reject'` only when the same non-declared http(s)
+ * URL has been observed for `settleMs`; every other observation returns `'wait'`.
+ * Non-http targets and declared hosts always return `'wait'` (they only affect
+ * how long we wait, never correctness).
+ */
+export function createNavigationGuard(manifest, resume = true, options = {}) {
+  const settleMs = Number.isFinite(options.settleMs) ? options.settleMs : NAVIGATION_TARGET_SETTLE_MS;
+  const now = options.now || Date.now;
+  let lastUrl = null;
+  let stableSince = 0;
+  return {
+    observe(value, at = now()) {
+      const url = String(value ?? '');
+      if (classifyNavigationTarget(manifest, url, resume) !== 'forbidden') {
+        lastUrl = null;
+        stableSince = 0;
+        return 'wait';
+      }
+      if (url !== lastUrl) {
+        lastUrl = url;
+        stableSince = at;
+        return 'wait';
+      }
+      return at - stableSince >= settleMs ? 'reject' : 'wait';
+    },
+    get url() { return lastUrl; },
+  };
+}
+
 /** Observe load events before initiating navigation, including same-URL reloads. */
 export async function navigateAdapterTab(api, tabId, url, manifest, resume, timeoutMs) {
   assertAdapterNavigationUrl(manifest, url, resume);
+  // Same fail-fast rule as waitForManagedPageReady: a redirect that settles on a
+  // host the package does not declare is rejected without waiting for `complete`.
+  const guard = createNavigationGuard(manifest, resume);
   let complete = false;
   const listener = (id, change) => { if (id === tabId && change.status === 'complete') complete = true; };
   api.tabs.onUpdated.addListener(listener);
@@ -99,6 +184,9 @@ export async function navigateAdapterTab(api, tabId, url, manifest, resume, time
       const tab = await api.tabs.get(tabId);
       if (!tab) throw new Error('Adapter tab was closed.');
       if (tab.status === 'complete' && (complete || (!reload && tab.url === url))) {
+        return assertAdapterNavigationUrl(manifest, tab.url, resume);
+      }
+      if (guard.observe(tab.url, Date.now()) === 'reject') {
         return assertAdapterNavigationUrl(manifest, tab.url, resume);
       }
       await new Promise(resolve => setTimeout(resolve, 100));

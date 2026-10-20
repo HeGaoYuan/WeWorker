@@ -22,7 +22,7 @@ WeWorker 需要配合 Chrome 扩展才能操作浏览器。扩展已包含在安
 
 1. 打开 Chrome，进入 `chrome://extensions/`
 2. 开启右上角的**开发者模式**
-3. 点击**加载未解压的扩展程序**
+3. 点击**加载未打包的扩展程序**
 4. 选择以下路径中的 `extension` 文件夹：
    - **macOS**：`/Applications/WeWorker.app/Contents/Resources/extension`
    - **Windows**：`%LOCALAPPDATA%\Programs\WeWorker\resources\extension`
@@ -46,7 +46,11 @@ WeWorker 需要配合 Chrome 扩展才能操作浏览器。扩展已包含在安
 
 </details>
 
-## 第四步：开始对话
+## 第四步（可选）：安装 Adapter Skill
+
+Skill 是教 AI 如何调用各站点 `webcli` 工具的说明文档，与桌面客户端是不同下载物。WeWorker 可在应用内自动同步 Skill；也可在终端执行 `webcli install --skills`。详见 [Skill 安装与使用](/docs/skills)。
+
+## 第五步：开始对话
 
 1. 点击左上角的 "+" 新建对话
 2. 在 Chrome 中打开你想操作的网站（如京东、Gmail），确保已登录

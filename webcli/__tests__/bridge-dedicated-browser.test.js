@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 const mocks = vi.hoisted(() => ({ execFile: vi.fn() }))
 vi.mock('ws', async () => {
@@ -44,13 +45,48 @@ function fakeHost({ mode = 'dedicated', ready = async () => true } = {}) {
   }
 }
 
+function fakeProfiles() {
+  let next = 0
+  const profiles = {
+    state: { defaultContextId: null },
+    connections: new Map(),
+    register(ws, msg) {
+      if (ws._browserConnection) return ws._browserConnection
+      const contextId = msg.contextId || `legacy-${++next}`
+      const connection = { contextId, connectionId: `connection-${next}`, ws, legacy: !msg.contextId,
+        version: msg.version || null, capabilities: msg.capabilities || [] }
+      profiles.connections.set(contextId, connection)
+      ws._browserConnection = connection
+      return connection
+    },
+    disconnect(ws) {
+      const connection = ws._browserConnection
+      if (connection) profiles.connections.delete(connection.contextId)
+      return connection
+    },
+    select() {
+      const online = [...profiles.connections.values()].filter((connection) => connection.ws.readyState === 1)
+      const dedicated = online.find((connection) => connection.instance === 'dedicated')
+      const connection = dedicated || online.at(-1)
+      if (!connection) throw new Error('no extension')
+      return { contextId: connection.contextId, connection }
+    },
+    assertConnection(route) { return route.connection },
+  }
+  return profiles
+}
+
 function createBridge(host = fakeHost()) {
   const bridge = Object.create(WebSocketBridge.prototype)
   bridge._clients = new Set()
+  bridge._profiles = fakeProfiles()
+  bridge._route = new AsyncLocalStorage()
   bridge._extensionWs = null
   bridge._extensionVersion = null
   bridge._extensionCapabilities = []
   bridge._pendingRequests = new Map()
+  bridge._captureModelContexts = new Map()
+  bridge._callTimings = new Map()
   bridge._requestCounter = 0
   bridge._broadcast = vi.fn()
   bridge._handleExtensionMessage = vi.fn()
@@ -94,24 +130,27 @@ describe('bridge with WeWorker browser and the user\'s Chrome', () => {
     expect(connectedEvents(bridge)).toEqual([
       expect.objectContaining({ type: 'extension_connected', instance: 'system' }),
       expect.objectContaining({ type: 'extension_connected', instance: 'dedicated' }),
+      expect.objectContaining({ type: 'extension_connected', instance: 'system' }),
     ])
     // Heartbeats repeat the hello without new broadcasts.
     hello(dedicated, { instanceToken: TOKEN, heartbeat: true })
-    expect(connectedEvents(bridge)).toHaveLength(2)
+    expect(connectedEvents(bridge)).toHaveLength(3)
   })
 
-  it('hands over to the remaining extension instead of reporting a disconnect', () => {
+  it('keeps the remaining extension available and reports exactly which profile disconnected', () => {
     const bridge = createBridge()
     const own = connect(bridge)
     hello(own)
     const dedicated = connect(bridge)
     hello(dedicated, { instanceToken: TOKEN })
+    const dedicatedContext = dedicated._browserConnection.contextId
     close(dedicated)
     expect(bridge._extensionWs).toBe(own)
-    expect(connectedEvents(bridge).at(-1)).toEqual(expect.objectContaining({ type: 'extension_connected', instance: 'system' }))
+    expect(connectedEvents(bridge).at(-1)).toEqual(expect.objectContaining({ type: 'extension_disconnected', contextId: dedicatedContext, instance: 'dedicated' }))
+    const ownContext = own._browserConnection.contextId
     close(own)
     expect(bridge._extensionWs).toBeNull()
-    expect(connectedEvents(bridge).at(-1)).toEqual({ type: 'extension_disconnected' })
+    expect(connectedEvents(bridge).at(-1)).toEqual(expect.objectContaining({ type: 'extension_disconnected', contextId: ownContext, instance: 'system' }))
   })
 
   it('treats a wrong token, or any token in system mode, as the user\'s Chrome', () => {

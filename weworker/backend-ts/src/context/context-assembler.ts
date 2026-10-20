@@ -13,7 +13,7 @@ import type {
 const CJK_OR_FULL_WIDTH = /[\u2e80-\u9fff\uf900-\ufaff\uff01-\uff60]/u
 const WHITESPACE = /\s/u
 
-/** Deterministic local estimate for UI composition only; provider usage remains authoritative. */
+/** Deterministic local estimate for UI composition; billing usage stays separate from context size. */
 export function estimateContextTokens(value: string): number {
   const text = String(value || '')
   if (!text) return 0
@@ -152,6 +152,7 @@ export function buildTurnEndContextSnapshot(
     ...requestSnapshot,
     phase: 'turn_end',
     estimated_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
+    displayed_total_tokens: categories.reduce((sum, item) => sum + item.estimated_tokens, 0),
     categories,
   }
   return calibrateContextSnapshot(snapshot, actualInputTokens)
@@ -164,7 +165,8 @@ export interface TurnContextEvent {
   name?: string
   args?: unknown
   result?: string
-  usage?: { total_input_tokens?: number }
+  // Billing totals are cumulative; only the latest main request calibrates context.
+  usage?: { total_input_tokens?: number; context_input_tokens?: number }
 }
 
 export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
@@ -186,15 +188,17 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
         const existing = toolCalls.get(event.id) ?? { name: 'tool' }
         toolCalls.set(event.id, { ...existing, result: event.result })
       } else if (event.type === 'usage') {
-        const inputTokens = Number(event.usage?.total_input_tokens)
-        if (Number.isFinite(inputTokens)) actualInputTokens = Math.max(0, inputTokens)
+        const tokens = event.usage?.context_input_tokens
+        if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0) actualInputTokens = tokens
       }
     },
     finish(): [
       { type: 'context_snapshot'; context: ContextSnapshot },
       { type: 'done' },
     ] {
-      const toolText = [...toolCalls.values()]
+      const toolText = [...toolCalls.entries()]
+        .filter(([id]) => !skillTexts.has(id))
+        .map(([, tool]) => tool)
         .map((tool) => `\n[Tool] ${tool.name}${tool.result ? `\n${tool.result}` : ''}`)
         .join('')
       const skillTokens = [...skillTexts.values()].reduce((sum, text) => sum + estimateContextTokens(text), 0)

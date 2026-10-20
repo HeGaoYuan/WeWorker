@@ -4,12 +4,14 @@ import { createChatWarmupScheduler } from '../utils/chat-warmup.js'
 /**
  * Start the Backend chat session ahead of the first message.
  * `workId` null targets the welcome screen, whose work is created on send.
+ * `styleId` keeps the pre-warmed session's style fingerprint aligned with the
+ * style the work will actually use.
  */
-export async function warmupChat(workId, { thinkingEffort, zcfRole, zcfMode } = {}) {
+export async function warmupChat(workId, { thinkingEffort, styleId } = {}) {
   const res = await backendFetch(workId ? `/works/${workId}/warmup` : '/chat/warmup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(workId ? { thinkingEffort } : { thinkingEffort, zcfRole, zcfMode }),
+    body: JSON.stringify(workId ? { thinkingEffort } : { thinkingEffort, zcfRole: styleId }),
   })
   return res.ok ? res.json().catch(() => null) : null
 }

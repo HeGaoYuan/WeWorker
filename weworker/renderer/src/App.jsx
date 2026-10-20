@@ -17,7 +17,6 @@ import { useCapabilitiesPanelStore } from './store/capabilities-panel.js'
 import { useWorksStore } from './store/works.js'
 import { useStatusStore } from './store/status.js'
 import { useSettingsStore } from './store/settings.js'
-import { useZcfStore } from './store/zcf.js'
 import { useScheduledTasksStore } from './store/scheduled-tasks.js'
 import { useUserFilesStore } from './store/user-files.js'
 import { useTerminalStore } from './store/terminal.js'
@@ -30,6 +29,7 @@ import { WebsiteExplorationGuard } from './components/website-exploration/Websit
 import ExtensionGuide from './components/ExtensionGuide.jsx'
 import SiteLoginNotice from './components/site-login/SiteLoginNotice.jsx'
 import UpdatePrompt from './components/sidebar/UpdatePrompt.jsx'
+import InitialSetup from './components/onboarding/InitialSetup.jsx'
 import { useAntdThemeConfig } from './theme/antd-theme.js'
 import { streamBackendEvents } from './api/http.js'
 import './workspace-theme.css'
@@ -88,7 +88,8 @@ export default function App() {
   const loadWorks = useWorksStore((s) => s.loadWorks)
   const createWork = useWorksStore((s) => s.createWork)
   const loadSettings = useSettingsStore((s) => s.load)
-  const loadZcfCatalog = useZcfStore((s) => s.loadCatalog)
+  const settingsLoaded = useSettingsStore((s) => s.loaded)
+  const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted)
   const poll = useStatusStore((s) => s.poll)
   const toggleUserFilesPanel = useUserFilesStore((s) => s.togglePanel)
   const userFilesOpen = useUserFilesStore((s) => s.open)
@@ -118,9 +119,10 @@ export default function App() {
   useEffect(() => window.electronAPI?.onOpenDedicatedAgents?.(() => { void handleOpenDedicatedAgentsRef.current() }), [])
 
 
+
   useEffect(() => {
     loadWorks()
-    loadSettings().then(() => loadZcfCatalog())
+    loadSettings()
     poll()
     const interval = setInterval(poll, 3000)
     return () => clearInterval(interval)
@@ -350,7 +352,7 @@ export default function App() {
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', userSelect: 'none', gap: 8 }}>
-          {!showSettings && !focusedWorkspaceOpen && (
+          {settingsLoaded && onboardingCompleted && !showSettings && !focusedWorkspaceOpen && (
             <>
               <Tooltip text={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}>
                 <button
@@ -421,7 +423,7 @@ export default function App() {
           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 2 }}>v{appVersion || ''}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, WebkitAppRegion: 'no-drag' }}>
-        <UpdatePrompt />
+        {settingsLoaded && onboardingCompleted && <UpdatePrompt />}
         {!isMac && (
           <div className="app-window-controls" aria-label="窗口控制">
             <button type="button" className="app-window-control" aria-label="最小化" onClick={() => window.electronAPI?.minimizeWindow?.()}>
@@ -439,6 +441,11 @@ export default function App() {
       </div>
 
       <div className="app-workspace" data-workspace-content style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {!settingsLoaded ? (
+          <div className="initial-setup-loading" aria-label="正在加载初始化配置">正在加载…</div>
+        ) : !onboardingCompleted ? (
+          <InitialSetup />
+        ) : <>
         <AppRail
           activeSection={showSettings ? 'settings' : activeSidebarSection}
           settingsOpen={showSettings}
@@ -515,6 +522,7 @@ export default function App() {
             ? <SettingsPage onClose={() => setShowSettings(false)} />
             : <MainArea sidebarWidth={sidebarWidth} onOpenSettings={() => setShowSettings((current) => !current)} />}
         </div>
+        </>}
       </div>
       {showExtensionGuide && <ExtensionGuide onClose={() => setShowExtensionGuide(false)} />}
       <SiteLoginNotice />

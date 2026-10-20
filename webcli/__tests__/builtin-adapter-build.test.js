@@ -11,10 +11,8 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-build-'));
   roots.push(root);
   const builtinDir = path.join(root, 'source');
-  const legacyDir = path.join(root, 'legacy');
   fs.mkdirSync(builtinDir);
-  fs.mkdirSync(legacyDir);
-  return { root, builtinDir, legacyDir };
+  return { root, builtinDir };
 }
 function makePackage(builtinDir, name) {
   const root = path.join(builtinDir, name);
@@ -26,20 +24,13 @@ function makePackage(builtinDir, name) {
   fs.writeFileSync(path.join(root, 'extension/commands/list.js'), '__webcliRegisterCommand("list", () => []);');
   return root;
 }
-function makeLegacy(legacyDir, name) {
-  fs.mkdirSync(path.join(legacyDir, name));
-  fs.writeFileSync(path.join(legacyDir, name, 'manifest.json'), JSON.stringify({ id: name }));
-}
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
 it('packages only the selected profile and resolves the relocated artifact without source paths', () => {
   const dirs = fixture();
   makePackage(dirs.builtinDir, 'public-fixture');
   makePackage(dirs.builtinDir, 'private-fixture');
-  makeLegacy(dirs.legacyDir, 'public-fixture');
-  makeLegacy(dirs.legacyDir, 'old-fixture');
-  const selection = selectBuiltinAdapters({ ...dirs, names: ['public-fixture', 'old-fixture'] });
-  expect(selection.legacy.map(x => x.name)).toEqual(['old-fixture']);
+  const selection = selectBuiltinAdapters({ ...dirs, names: ['public-fixture'] });
   const outputDir = path.join(dirs.root, 'resources/adapters');
   const metadata = writeBuiltinAdapters({ selection, outputDir, profile: 'internal' });
   expect(metadata.adapters.map(x => x.name)).toEqual(['public-fixture']);
@@ -53,11 +44,10 @@ it('packages only the selected profile and resolves the relocated artifact witho
   expect(() => resolveAdapterPaths({ env: { WEWORKER_RESOURCES_PATH: path.dirname(outputDir), WEWORKER_BUILD_PROFILE: 'public' } })).toThrow(/does not match/);
 });
 
-it('fails on a missing, broken, linked or duplicate selection instead of using a legacy copy', () => {
+it('fails on a missing, broken, linked or duplicate selection', () => {
   const dirs = fixture();
-  expect(() => selectBuiltinAdapters({ ...dirs, names: ['missing'] })).toThrow();
+  expect(() => selectBuiltinAdapters({ ...dirs, names: ['missing'] })).toThrow(/package not found/);
   const pkg = makePackage(dirs.builtinDir, 'fixture');
-  makeLegacy(dirs.legacyDir, 'fixture');
   expect(() => selectBuiltinAdapters({ ...dirs, names: ['fixture', 'Fixture'] })).toThrow(/Duplicate/);
   fs.writeFileSync(path.join(pkg, 'manifest.json'), '{}');
   expect(() => selectBuiltinAdapters({ ...dirs, names: ['fixture'] })).toThrow(/schema_version/);
@@ -109,7 +99,7 @@ it('a checkout reads the prepared profile instead of every source package or a s
   fs.mkdirSync(path.join(dirs.root, 'adapters'));
   expect(() => resolveAdapterPaths({ env: {}, baseDir })).toThrow(/prepare/);
   const outputDir = path.join(dirs.root, 'weworker/build/builtin-adapters');
-  writeBuiltinAdapters({ selection: { packages: [], legacy: [] }, outputDir, profile: 'internal' });
+  writeBuiltinAdapters({ selection: { packages: [] }, outputDir, profile: 'internal' });
   fs.mkdirSync(path.join(dirs.root, 'weworker/build/extension-dist'));
   fs.mkdirSync(path.join(baseDir, 'extension'), { recursive: true });
   const paths = resolveAdapterPaths({ env: {}, baseDir, home: path.join(dirs.root, 'home') });

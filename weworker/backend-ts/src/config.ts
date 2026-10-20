@@ -57,14 +57,13 @@ import {
   type UserDirectoryBlacklistEntry,
 } from './user-directory-blacklist.js'
 import {
-  CORE_STYLE_ID,
   DEFAULT_STYLE_ID,
-  migrateLegacyDefaultRole,
-  normalizeZcfCustomRoles,
-  normalizeZcfEnabledRoles,
-  normalizeZcfMode,
-  type ZcfCustomRole,
-} from './zcf-role-settings.js'
+  normalizeCustomStyles,
+  normalizeDefaultStyleId,
+  normalizeEnabledStyles,
+  stripObsoleteZcfSettings,
+  type CustomStyle,
+} from './style-settings.js'
 import { DEFAULT_CONTEXT_LIMIT, normalizeContextLimit } from './context-window.js'
 import { normalizeAddedProviders } from './provider-visibility.js'
 
@@ -174,7 +173,55 @@ export interface ChannelsConfig {
 
 
 
+/** 长期记忆按档位的 token 预算；`extension` 覆盖所有 `extension:*` 记录。 */
+export interface MemoryBudgets {
+  user_usage: number
+  task_execution: number
+  other: number
+  extension: number
+}
+
+export const DEFAULT_MEMORY_BUDGETS: MemoryBudgets = {
+  user_usage: 800,
+  task_execution: 1600,
+  other: 1200,
+  extension: 800,
+}
+
+/** 单档位预算上限；超过上限的输入回退默认值而不是截断。 */
+export const MAX_MEMORY_BUDGET = 20_000
+
+/**
+ * 规范化记忆预算：缺失、非数字、负数或超过上限的档位回退默认值。
+ * 0 是合法值（表示该档位压缩到最少保留 1 条）。
+ */
+export function normalizeMemoryBudgets(value: unknown): MemoryBudgets {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+  const normalize = (raw: unknown, fallback: number): number => {
+    const numeric = typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.trim()
+        ? Number(raw)
+        : Number.NaN
+    if (!Number.isFinite(numeric)) return fallback
+    const budget = Math.floor(numeric)
+    if (budget < 0 || budget > MAX_MEMORY_BUDGET) return fallback
+    return budget
+  }
+  return {
+    user_usage: normalize(record.user_usage, DEFAULT_MEMORY_BUDGETS.user_usage),
+    task_execution: normalize(record.task_execution, DEFAULT_MEMORY_BUDGETS.task_execution),
+    other: normalize(record.other, DEFAULT_MEMORY_BUDGETS.other),
+    extension: normalize(record.extension, DEFAULT_MEMORY_BUDGETS.extension),
+  }
+}
+
 export interface Settings {
+
+  // Whether the first-run model/API key setup has been completed.
+  onboarding_completed: boolean
 
   // Active provider (which one is currently in use)
 
@@ -284,20 +331,20 @@ export interface Settings {
   /** P2 API 查询路由的 LLM 分类层开关（默认开；env WEWORKER_LLM_ROUTE=1|0 可覆盖）。 */
   api_query_llm_route: boolean
 
-  /** ZCF output style id synced from zcf templates; empty = no extra role prompt */
+  /**
+   * 当前生效的风格 id（默认 / 预定义内置风格 / 自定义风格）。
+   * 键名沿用历史字段以避免数据迁移；与 ZCF 已无关系。
+   */
   zcf_default_role: string
 
-  /** ZCF workflow mode id: direct (默认) | auto-plan (自动规划) */
-  zcf_default_mode: string
-
-  /** Language used when syncing ZCF templates */
-  zcf_lang: 'zh-CN' | 'en'
-
-  /** Built-in + custom role ids shown in chat picker */
+  /** 生效的风格 id 列表（风格互斥，恒为 1 项）；随 zcf_default_role 一起维护 */
   zcf_enabled_roles: string[]
 
-  /** User-defined ZCF roles (id, label, prompt) */
-  zcf_custom_roles: ZcfCustomRole[]
+  /** User-defined styles (id, label, prompt)；键名沿用历史字段以避免数据迁移 */
+  zcf_custom_roles: CustomStyle[]
+
+  /** 长期记忆按档位的估算 token 预算（extension 覆盖所有 extension:*）。 */
+  memory_budgets: MemoryBudgets
 }
 
 
@@ -326,31 +373,35 @@ const _defaultProvider = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
 
 const DEFAULTS: Settings = {
 
+  onboarding_completed: false,
+
   active_provider: _defaultProvider,
 
   api_key: '',
 
   base_url: 'https://api.anthropic.com',
 
-  model: 'claude-sonnet-4-6',
+  // 模型名是供应商侧的数据（随时会改名或上下架），构建期不写死默认值；
+  // 激活供应商时以模型列表接口返回为准，取不到则由用户在模型下拉中手填。
+  model: '',
 
   context_limit: DEFAULT_CONTEXT_LIMIT,
 
   api_key_anthropic: '',
 
-  model_anthropic: 'claude-sonnet-4-6',
+  model_anthropic: '',
 
   context_limit_anthropic: DEFAULT_CONTEXT_LIMIT,
 
   api_key_glm: '',
 
-  model_glm: 'glm-5.2',
+  model_glm: '',
 
   context_limit_glm: DEFAULT_CONTEXT_LIMIT,
 
   api_key_deepseek: '',
 
-  model_deepseek: 'deepseek-v4-flash',
+  model_deepseek: '',
 
   context_limit_deepseek: DEFAULT_CONTEXT_LIMIT,
 
@@ -412,15 +463,12 @@ const DEFAULTS: Settings = {
   user_directory_blacklist: [],
   open_browser_allowed_origins: [],
 
-  zcf_default_role: CORE_STYLE_ID,
+  zcf_default_role: DEFAULT_STYLE_ID,
 
-  zcf_default_mode: 'auto-plan',
-
-  zcf_lang: 'zh-CN',
-
-  zcf_enabled_roles: [CORE_STYLE_ID],
+  zcf_enabled_roles: [DEFAULT_STYLE_ID],
 
   zcf_custom_roles: [],
+  memory_budgets: { ...DEFAULT_MEMORY_BUDGETS },
 }
 
 
@@ -456,6 +504,7 @@ function cloneDefaults(): Settings {
     label_names: { ...DEFAULTS.label_names },
     open_browser_allowed_origins: [...DEFAULTS.open_browser_allowed_origins],
     added_providers: [...DEFAULTS.added_providers],
+    memory_budgets: { ...DEFAULTS.memory_budgets },
 
   }
 
@@ -515,24 +564,13 @@ function normalizeChannelsConfig(channels: ChannelsConfig): ChannelsConfig {
   }
 }
 
-function listInstalledStyleIds(): string[] {
-  const stylesDir = path.join(CONFIG_DIR, 'claude-config', 'output-styles')
-  const ids = new Set<string>([DEFAULT_STYLE_ID, CORE_STYLE_ID])
-  if (fs.existsSync(path.join(stylesDir, `${CORE_STYLE_ID}.md`))) {
-    ids.add(CORE_STYLE_ID)
-  }
-  const extensionsDir = path.join(stylesDir, 'extensions')
-  if (fs.existsSync(extensionsDir)) {
-    for (const file of fs.readdirSync(extensionsDir).filter((f) => f.endsWith('.md'))) {
-      ids.add(file.replace(/\.md$/, ''))
-    }
-  }
-  return [...ids]
-}
-
 function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   const merged = deepMerge(cloneDefaults(), raw ?? {}) as Settings
+
+  // ZCF 机制已整体移除：老 settings.json 里的纯 ZCF 残留字段不再读取，也不再写回磁盘。
+  // （`zcf_default_role` / `zcf_enabled_roles` / `zcf_custom_roles` 是风格字段，保留。）
+  stripObsoleteZcfSettings(merged as unknown as Record<string, unknown>)
 
   merged.custom_auth_type = raw?.custom_auth_type === 'api_key' ? 'api_key' : 'auth_token'
 
@@ -567,16 +605,15 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   merged.user_directory_blacklist = normalizeUserDirectoryBlacklist(merged.user_directory_blacklist)
   merged.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(merged.open_browser_allowed_origins)
-  merged.zcf_custom_roles = normalizeZcfCustomRoles(merged.zcf_custom_roles)
-  merged.zcf_default_role = migrateLegacyDefaultRole(merged.zcf_default_role)
-  merged.zcf_enabled_roles = normalizeZcfEnabledRoles(
+  merged.zcf_custom_roles = normalizeCustomStyles(merged.zcf_custom_roles)
+  merged.memory_budgets = normalizeMemoryBudgets(merged.memory_budgets)
+  merged.zcf_default_role = normalizeDefaultStyleId(merged.zcf_default_role)
+  merged.zcf_enabled_roles = normalizeEnabledStyles(
     merged.zcf_enabled_roles,
     merged.zcf_custom_roles,
-    listInstalledStyleIds(),
     merged.zcf_default_role,
   )
-  merged.zcf_default_role = merged.zcf_enabled_roles[0] || CORE_STYLE_ID
-  merged.zcf_default_mode = normalizeZcfMode(merged.zcf_default_mode)
+  merged.zcf_default_role = merged.zcf_enabled_roles[0] || DEFAULT_STYLE_ID
 
   const plaintextSecrets = collectPlaintextSecretsFromRaw(raw)
 
@@ -591,8 +628,26 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
 
   const secrets = { ...decryptedSecrets, ...plaintextSecrets }
+  const resolved = applySecrets(merged, secrets)
 
-  return migrateChannelConfigurations(applySecrets(merged, secrets))
+  // Older settings files do not have the onboarding flag. Preserve a user's
+  // existing configured setup while showing the flow for a genuinely new one.
+  if (raw?.onboarding_completed === undefined) {
+    const hasConfiguredModelKey = Boolean(
+      resolved.api_key
+      || resolved.api_key_anthropic
+      || resolved.api_key_glm
+      || resolved.api_key_deepseek
+      || resolved.api_key_custom
+      || Object.values(resolved.model_configurations || {}).some(configuration => Boolean(configuration.api_key?.trim())),
+    )
+    const legacyActiveProvider = typeof raw?.active_provider === 'string' ? raw.active_provider : ''
+    resolved.onboarding_completed = hasConfiguredModelKey
+      || legacyActiveProvider === 'builtin'
+      || legacyActiveProvider === 'builtin_dev'
+  }
+
+  return migrateChannelConfigurations(resolved)
 
 }
 
@@ -737,18 +792,17 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings.welcome_featured_site_limit = normalizeWelcomeFeaturedSiteLimit(_settings.welcome_featured_site_limit)
   _settings.user_directory_blacklist = normalizeUserDirectoryBlacklist(_settings.user_directory_blacklist)
   _settings.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(_settings.open_browser_allowed_origins)
-  _settings.zcf_custom_roles = normalizeZcfCustomRoles(_settings.zcf_custom_roles)
+  _settings.zcf_custom_roles = normalizeCustomStyles(_settings.zcf_custom_roles)
+  _settings.memory_budgets = normalizeMemoryBudgets(_settings.memory_budgets)
   if (updates.zcf_default_role !== undefined) {
-    _settings.zcf_default_role = migrateLegacyDefaultRole(_settings.zcf_default_role)
+    _settings.zcf_default_role = normalizeDefaultStyleId(_settings.zcf_default_role)
   }
-  _settings.zcf_enabled_roles = normalizeZcfEnabledRoles(
+  _settings.zcf_enabled_roles = normalizeEnabledStyles(
     _settings.zcf_enabled_roles,
     _settings.zcf_custom_roles,
-    listInstalledStyleIds(),
     _settings.zcf_default_role,
   )
-  _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || CORE_STYLE_ID
-  _settings.zcf_default_mode = normalizeZcfMode(_settings.zcf_default_mode)
+  _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || DEFAULT_STYLE_ID
 
   _settings.added_providers = normalizeAddedProviders(_settings.added_providers)
 

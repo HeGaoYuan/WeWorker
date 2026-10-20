@@ -9,6 +9,7 @@ import {
 import type { Settings } from '../config.js'
 
 const baseSettings = (): Settings => ({
+  onboarding_completed: true,
   active_provider: 'anthropic',
   api_key: 'active-key',
   base_url: 'https://api.anthropic.com',
@@ -55,10 +56,9 @@ const baseSettings = (): Settings => ({
   resource_preview_extensions: null,
   user_directory_blacklist: [],
   zcf_default_role: 'weworker-clear',
-  zcf_default_mode: 'auto-plan',
-  zcf_lang: 'zh-CN',
   zcf_enabled_roles: ['weworker-clear'],
   zcf_custom_roles: [],
+  memory_budgets: { user_usage: 800, task_execution: 1600, other: 1200, extension: 800 },
 })
 
 describe('settings-secrets', () => {

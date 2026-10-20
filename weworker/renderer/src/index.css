@@ -397,6 +397,14 @@ html.theme-instant-switch *::after {
   flex-shrink: 0;
 }
 
+.initial-setup-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .app-dropdown-select__trigger {
   height: 30px;
   box-sizing: border-box;
@@ -461,19 +469,71 @@ html.theme-instant-switch *::after {
   color: var(--text-secondary);
 }
 
-.zcf-picker .app-dropdown-select__trigger {
+/* 可搜索下拉：搜索框与自定义行只在 searchable / allowCustom 时渲染 */
+.app-dropdown-select__search {
+  flex-shrink: 0;
+  padding: 0 0 4px;
+}
+
+.app-dropdown-select__search-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--dropdown-border);
+  border-radius: 10px;
+  /* 底色直接与下拉面板一致（浅色为白），不依赖父元素、也不用灰色填充 */
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  outline: none;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.app-dropdown-select__search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* 搜索框底色始终与下拉面板一致（浅色为白），不用灰色填充 */
+.app-dropdown-select__search-input:hover {
+  background: var(--dropdown-bg);
+}
+
+/* 聚焦只用边框表达，保持下拉框无外圈阴影的项目规范 */
+.app-dropdown-select__search-input:focus,
+.app-dropdown-select__search-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  background: var(--dropdown-bg);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--dropdown-border));
+}
+
+.app-dropdown-select__custom-option .app-dropdown-menu-item__label {
+  color: var(--accent);
+}
+
+.app-dropdown-select__empty {
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.style-picker .app-dropdown-select__trigger {
   max-width: 156px;
 }
 
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger {
-  height: 28px;
-  border-radius: 7px;
-  font-size: 12px;
-  padding: 0 9px;
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger {
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 0 8px;
   gap: 6px;
 }
 
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__prefix {
+.workspace-toolbar__context .style-picker .app-dropdown-select__prefix {
   font-size: 10px;
 }
 
@@ -1566,9 +1626,9 @@ html.dark {
     opacity 0.15s ease;
 }
 
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger:hover:not(:disabled),
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger:focus-visible,
-[data-chat-bottom-dock] .zcf-picker .app-dropdown-select__trigger[aria-expanded='true'] {
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger:hover:not(:disabled),
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger:focus-visible,
+.workspace-toolbar__context .style-picker .app-dropdown-select__trigger[aria-expanded='true'] {
   background: transparent;
   border-color: var(--border);
   box-shadow: none;

@@ -13,7 +13,7 @@ export function isValidBuiltinProfile(profile) {
 
 function validateMetadataEntries(metadata) {
   if (metadata?.schema_version !== 1 || !isValidBuiltinProfile(metadata.profile)
-      || !Array.isArray(metadata.adapters) || !Array.isArray(metadata.legacy)) {
+      || !Array.isArray(metadata.adapters)) {
     throw new Error('Invalid built-in Adapter profile metadata.');
   }
   const names = new Set();
@@ -26,39 +26,24 @@ function validateMetadataEntries(metadata) {
     if (names.has(entry.name.toLowerCase())) throw new Error('Duplicate built-in Adapter identity.');
     names.add(entry.name.toLowerCase());
   }
-  for (const name of metadata.legacy) {
-    assertAdapterIdentity(name);
-    if (names.has(name.toLowerCase())) throw new Error('Duplicate built-in Adapter identity.');
-    names.add(name.toLowerCase());
-  }
   return metadata;
 }
 
 /** Resolve the complete profile before touching generated output. A broken v2
  * package must never silently fall back to an older Extension copy. */
-export function selectBuiltinAdapters({ names, builtinDir, legacyDir }) {
+export function selectBuiltinAdapters({ names, builtinDir }) {
   assertManagedDirectory(builtinDir);
-  assertManagedDirectory(legacyDir);
   const packages = [];
-  const legacy = [];
   const seen = new Set();
   for (const name of names) {
     assertAdapterIdentity(name);
     if (seen.has(name.toLowerCase())) throw new Error('Duplicate build Adapter identity.');
     seen.add(name.toLowerCase());
     const root = path.join(builtinDir, name);
-    if (fs.existsSync(root)) {
-      packages.push(readPackageDirectory(root));
-      continue;
-    }
-    const legacyRoot = path.join(legacyDir, name);
-    assertManagedDirectory(legacyRoot);
-    const manifestPath = assertManagedFile(legacyRoot, 'manifest.json');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    if (manifest.id !== name || manifest.schema_version === 2) throw new Error('Invalid legacy build Adapter identity.');
-    legacy.push({ name, root: legacyRoot, manifest });
+    if (!fs.existsSync(root)) throw new Error(`Built-in Adapter package not found: ${name}`);
+    packages.push(readPackageDirectory(root));
   }
-  return { packages, legacy };
+  return { packages };
 }
 
 /** Caller owns and clears this generated directory; never writes to sources. */
@@ -74,7 +59,6 @@ export function writeBuiltinAdapters({ selection, outputDir, profile }) {
   }
   const metadata = validateMetadataEntries({
     schema_version: 1, profile, adapters: entries,
-    legacy: selection.legacy.map(({ name }) => name),
   });
   fs.writeFileSync(path.join(outputDir, '.profile.json'), JSON.stringify(metadata, null, 2) + '\n', { flag: 'wx' });
   return metadata;

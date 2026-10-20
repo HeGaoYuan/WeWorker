@@ -5,7 +5,7 @@
 import { getSettings } from './config.js'
 import { streamChat } from './agent.js'
 import { userFileBlock, userImageBlock } from './user-media.js'
-import { resolveZcfPrefs } from './zcf-sync.js'
+import { resolveStyleId } from './style-settings.js'
 import * as store from './works-store.js'
 import type { ScheduledTask, ContentBlock } from './works-store.js'
 import { parseAllAdapters } from './adapter-parser.js'
@@ -15,8 +15,10 @@ import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext, type MemoryAdapterIdentity } from './memory/memory-event-context.js'
 import { planTaskMemoryEvent } from './memory/memory-event-planner.js'
 import { getMemoryStore } from './memory/memory-store.js'
+import { enforceConfiguredMemoryBudget } from './memory/memory-capacity.js'
 import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory/memory-types.js'
 import { redactSensitive } from './http-security.js'
+import { createTurnTimingLedger } from './turn-timing.js'
 
 const memoryLog = createLogger('memory')
 
@@ -75,7 +77,12 @@ function queueTaskMemoryProcessing(input: {
   }).then((result) => {
     if (result.status === 'failed') {
       memoryLog.warn('task memory processing failed', { executionId: input.executionId, error: redactSensitive(result.error) })
+      return
     }
+    // 与对话路径一致：写入成功后按当前配置的预算执行容量管理。
+    enforceConfiguredMemoryBudget(store, input.expectedMemoryType, getSettings().memory_budgets, (payload) => {
+      memoryLog.info('task memory budget enforced', { executionId: input.executionId, ...payload })
+    })
   }).catch((error) => {
     memoryLog.warn('task memory processing crashed', { executionId: input.executionId, error: redactSensitive(error instanceof Error ? error.message : String(error)) })
   })
@@ -146,24 +153,20 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
 
     // 7. Call streamChat and iterate to completion (non-streaming, like runChannelChat)
     let currentText = ''
-    // Per-turn timing (mirrors server.ts /chat handler so scheduled results also show durations)
+    // Per-turn timing (mirrors server.ts /chat so scheduled results also show durations).
+    // llm 与 exec 互不重叠：llm + exec === total，缺 tool_call_result 的工具不会计进 llm。
     const chatStartTime = Date.now()
-    let lastStepEndTime = chatStartTime
-    // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
-    const toolStartTimes = new Map<string, number>()
-    let llmMsTotal = 0
-    let execMsTotal = 0
+    const turnTiming = createTurnTimingLedger({ startedAt: chatStartTime })
     let stepIndex = 0
     const seenToolIds = new Set<string>()
 
-    const zcfPrefs = resolveZcfPrefs(workWithMessages, settings)
+    const styleId = resolveStyleId(workWithMessages, settings)
 
     for await (const event of streamChat(workWithMessages.messages, settings, undefined, {
       streaming: false,
       enabledAdapterIds,
       workId: workWithMessages.id,
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
       memoryScope: taskMemoryContext.scope,
       memoryExpectedType: 'task_execution',
       memoryTriggerHint: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',
@@ -196,10 +199,7 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
         if (isNew) {
           seenToolIds.add(event.id)
           stepIndex++
-          const startTs = Date.now()
-          thinkMs = toolStartTimes.size === 0 ? startTs - lastStepEndTime : 0
-          llmMsTotal += thinkMs
-          toolStartTimes.set(event.id, startTs)
+          thinkMs = turnTiming.toolStarted(event.id)
         }
         assistantContent.push({
           type: 'tool_use',
@@ -210,11 +210,7 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
           ...(thinkMs !== undefined ? { thinkMs } : {}),
         })
       } else if (event.type === 'tool_call_result' && event.id) {
-        const startTs = toolStartTimes.get(event.id)
-        const toolDuration = startTs !== undefined ? Date.now() - startTs : 0
-        toolStartTimes.delete(event.id)
-        execMsTotal += toolDuration
-        lastStepEndTime = Date.now()
+        const toolDuration = turnTiming.toolSettled(event.id) ?? 0
         const idx = assistantContent.findIndex(
           b => b.type === 'tool_use' && (b as { id: string }).id === event.id,
         )
@@ -227,6 +223,8 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
           } as ContentBlock
         }
       } else if (event.type === 'tool_call_image' && event.id) {
+        // 只回图片的工具没有 tool_call_result：同样结算，避免其耗时漏进 llm。
+        const imageToolDuration = turnTiming.toolObserved(event.id)
         const idx = assistantContent.findIndex(
           b => b.type === 'tool_use' && (b as { id: string }).id === event.id,
         )
@@ -236,6 +234,7 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
             ...(assistantContent[idx] as object),
             image: event.data,
             status: currentStatus === 'failed' ? 'failed' : 'done',
+            ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}),
           } as ContentBlock
         }
       } else if (event.type === 'error') {
@@ -248,12 +247,13 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
       assistantContent.push({ type: 'text', text: currentText })
     }
 
-    // Account for trailing LLM text generation
-    llmMsTotal += Date.now() - lastStepEndTime
+    // Account for trailing LLM text generation (and settle any tool that never
+    // reported a result, so its time stays in execMs).
+    const timing = turnTiming.finish()
 
     // 8. Persist assistant message
     if (assistantContent.length > 0) {
-      assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+      assistantContent.push({ type: 'timing', totalMs: timing.totalMs, llmMs: timing.llmMs, execMs: timing.execMs, steps: stepIndex })
       store.appendMessage(work.id, 'assistant', assistantContent)
     }
 

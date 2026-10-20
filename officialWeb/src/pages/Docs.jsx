@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import DocsSidebar from '../components/DocsSidebar.jsx'
 import ImageLightbox from '../components/ImageLightbox.jsx'
@@ -8,6 +8,7 @@ import { APP_VERSION, DOWNLOADS } from '../lib/downloadConfig.js'
 import { reportDownloadThenGo } from '../lib/downloadActions.js'
 import { slugify, getSupportedSitesHeadings } from '../lib/sitesHeadings.js'
 import { getWecliHeadings } from '../lib/wecliHeadings.js'
+import { copyToClipboard } from '../lib/copyToClipboard.js'
 
 // CRLF / lone CR breaks /^...$/ heading matches (`.+` cannot span `\r`). Normalize before parsing.
 function normalizeMarkdown(md) {
@@ -28,6 +29,26 @@ function extractHeadings(markdown) {
   return headings
 }
 
+/** Map markdown link targets to SPA doc routes (e.g. ./adapters.md → /docs/adapters). */
+export function resolveDocHref(href) {
+  const trimmed = String(href).trim()
+  if (!trimmed || trimmed.startsWith('#')) return trimmed
+  if (/^(https?:|mailto:|tel:)/i.test(trimmed)) return trimmed
+
+  const hashIdx = trimmed.indexOf('#')
+  const hash = hashIdx >= 0 ? trimmed.slice(hashIdx) : ''
+  let path = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed
+
+  if (path.startsWith('./')) path = path.slice(2)
+  if (path.endsWith('.md')) path = path.slice(0, -3)
+
+  if (path.startsWith('/docs/')) return `${path}${hash}`
+
+  const slug = path.replace(/^\/+/, '').split('/').filter(Boolean).pop()
+  if (!slug) return trimmed
+  return `/docs/${slug}${hash}`
+}
+
 // ─── Minimal markdown renderer ────────────────────────────────────────────────
 
 function renderMarkdown(md) {
@@ -43,7 +64,10 @@ function renderMarkdown(md) {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) => {
+      const resolved = escHtml(resolveDocHref(href))
+      return `<a href="${resolved}">${text}</a>`
+    })
 
   const flushTable = () => {
     if (!tableRows.length) return
@@ -141,7 +165,7 @@ function ChromeExtensionsUI() {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-500 flex-shrink-0">
           <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
-        先开启右上角的<strong className="text-gray-700 mx-0.5">开发者模式</strong>，才会出现"加载未打包的扩展程序"按钮
+        先开启右上角的<strong className="text-gray-700 mx-0.5">开发者模式</strong>，才会出现「加载未打包的扩展程序」按钮
       </div>
     </div>
   )
@@ -269,6 +293,7 @@ export default function Docs() {
   const { slug } = useParams()
   const navigate = useNavigate()
   const activeSlug = slug || 'introduction'
+  const articleRef = useRef(null)
 
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(true)
@@ -351,17 +376,17 @@ export default function Docs() {
       btn.className = 'copy-btn'
       btn.title = '复制'
       btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const code = pre.querySelector('code')
         if (!code) return
-        navigator.clipboard.writeText(code.textContent).then(() => {
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
-          btn.classList.add('copied')
-          setTimeout(() => {
-            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
-            btn.classList.remove('copied')
-          }, 1500)
-        })
+        const ok = await copyToClipboard(code.textContent)
+        if (!ok) return
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
+        btn.classList.add('copied')
+        setTimeout(() => {
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+          btn.classList.remove('copied')
+        }, 1500)
       })
       pre.style.position = 'relative'
       pre.appendChild(btn)
@@ -387,8 +412,26 @@ export default function Docs() {
     return () => { clearTimeout(timer); observer.disconnect() }
   }, [content, loading, error])
 
-  // Find prev/next
-  const allItems = DOCS_SIDEBAR.flatMap(g => g.items)
+  // In-doc links: stay in SPA (avoid navigating to raw /docs/*.md)
+  useEffect(() => {
+    const root = articleRef.current
+    if (!root || loading || error) return
+    const onClick = (e) => {
+      const a = e.target.closest('a')
+      if (!a || !root.contains(a)) return
+      const raw = a.getAttribute('href')
+      if (!raw || raw.startsWith('#') || /^(https?:|mailto:|tel:)/i.test(raw)) return
+      const target = resolveDocHref(raw)
+      if (!target.startsWith('/docs/')) return
+      e.preventDefault()
+      navigate(target)
+    }
+    root.addEventListener('click', onClick)
+    return () => root.removeEventListener('click', onClick)
+  }, [content, loading, error, navigate])
+
+  // Find prev/next（跳过外链菜单项）
+  const allItems = DOCS_SIDEBAR.flatMap(g => g.items).filter(i => i.slug && !i.href)
   const idx = allItems.findIndex(i => i.slug === activeSlug)
   const prev = idx > 0 ? allItems[idx - 1] : null
   const next = idx < allItems.length - 1 ? allItems[idx + 1] : null
@@ -399,7 +442,7 @@ export default function Docs() {
       <div className="flex gap-10">
         <DocsSidebar />
 
-        <article className="flex-1 min-w-0">
+        <article ref={articleRef} className="flex-1 min-w-0">
           {loading && (
             <div className="text-muted text-sm py-20 text-center">加载中...</div>
           )}

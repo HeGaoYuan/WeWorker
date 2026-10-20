@@ -26,6 +26,7 @@ import { getDesktopAdapterCatalog, refreshDesktopAdapterSkillsIfStale } from './
 import { bridgeStatus, type ExtensionInstance } from './bridge-status.js'
 import {
   ChatSession,
+  fingerprintSkillFiles,
   PromptQueue,
   disposeChatSession,
   findReusableChatSession,
@@ -41,8 +42,9 @@ import type { UserMediaSink } from './user-media.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
-import { composeSystemPromptWithZcf } from './zcf-sync.js'
-import { computeUsageMetrics } from './usage-metrics.js'
+import { syncBundledWebcliSkills } from './webcli-skills.js'
+import { composeSystemPromptWithStyle } from './style-settings.js'
+import { computeUsageMetrics, createApiDurationTracker, resolveTurnApiDuration, type ApiDurationTracker } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
@@ -270,9 +272,15 @@ export interface UsageEvent {
   cache_read_input_tokens: number
   cache_creation_input_tokens: number
   total_input_tokens: number
+  /** Latest main model request input, separate from cumulative billing usage. */
+  context_input_tokens?: number
   cache_hit_rate: number
   total_cost_usd?: number
   duration_ms?: number
+  /** Per-turn API time (delta of the CLI's session-cumulative duration_api_ms). */
+  duration_api_ms?: number
+  /** Session-cumulative API time reported by the CLI, for diagnostics only. */
+  duration_api_ms_total?: number
   num_turns?: number
   kind?: 'turn' | 'post_compaction_probe'
 }
@@ -280,9 +288,8 @@ export interface UsageEvent {
 export function buildSystemPrompt(opts?: {
   channelPermissionMode?: ChannelPermissionMode
   platform?: NodeJS.Platform
-  zcfRole?: string | null
-  zcfMode?: string | null
-  zcfCustomRoles?: import('./zcf-sync.js').ZcfCustomRole[]
+  styleId?: string | null
+  customStyles?: import('./style-settings.js').CustomStyle[]
   memoryProtocol?: string
   /** Browser whose extension serves Adapter calls; 'dedicated' is WeWorker 浏览器. */
   browserInstance?: ExtensionInstance
@@ -293,7 +300,7 @@ export function buildSystemPrompt(opts?: {
   const defaultShell = platform === 'win32' ? 'powershell' : 'bash'
   if (channelPermissionMode === 'qa_only') {
     const base = renderPrompt('agent-qa-only', {}).trim()
-    return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
+    return composeSystemPromptWithStyle(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.styleId, opts?.customStyles ?? [])
   }
 
   const allAdapters = parseAllAdapters()
@@ -367,15 +374,22 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
       : '当前权限模式允许使用标准 Skill 和受控文件／Shell 工具，但不能执行 Extension Adapter 或 Toolkit Adapter。',
     adapter_execution_guidance: adapterExecutionEnabled
       ? `所有网站工具通过${webcliInvokeDesc}调用。
-对于 Skill 中同时标记为 \`Execution: type=api, runtime=background\` 和 \`Execution: mode=direct\` 的工具，它们是无需 DOM 的 API 工具，必须直接调用，不需要先打开对应网站。旧 Skill 如果只标记了 \`Execution: mode=direct\`，也按同样规则处理。
+以命令的 runtime/execution 与当前 Adapter Skill 为准：\`type=api, runtime=background\` 或标为 background API 的命令直接调用，无需先打开业务页或检测页面登录；不要求同时具有 \`mode=direct\` 标记。旧 Skill 仅有 \`mode=direct\` 时仍兼容。缺登录或缓存时按具体错误完成显式准备，不能把后台命令改成页面调用。
 对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先${openBrowserDesc}打开该网站。`
       : 'Skill 可用于阅读说明，但不要执行其中的 Adapter 命令。',
+    new_adapter_guidance: adapterExecutionEnabled
+      ? `用户要求探索接口、封装查询或生成/修复 Adapter 时，读取共享 Skill：\`webcli skills read webcli-api-exploration\`，按需读取 \`webcli\` 和 \`webcli-browser\`。没有现成网站 Skill 也可探索；由当前聊天 Agent 理解、观察和编写，通过内置 ${nativeCommandTool} 调用 \`webcli call exploration.<command>\`，不启动另一套模型协调流程。
+先用 \`exploration.help\`、\`exploration.capabilities\` 和 \`profile.list\` 核对实际契约与选定浏览器。使用 PATH 中的桌面内置 WebCLI，不安装全局 npm 版替换它。能力缺失时说明需要更新匹配的客户端/Bridge/扩展，不退回旧流程。旧聊天中的 start_api_exploration/start_adapter_generation 等入口已停用；历史任务在独立探索页面查看，不将旧 taskId 交给新流程。
+客户端模型凭据仅用于模型连接，不得读取环境变量或客户端配置来获取、打印或复用模型 Key 作为网站凭据，也不得为注入凭据而重启 Bridge。当前成员的查询先观察目标网站的登录态和真实请求，不凭品牌相同猜接口或账号口径；准备后无业务页允许首次观察与显式准备。
+按共享 Skill 完成证据、草稿、真实 cases、validate、review、授权内 install，再普通调用。collecting/validating 只是运行中，使用 get/events 有界等待；用户取消时调用 exploration.cancel，已派发请求不自动重放。不要让用户手写代码或计划 JSON；登录/明确账号上下文/超出授权的安装范围用 ask_user 询问。
+安装后立即通过 \`webcli adapter info/skill <id>\` 读取最新命令和说明；同轮不依赖旧 Skill 缓存，后续聊天由客户端刷新。草稿用 exploration.draft-read/draft-write，受审阅安装由 WebCLI 完成，不直接编辑托管 Skill 目录。`
+      : '当前权限模式不能探索网站或生成/安装 Adapter；需要执行时明确说明需要 full 权限。',
     webcli_execution_step: adapterExecutionEnabled
       ? webcliStep2
       : '2. 当前权限模式不能执行 Adapter；需要执行时明确说明需要 full 权限。',
     native_command_capability: bashCapabilityNotice,
     open_browser_guidance: adapterExecutionEnabled
-      ? '只有页面/DOM 工具需要先打开网站。`type=api, runtime=background` + `mode=direct` 的 API 工具不要预先打开网站或检测登录（登录由 WeWorker 自动处理）；如果这类工具返回需要页面上下文，再打开 Skill 文档中的 Homepage URL。'
+      ? '只有页面/DOM 工具需要先打开网站。后台 API 不要预先打开网站或检测登录（登录由 WeWorker 自动处理）；如果这类工具返回需要页面上下文，再打开 Skill 文档中的 Homepage URL。HTTP 与 Toolkit 按各自运行时执行。'
       : '本节仅在 full 权限可执行；当前不要打开网站或调用 Adapter。',
     open_browser_wait_rule: adapterExecutionEnabled
       ? `${openBrowserRule} 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。`
@@ -395,7 +409,7 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
     windows_encryption_rules: windowsEncryptionRules,
     login_detection_rules: loginDetectionRules,
   }).trimEnd()}\n`
-  return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
+  return composeSystemPromptWithStyle(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.styleId, opts?.customStyles ?? [])
 }
 function findClaudeExecutable(): string | undefined {
   const configured = process.env.WEWORKER_CLAUDE_CODE_PATH
@@ -746,7 +760,19 @@ function stripBase64Images(text: string): string {
   return result.trim()
 }
 
-function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[]): Generator<SSEEvent> {
+/**
+ * SDK message → SSE event mapping, including the per-turn `usage` metrics.
+ *
+ * Exported for focused tests of the `usage` log line / event: the CLI's
+ * `duration_api_ms` is session-cumulative, so `apiDuration` must be the same
+ * tracker object for every turn of one CLI session.
+ */
+export function* mapSdkMessage(
+  msg: SDKMessage,
+  streaming: boolean,
+  textBlockBuf: { id: string; text: string; filter: StreamingVisibleText }[],
+  apiDuration: ApiDurationTracker = createApiDurationTracker(),
+): Generator<SSEEvent> {
   // Log SDK message types for timing analysis
   if (msg.type !== 'stream_event') {
     log.info(`sdk-event: type=${msg.type}`)
@@ -912,10 +938,17 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
       errors?: string[]
       result?: string
     }
+    // `duration_api_ms` is the CLI's session-cumulative API duration (same
+    // ledger lifecycle as total_cost_usd), so the per-turn value is a delta
+    // against the previous sample of this query() session.
+    const apiDurationSample = resolveTurnApiDuration(r.duration_api_ms, apiDuration.lastCumulativeMs)
+    if (apiDurationSample.cumulativeMs !== null) {
+      apiDuration.lastCumulativeMs = apiDurationSample.cumulativeMs
+    }
     if (r.usage) {
       const m = computeUsageMetrics(r.usage)
       log.info(
-        `usage in=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_create=${m.cache_creation_input_tokens} out=${m.output_tokens} total_in=${m.total_input_tokens} cache_hit=${(m.cache_hit_rate * 100).toFixed(1)}% cost=$${r.total_cost_usd ?? 0} dur=${r.duration_ms ?? 0}ms api=${r.duration_api_ms ?? '?'}ms ttft=${r.ttft_ms ?? '?'}ms to_request=${r.time_to_request_ms ?? '?'}ms spawn_to_request=${r.time_to_request_from_spawn_ms ?? '?'}ms turns=${r.num_turns ?? 0} subtype=${r.subtype ?? '?'}`,
+        `usage in=${m.input_tokens} cache_read=${m.cache_read_input_tokens} cache_create=${m.cache_creation_input_tokens} out=${m.output_tokens} total_in=${m.total_input_tokens} cache_hit=${(m.cache_hit_rate * 100).toFixed(1)}% cost=$${r.total_cost_usd ?? 0} dur=${r.duration_ms ?? 0}ms api=${apiDurationSample.turnMs ?? '?'}ms api_total=${apiDurationSample.cumulativeMs ?? '?'}ms${apiDurationSample.baselineReset ? ' api_reset=true' : ''} ttft=${r.ttft_ms ?? '?'}ms to_request=${r.time_to_request_ms ?? '?'}ms spawn_to_request=${r.time_to_request_from_spawn_ms ?? '?'}ms turns=${r.num_turns ?? 0} subtype=${r.subtype ?? '?'}`,
       )
       yield {
         type: 'usage',
@@ -923,6 +956,8 @@ function* mapSdkMessage(msg: SDKMessage, streaming: boolean, textBlockBuf: { id:
           ...m,
           total_cost_usd: r.total_cost_usd,
           duration_ms: r.duration_ms,
+          duration_api_ms: apiDurationSample.turnMs ?? undefined,
+          duration_api_ms_total: apiDurationSample.cumulativeMs ?? undefined,
           num_turns: r.num_turns,
         },
       } as SSEEvent
@@ -1002,8 +1037,7 @@ async function* streamChatWithBaseUrl(
     streaming?: boolean;
     enabledAdapterIds?: Set<string>;
     workId?: string;
-    zcfRole?: string | null;
-    zcfMode?: string | null;
+    styleId?: string | null;
     channelPermissionMode?: ChannelPermissionMode;
     onAskUser?: (event: { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }) => void;
     channelAskUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>;
@@ -1186,7 +1220,18 @@ async function* streamChatWithBaseUrl(
   // Isolated runs receive a caller-curated skills directory; a global refresh
   // would write every managed Adapter Skill into it.
   phase.mark('config_setup')
-  if (skillRoots.length && !isolatedSkills) refreshDesktopAdapterSkillsIfStale(skillRoots[0])
+  let sharedWebcliSkillDigest = ''
+  if (skillRoots.length && !isolatedSkills) {
+    if (channelPermissionMode === 'full') {
+      try {
+        sharedWebcliSkillDigest = syncBundledWebcliSkills(skillRoots[0])
+      } catch (error) {
+        yield { type: 'error', content: error instanceof Error ? error.message : 'WebCLI Skill 同步失败，请重新构建或更新客户端。' }
+        return
+      }
+    }
+    refreshDesktopAdapterSkillsIfStale(skillRoots[0])
+  }
   phase.mark('managed_skill_sync')
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
@@ -1232,9 +1277,8 @@ async function* streamChatWithBaseUrl(
     : ''
   const baseSystemPrompt = opts.systemPromptOverride ?? buildSystemPrompt({
     channelPermissionMode,
-    zcfRole: opts.zcfRole,
-    zcfMode: opts.zcfMode,
-    zcfCustomRoles: settings.zcf_custom_roles,
+    styleId: opts.styleId,
+    customStyles: settings.zcf_custom_roles,
     memoryProtocol,
     browserInstance: bridgeStatus.getExtensionInstance(),
   })
@@ -1470,7 +1514,9 @@ async function* streamChatWithBaseUrl(
   })
 
   // Session mode: reuse this work's live CLI when its configuration and history match.
-  const history: ChatHistoryEntry[] = messages.map((message) => ({ id: message.id, role: message.role }))
+  const history: ChatHistoryEntry[] = messages.map((message) => ({
+    id: message.id, role: message.role, digest: sha256(JSON.stringify(message.content)),
+  }))
   const recalledMemoryBlock = longTermMemory.recalled ? `${RECALLED_MEMORY_HEADER}\n${longTermMemory.recalled}\n\n` : ''
   // A new (or still unused warm) session has seen no history: send replay + current message.
   const fullFirstPrompt = recalledMemoryBlock ? `${recalledMemoryBlock}${contextAssembly.sdk.prompt}` : contextAssembly.sdk.prompt
@@ -1488,6 +1534,9 @@ async function* streamChatWithBaseUrl(
       authType: settings.active_auth_type ?? settings.custom_auth_type ?? null,
       systemPrompt,
       skillIndex,
+      sharedWebcliSkillDigest,
+      skillFiles: fingerprintSkillFiles(skillRoots),
+      filesystemSettings,
       projectSkillIndex: isolatedSkills ? '' : buildEnabledSkillIndex(path.join(getUserDirectory(), '.claude', 'skills')),
       adapters: getDesktopAdapterCatalog().effective.map((entry) => `${entry.name}@${entry.digest}`),
       disallowedTools,
@@ -1584,6 +1633,10 @@ async function* streamChatWithBaseUrl(
     closeTurn = () => queryHandle.close()
   }
   const sdkStartTime = Date.now()
+  // A live session keeps one CLI (and therefore one cost ledger) across turns,
+  // so its tracker must survive across turns; a one-off query starts a fresh
+  // ledger on every turn and needs a fresh tracker.
+  const apiDurationTracker: ApiDurationTracker = session?.apiDuration ?? createApiDurationTracker()
 
   // When the abort signal fires, forcefully close the query to kill the
   // underlying Claude CLI subprocess. Without this, the child process
@@ -1607,6 +1660,7 @@ async function* streamChatWithBaseUrl(
 
   let completed = false
   let turnFailed = false
+  let latestModelInputTokens: number | undefined
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
@@ -1637,13 +1691,30 @@ async function* streamChatWithBaseUrl(
           present: reminderObserved,
         })
       }
-      if (msg.type === 'assistant') assistantResponseCount += 1
+      if (msg.type === 'assistant') {
+        assistantResponseCount += 1
+        // Tool loops repeat their input; result.usage is billing, not current occupancy.
+        if (!msg.parent_tool_use_id && !msg.error) {
+          const usage = msg.message.usage
+          if (usage && typeof usage.input_tokens === 'number') {
+            const tokens = computeUsageMetrics({
+              input_tokens: usage.input_tokens,
+              cache_read_input_tokens: usage.cache_read_input_tokens ?? undefined,
+              cache_creation_input_tokens: usage.cache_creation_input_tokens ?? undefined,
+            }).total_input_tokens
+            if (Number.isFinite(tokens) && tokens >= 0) latestModelInputTokens = tokens
+          }
+        }
+      }
       for (const skillContext of skillContextCollector.observe(msg)) {
         turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
         log.info('skill_context_captured', { chars: skillContext.text.length })
         yield { type: 'skill_context', skillContext }
       }
-      for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
+      for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf, apiDurationTracker)) {
+        if (event.type === 'usage' && event.usage && latestModelInputTokens !== undefined) {
+          event.usage = { ...event.usage, context_input_tokens: latestModelInputTokens }
+        }
         if (event.type === 'memory_parse') memoryParseCount += 1
         if (event.type === 'error') turnFailed = true
         if (

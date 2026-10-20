@@ -28,10 +28,24 @@ import {
 import WecomQrBind, { BotChannelPicker } from './WecomQrBind.jsx'
 import { SkillEditorCard } from './SkillComposer.jsx'
 import AgentChatPanel from './AgentChatPanel.jsx'
+import AgentNameEditor from './AgentNameEditor.jsx'
 import { showConfirm } from '../../store/dialog.js'
 import { codeBadgeStyle, fieldStyle, hintStyle, labelStyle, monoStyle, sectionStyle, sectionTitleStyle, titleStyle } from './styles.js'
 
 const REFRESH_MS = 4000
+
+const nameInputStyle = {
+  fontSize: 16,
+  fontWeight: 600,
+  color: 'var(--text-primary)',
+  fontFamily: 'inherit',
+  padding: '2px 8px',
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  background: 'var(--bg-primary)',
+  width: 240,
+  maxWidth: '100%',
+}
 
 function StatusPill({ agent }) {
   const status = agentStatusPresentation(agent)
@@ -331,7 +345,15 @@ export default function AgentDetail({ agentId }) {
         <SiteIcon site={site || { id: agent.site_id, name: agent.site_id }} size={32} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <h2 style={titleStyle}>{agent.name}</h2>
+            <h2 style={titleStyle}>
+              <AgentNameEditor
+                agentId={agent.id}
+                name={agent.name}
+                onSaved={applyAgent}
+                iconSize={14}
+                inputStyle={nameInputStyle}
+              />
+            </h2>
             <StatusPill agent={agent} />
           </div>
           <div style={hintStyle}>

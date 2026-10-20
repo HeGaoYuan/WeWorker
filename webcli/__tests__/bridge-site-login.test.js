@@ -73,9 +73,10 @@ describe('Bridge login wiring', () => {
   it('forwards code and auth fields of CLI-initiated calls', async () => {
     const bridge = createBridge()
     bridge.callTool = vi.fn(async () => { throw Object.assign(new Error('需要登录'), { code: 'AUTH_REQUIRED', auth: { site: 'fixture.example.com', status: 'waiting_user' } }) })
-    await bridge._handleClientRequest({ type: 'call_tool', id: 'cli-1', toolName: 'fixture.example.com.list', args: {}, loginWaitMs: 5000 })
+    const client = connect(bridge)
+    await bridge._handleClientRequest({ type: 'call_tool', id: 'cli-1', toolName: 'fixture.example.com.list', args: {}, loginWaitMs: 5000 }, client)
     expect(bridge.callTool).toHaveBeenCalledWith('fixture.example.com.list', {}, null, undefined, { loginWaitMs: 5000 })
-    expect(bridge._broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'call_tool_error', id: 'cli-1', code: 'AUTH_REQUIRED', auth: { site: 'fixture.example.com', status: 'waiting_user' } }))
+    expect(sentTo(client)).toContainEqual(expect.objectContaining({ type: 'call_tool_error', id: 'cli-1', code: 'AUTH_REQUIRED', auth: { site: 'fixture.example.com', status: 'waiting_user' } }))
   })
 
   it('publishes auth events to clients but not to browser extensions', () => {

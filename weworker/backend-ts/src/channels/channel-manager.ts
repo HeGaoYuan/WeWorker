@@ -6,6 +6,7 @@ import { createLogger } from '../logger.js'
 import type { MemoryScope } from '../memory/memory-types.js'
 import type { ChannelProfileChatOptions } from './channel-profile.js'
 import { createChannelUserMedia, type UserMediaSink } from '../user-media.js'
+import { createTurnTimingLedger } from '../turn-timing.js'
 
 const log = createLogger('channel-manager')
 
@@ -89,15 +90,12 @@ export async function runChannelChat(
   // send_image_to_user goes back to this turn's chat with the turn's other images.
   const channelMedia = createChannelUserMedia(images, toolCalls, opts?.sendFile)
   const userMedia: UserMediaSink = opts?.sendsImages === false ? { ...(channelMedia.file ? { file: channelMedia.file } : {}) } : channelMedia
-  const toolCallMap = new Map<string, { name: string; args: unknown; thinkMs?: number; startMs?: number }>()
+  const toolCallMap = new Map<string, { name: string; args: unknown; thinkMs?: number }>()
 
-  // Per-turn timing (mirrors server.ts / task-executor.ts so channel turns are observable)
+  // Per-turn timing (mirrors server.ts / task-executor.ts so channel turns are observable).
+  // llm 与 exec 互不重叠：llm + exec === total，缺 tool_call_result 的工具不会计进 llm。
   const chatStartTime = Date.now()
-  let lastStepEndTime = chatStartTime
-  // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
-  const toolStartTimes = new Map<string, number>()
-  let llmMsTotal = 0
-  let execMsTotal = 0
+  const turnTiming = createTurnTimingLedger({ startedAt: chatStartTime })
   let stepIndex = 0
   const seenToolIds = new Set<string>()
 
@@ -116,33 +114,19 @@ export async function runChannelChat(
     } else if (event.type === 'tool_call_start' && event.id) {
       const isNew = !seenToolIds.has(event.id)
       let thinkMs: number | undefined
-      let startMs: number | undefined
       if (isNew) {
         seenToolIds.add(event.id)
         stepIndex++
-        startMs = Date.now()
-        // Charge think only when no tool is outstanding (parallel starts' gaps are
-        // LLM arg streaming covered by each tool's own exec window)
-        thinkMs = toolStartTimes.size === 0 ? startMs - lastStepEndTime : 0
-        llmMsTotal += thinkMs
-        toolStartTimes.set(event.id, startMs)
-      } else {
-        // Dedup re-emission: keep the original per-tool start instead of clobbering
-        // it with whatever tool started most recently
-        startMs = toolCallMap.get(event.id)?.startMs
+        thinkMs = turnTiming.toolStarted(event.id)
       }
       toolCallMap.set(event.id, {
         name: event.name ?? '',
         args: event.args,
         ...(thinkMs !== undefined ? { thinkMs } : {}),
-        ...(startMs !== undefined ? { startMs } : {}),
       })
     } else if (event.type === 'tool_call_result' && event.id) {
       const started = toolCallMap.get(event.id)
-      const toolDuration = started?.startMs ? Date.now() - started.startMs : 0
-      toolStartTimes.delete(event.id)
-      execMsTotal += toolDuration
-      lastStepEndTime = Date.now()
+      const toolDuration = turnTiming.toolSettled(event.id) ?? 0
       toolCalls.push({
         type: 'tool_use',
         id: event.id,
@@ -154,11 +138,16 @@ export async function runChannelChat(
         ...(started?.thinkMs !== undefined ? { thinkMs: started.thinkMs } : {}),
       })
     } else if (event.type === 'tool_call_image' && event.data) {
+      // 只回图片的工具没有 result 事件：同样结算，避免其耗时漏进 llm。
+      const imageToolDuration = event.id ? turnTiming.toolObserved(event.id) : undefined
       images.push(event.data)
       // Attach image to the most recent tool call if possible
       if (toolCalls.length > 0) {
         const last = toolCalls[toolCalls.length - 1]
-        if (last.type === 'tool_use') last.image = event.data
+        if (last.type === 'tool_use') {
+          last.image = event.data
+          if (imageToolDuration !== undefined && last.execMs === undefined) last.execMs = imageToolDuration
+        }
       }
     } else if (event.type === 'error' && event.content) {
       text = event.content
@@ -169,11 +158,10 @@ export async function runChannelChat(
     if (opts?.abortController?.signal.aborted) break
   }
 
-  // Account for trailing LLM text generation after the last tool
-  llmMsTotal += Date.now() - lastStepEndTime
-  const totalMs = Date.now() - chatStartTime
-  const timing: store.ContentBlock = { type: 'timing', totalMs, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex }
-  log.info(`runChannelChat turn — total=${(totalMs / 1000).toFixed(2)}s llm=${(llmMsTotal / 1000).toFixed(2)}s exec=${(execMsTotal / 1000).toFixed(2)}s steps=${stepIndex}`)
+  // Close the turn: trailing LLM text plus any tool that never reported a result.
+  const snapshot = turnTiming.finish()
+  const timing: store.ContentBlock = { type: 'timing', totalMs: snapshot.totalMs, llmMs: snapshot.llmMs, execMs: snapshot.execMs, steps: stepIndex }
+  log.info(`runChannelChat turn — total=${(snapshot.totalMs / 1000).toFixed(2)}s llm=${(snapshot.llmMs / 1000).toFixed(2)}s exec=${(snapshot.execMs / 1000).toFixed(2)}s steps=${stepIndex}`)
 
   return { text, images, toolCalls, timing }
 }

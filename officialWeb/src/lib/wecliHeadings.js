@@ -1,7 +1,11 @@
 import { slugify } from './sitesHeadings.js'
 
-/** wecli 文档 TOC：仅命令行操作说明 */
+/** wecli 文档 TOC：下载入口 + 命令行操作说明 */
 export const WECLI_GROUPS = [
+  {
+    name: 'webcli下载',
+    sites: [],
+  },
   {
     name: '命令行操作',
     sites: [

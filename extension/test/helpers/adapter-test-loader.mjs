@@ -1,9 +1,15 @@
+import { browserResponseEvidence } from '../../background/browser-network.js';
+import { recordBrowserObservation, clearBrowserObservations } from '../../background/browser-observations.js';
+import { recordBrowserEvent, clearBrowserEvents } from '../../background/browser-events.js';
+import { recordBrowserFrameEvent, clearBrowserFrames } from '../../background/browser-frames.js';
+import { recordBrowserDownload, clearBrowserDownloads } from '../../background/browser-downloads.js';
+import { executeInterceptRead } from '../../background/intercept-read.js';
 import { scopedGenerationPreviewScripts } from '../../background/generation-preview-bundle.js';
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import vm from 'node:vm'
 import { createHostAdapterClient } from '../../background/host-adapter-client.js'
-import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from '../../background/host-adapter-runtime.js'
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, classifyNavigationTarget, navigateAdapterTab } from '../../background/host-adapter-runtime.js'
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from '../../background/managed-background-runtime.js'
 import { buildV2Bootstrap, v2InjectionFiles } from '../../background/v2-loader.js'
 import { injectAdapterSources } from '../../background/adapter-script-loader.js'
@@ -156,11 +162,20 @@ export function runServiceWorkerInContext(context, options = {}) {
     /import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/generation-output-validator\.js['"];?\s*/,
     '',
   )
+  context.recordBrowserObservation = recordBrowserObservation
+  context.recordBrowserEvent = recordBrowserEvent
+  context.clearBrowserEvents = clearBrowserEvents
+  Object.assign(context, { recordBrowserFrameEvent, clearBrowserFrames, recordBrowserDownload, clearBrowserDownloads })
+  context.clearBrowserObservations = clearBrowserObservations
+  context.browserResponseEvidence = browserResponseEvidence
+  context.executeInterceptRead = executeInterceptRead
   context.scopedGenerationPreviewScripts = scopedGenerationPreviewScripts
   context.selectCompatibleCaptureBoundEntry = selectCompatibleCaptureBoundEntry
   context.createHostAdapterClient = createHostAdapterClient
   context.navigateAdapterTab = navigateAdapterTab
   context.assertAdapterNavigationUrl = assertAdapterNavigationUrl
+  context.createNavigationGuard = createNavigationGuard
+  context.classifyNavigationTarget = classifyNavigationTarget
   context.createHostAdapterRuntime = createHostAdapterRuntime
   context.createManagedBackgroundRuntime = createManagedBackgroundRuntime
   context.MANAGED_RUNNER_PATH = MANAGED_RUNNER_PATH
