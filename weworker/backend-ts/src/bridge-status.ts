@@ -1,5 +1,6 @@
 import WebSocket from 'ws'
 import { createLogger } from './logger.js'
+import { BridgeExtensionConnections } from './bridge-extension-connections.js'
 
 const log = createLogger('bridge-status')
 
@@ -29,8 +30,8 @@ export class BridgeStatus {
   private _connected = false
   private _extensionConnected = false
   private _extensionVersion: string | null = null
-  /** 'dedicated' when the serving extension runs in WeWorker 浏览器. */
   private _extensionInstance: ExtensionInstance = 'system'
+  private readonly _extensionConnections = new BridgeExtensionConnections()
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _stopped = false
   private _adapterScaffoldListeners = new Set<(event: AdapterScaffoldGeneratedEvent) => void>()
@@ -65,7 +66,8 @@ export class BridgeStatus {
 
     ws.on('close', () => {
       this._connected = false
-      this._extensionConnected = false
+      this._extensionConnections.clear()
+      this._syncExtensionStatus()
       this._ws = null
       if (!this._stopped) {
         this._reconnectTimer = setTimeout(() => this._connect(), 2000)
@@ -79,13 +81,11 @@ export class BridgeStatus {
     const type = msg.type as string
 
     if (type === 'extension_connected') {
-      this._extensionConnected = true
-      this._extensionVersion = (msg as { version?: string }).version ?? null
-      this._extensionInstance = msg.instance === 'dedicated' ? 'dedicated' : 'system'
+      this._extensionConnections.connected(msg)
+      this._syncExtensionStatus()
     } else if (type === 'extension_disconnected') {
-      this._extensionConnected = false
-      this._extensionVersion = null
-      this._extensionInstance = 'system'
+      this._extensionConnections.disconnected(msg)
+      this._syncExtensionStatus()
     } else if (type === 'adapter_scaffold_generated' || type === 'adapter_installed') {
       const siteKey = typeof msg.siteKey === 'string' ? msg.siteKey.trim() : ''
       if (!siteKey) return
@@ -120,6 +120,13 @@ export class BridgeStatus {
         }
       }
     }
+  }
+
+  private _syncExtensionStatus(): void {
+    const status = this._extensionConnections.snapshot()
+    this._extensionConnected = status.connected
+    this._extensionVersion = status.version
+    this._extensionInstance = status.instance
   }
 
   onAdapterScaffoldGenerated(listener: (event: AdapterScaffoldGeneratedEvent) => void): () => void {

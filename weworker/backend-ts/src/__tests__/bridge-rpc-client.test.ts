@@ -60,9 +60,21 @@ describe('BridgeRpcClient', () => {
     const { client, socket } = createHarness()
     socket.receive({
       type: 'extension_connected',
+      contextId: 'dedicated-profile',
+      connectionId: 'dedicated-1',
       version: '0.2.6',
+      instance: 'dedicated',
       capabilities: ['passive_exploration_v1', 'passive_exploration_v1'],
     })
+    socket.receive({
+      type: 'extension_connected',
+      contextId: 'system-profile',
+      connectionId: 'system-1',
+      version: '0.2.5',
+      instance: 'system',
+      capabilities: [],
+    })
+    socket.receive({ type: 'extension_disconnected', contextId: 'system-profile', connectionId: 'system-1' })
 
     expect(client.getCapabilities()).toEqual({
       bridgeConnected: true,
