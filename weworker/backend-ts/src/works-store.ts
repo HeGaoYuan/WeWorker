@@ -307,7 +307,7 @@ export function getWork(id: string): Work | null {
 export function getWorkWithMessages(id: string): WorkWithMessages | null {
   const work = getWork(id)
   if (!work) return null
-  const rows = db().prepare('SELECT * FROM messages WHERE work_id = ? ORDER BY created_at ASC').all(id) as Array<{
+  const rows = db().prepare('SELECT * FROM messages WHERE work_id = ? ORDER BY created_at ASC, rowid ASC').all(id) as Array<{
     id: string; work_id: string; role: string; content: string; created_at: string
   }>
   const messages: Message[] = rows.map(r => ({
@@ -329,6 +329,14 @@ export function appendMessage(workId: string, role: string, content: ContentBloc
     db().prepare('UPDATE works SET updated_at = ? WHERE id = ?').run(now, workId)
   }
   return { id, work_id: workId, role, content, created_at: now }
+}
+
+/** Update an owned assistant segment without changing its position in the conversation. */
+export function updateAssistantMessageContent(workId: string, messageId: string, content: ContentBlock[]): boolean {
+  const result = db().prepare("UPDATE messages SET content = ? WHERE id = ? AND work_id = ? AND role = 'assistant'").run(
+    JSON.stringify(content), messageId, workId,
+  )
+  return Number(result.changes) > 0
 }
 
 export function updateTitle(workId: string, title: string): void {

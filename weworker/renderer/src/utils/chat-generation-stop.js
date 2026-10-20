@@ -59,6 +59,16 @@ function mapPlanManagementBlockAfterStop(block) {
   return block
 }
 
+/** Steering can leave running tools in earlier messages of the same active turn. */
+export function mapMessagesAfterStop(messages) {
+  const last = messages.at(-1)
+  return messages.map((message, index) => {
+    if (message.role !== 'assistant') return message
+    if (index !== messages.length - 1 && (!last?.streamingTurnId || message.streamingTurnId !== last.streamingTurnId)) return message
+    return { ...message, content: mapMessageContentAfterStop(message.content) }
+  })
+}
+
 export function mapMessageContentAfterStop(content) {
   return (content ?? []).map((block) => {
     if (block.type === 'tool_use' && block.status === 'running') {

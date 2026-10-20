@@ -18,6 +18,23 @@ export async function warmupChat(workId, { thinkingEffort, styleId } = {}) {
 
 export const requestChatWarmup = createChatWarmupScheduler({ send: warmupChat })
 
+export async function stopChat(workId) {
+  const res = await backendFetch(`/works/${workId}/chat/stop`, { method: 'POST' })
+  const result = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(result.detail || '停止失败，排队消息已保留')
+  return result
+}
+
+export async function steerChat(workId, { id, text, files }) {
+  const res = await backendFetch(`/works/${workId}/chat/steer`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: text, attachments: files, requestId: id }),
+  })
+  const result = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(result.detail || '补充指令发送失败，消息已保留')
+  return result
+}
+
 let contextCompactionLifecycleHandler = null
 
 export function setContextCompactionLifecycleHandler(handler) {
@@ -137,9 +154,10 @@ export async function streamChat(workId, message, onEvent, signal, attachments =
   let overflowDetected = false
   let contextSnapshot = null
   let compactedDuringRequest = false
+  let turnEnded = false
+  let streamCompleted = false
 
   try {
-    let streamCompleted = false
     while (true) {
       const { done, value } = await reader.read()
       if (done) {
@@ -159,6 +177,7 @@ export async function streamChat(workId, message, onEvent, signal, attachments =
         }
         try {
           const event = JSON.parse(data)
+          if (event.type === 'turn_end') turnEnded = true
           if (event.type === 'context_snapshot') contextSnapshot = event.context || null
           if (event.type === 'context_compaction_end' && event.compaction?.status === 'completed') {
             compactedDuringRequest = true
@@ -176,6 +195,7 @@ export async function streamChat(workId, message, onEvent, signal, attachments =
     console.log(`[frontend] streamChat error: ${e.name} — ${e.message}`)
     throw e
   }
+  if (!turnEnded && !streamCompleted) throw new Error('回复连接中断，队列已暂停，请检查当前回复后继续')
 
   const shouldAutoCompact = shouldAutoCompactAfterTurn(contextSnapshot, retryCompaction, compactedDuringRequest)
   if (!retryCompaction && (overflowDetected || shouldAutoCompact)) {

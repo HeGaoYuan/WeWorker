@@ -716,7 +716,7 @@ function contentBlockPromptText(block: Message['content'][number]): string {
   return ''
 }
 
-function messagePromptText(message: Message): string {
+export function messagePromptText(message: Message): string {
   return message.content
     .map(contentBlockPromptText)
     .filter((text) => text.trim())
@@ -1509,6 +1509,7 @@ async function* streamChatWithBaseUrl(
       // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
       permissionMode: 'default' as const,
       includePartialMessages,
+      extraArgs: { 'replay-user-messages': null },
       cwd: agentCwd,
       settingSources,
       ...(thinkingEffort === 'off' ? { thinking: { type: 'disabled' as const } } : { effort: thinkingEffort }),

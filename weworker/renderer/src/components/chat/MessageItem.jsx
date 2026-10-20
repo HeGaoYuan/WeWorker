@@ -199,7 +199,7 @@ export default function MessageItem({ message, streaming, compacting = false, is
                 livePlan: !isUser && plan ? plan : null,
                 planSnapshot: !isUser ? planSnapshot : null,
                 hideLivePlan: !isUser && hideLivePlan,
-                streaming: !isUser && showStreaming && isLast,
+                streaming: !isUser && showStreaming,
                 suppressPlanTools: !isUser && suppressPlanTools,
                 planSentinelRef: !isUser ? planSentinelRef : null,
                 hideEmbeddedPlan: !isUser && hideEmbeddedPlan,
