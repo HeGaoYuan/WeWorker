@@ -353,7 +353,7 @@ export async function installSkills({ target, adapterId }) {
 
       const content = await readFile(skillSrc, "utf-8");
 
-      await writeFile(join(skillDir, "SKILL.md"), content, "utf-8");
+      await writeFile(join(skillDir, existsSync(join(skillDir, "SKILL.md.disabled")) ? "SKILL.md.disabled" : "SKILL.md"), content, "utf-8");
 
     }
 
@@ -375,16 +375,17 @@ export async function installSkills({ target, adapterId }) {
     const adapterSkillDir = join(target, `webcli-${manifest.id}`);
     mkdirSync(adapterSkillDir, { recursive: true });
 
+    const targetMarkdown = join(adapterSkillDir, existsSync(join(adapterSkillDir, "SKILL.md.disabled")) ? "SKILL.md.disabled" : "SKILL.md");
     if (skillPath) {
       const existingSkill = await readFile(skillPath, "utf-8");
       await writeFile(
-        join(adapterSkillDir, "SKILL.md"),
+        targetMarkdown,
         mergeDirectExecutionIntoSkill(existingSkill, manifest, tools),
         "utf-8",
       );
     } else if (tools.length > 0) {
       const skillContent = generateSkillContent(manifest, tools, { skillsDir: target });
-      await writeFile(join(adapterSkillDir, "SKILL.md"), skillContent, "utf-8");
+      await writeFile(targetMarkdown, skillContent, "utf-8");
     }
 
     await copyAdapterContextFiles(adapterDir, adapterSkillDir);

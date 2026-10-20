@@ -4,6 +4,7 @@ export const SECRET_FIELD_PATHS = [
   ['api_key'],
   ['api_key_anthropic'],
   ['api_key_glm'],
+  ['api_key_bank_coding'],
   ['api_key_deepseek'],
   ['api_key_custom'],
   ['openai_api_key_custom'],

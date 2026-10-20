@@ -1,3 +1,4 @@
+import { createSkillManagementRouter, sanitizeSkillDirectoryName } from './skill-management.js'
 import { randomUUID as channelQrId, createHash } from 'node:crypto'
 import { changeChannelConfiguration, createChannelMutationQueue, getChannelConfiguration, isChannelType, publicChannelSettings, type ChannelType } from './channels/channel-configurations.js'
 import express from 'express'
@@ -69,7 +70,7 @@ import { buildProviderVisibility } from './provider-visibility.js'
 import { createModelConfiguration, getModelConfiguration, activateModelConfiguration, updateModelConfiguration, publicModelConfigurations, buildModelConfigurationNames, renameModelConfiguration, deleteModelConfiguration } from './model-configurations.js'
 import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
 import { activateBuiltinProvider, builtinProviderAccess, isBuiltinProvider, publicBuiltinProviders } from './builtin-provider.js'
-import { parseContextLimit } from './context-window.js'
+import { DEFAULT_CONTEXT_LIMIT, parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
 import { resolveWeixinToken, syncWeixinChannel } from './channels/sync-weixin-channel.js'
@@ -86,11 +87,9 @@ import {
   importCustomSkillResources,
   importSkillDirectoryResources,
   listCustomSkills,
-  listSkillDirectoryResources,
   readResourceFilePreview,
   resolveCustomSkillAssetDir,
   saveCustomSkills,
-  saveSkillDirectoryResources,
   DuplicateSkillNameError,
 } from './custom-skills.js'
 import { resolveWebcliEntry } from './webcli-path.js'
@@ -389,13 +388,14 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     user_directory_blacklist: getUserDirectoryBlacklist(),
     default_open_browser_allowed_origins: buildDefaultOpenBrowserAllowedOrigins(),
     open_browser_allowed_origins: getOpenBrowserAllowedOrigins(),
-    base_url: s.base_url,
+    base_url: isBuiltinProvider(s.active_provider) ? '' : s.base_url,
     model: s.model,
     context_limit: s.context_limit,
     has_api_key: !!s.api_key,
     providers: Object.fromEntries(Object.entries({
       ...publicBuiltinProviders(PROVIDERS),
       anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic, added: s.added_providers.includes('anthropic'), visible: visible('anthropic') },
+      bank_coding: { has_key: !!s.api_key_bank_coding, model: s.model_bank_coding || '', context_limit: s.context_limit_bank_coding || DEFAULT_CONTEXT_LIMIT, added: true, visible: true },
       glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm, added: s.added_providers.includes('glm'), visible: visible('glm') },
       deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek, added: s.added_providers.includes('deepseek'), visible: visible('deepseek') },
       custom:    { models_url_is_full: s.models_url_is_full_custom ?? Boolean(s.models_url_custom), openai_models_url_is_full: s.openai_models_url_is_full_custom ?? Boolean(s.openai_models_url_custom), models_url: s.models_url_custom || '', models_auth_type: s.models_auth_type_custom || 'inherit', openai_models_url: s.openai_models_url_custom || '', has_key: !!s.api_key_custom, openai_has_key: !!s.openai_api_key_custom || !!s.api_key_custom, model: s.model_custom, openai_model: s.openai_model_custom || s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, base_url_is_full: s.base_url_is_full_custom === true, openai_base_url: s.openai_base_url_custom, openai_base_url_is_full: s.openai_base_url_is_full_custom === true, auth_type: s.custom_auth_type, added: s.added_providers.includes('custom'), visible: visible('custom') },
@@ -426,7 +426,7 @@ app.get('/settings', (_req, res) => {
 // predefined providers must already have a saved API key.
 app.post('/settings/onboarding/complete', (req, res) => {
   const provider = typeof req.body?.provider === 'string' ? req.body.provider.trim() : ''
-  const isPredefined = provider === 'anthropic' || provider === 'glm' || provider === 'deepseek'
+  const isPredefined = provider === 'anthropic' || provider === 'glm' || provider === 'bank_coding' || provider === 'deepseek'
   if (!isBuiltinProvider(provider) && !isPredefined) {
     res.status(400).json({ detail: '请选择内置模型或预定义供应商' })
     return
@@ -441,6 +441,7 @@ app.post('/settings/onboarding/complete', (req, res) => {
       updates = activateBuiltinProvider(builtin)
     } else {
       const apiKey = provider === 'anthropic' ? current.api_key_anthropic
+        : provider === 'bank_coding' ? current.api_key_bank_coding || ''
         : provider === 'glm' ? current.api_key_glm
           : current.api_key_deepseek
       if (!apiKey?.trim()) {
@@ -448,18 +449,21 @@ app.post('/settings/onboarding/complete', (req, res) => {
         return
       }
       const model = provider === 'anthropic' ? current.model_anthropic
+        : provider === 'bank_coding' ? current.model_bank_coding || ''
         : provider === 'glm' ? current.model_glm
           : current.model_deepseek
+      if (provider === 'bank_coding' && !model?.trim()) throw new Error('请先选择并保存模型')
       updates = {
         active_provider: provider,
         active_model_configuration: '',
-        active_auth_type: 'api_key',
+        active_auth_type: provider === 'bank_coding' ? 'auth_token' : 'api_key',
         api_key: apiKey,
         model,
         context_limit: provider === 'anthropic' ? current.context_limit_anthropic
+          : provider === 'bank_coding' ? current.context_limit_bank_coding || DEFAULT_CONTEXT_LIMIT
           : provider === 'glm' ? current.context_limit_glm
             : current.context_limit_deepseek,
-        base_url: PROVIDER_BASE_URLS[provider] || '',
+        base_url: getProvider(provider)?.weworker.baseUrl || '',
         base_url_is_full: false,
       }
     }
@@ -680,6 +684,7 @@ app.post('/settings/provider', (req, res) => {
   }
   if (api_key) {
     if (provider === 'anthropic') updates.api_key_anthropic = api_key
+    else if (provider === 'bank_coding') updates.api_key_bank_coding = api_key
     else if (provider === 'glm') updates.api_key_glm = api_key
     else if (provider === 'deepseek') updates.api_key_deepseek = api_key
     else if (provider === 'custom') updates.api_key_custom = api_key
@@ -687,6 +692,7 @@ app.post('/settings/provider', (req, res) => {
   if (openai_api_key && provider === 'custom') updates.openai_api_key_custom = openai_api_key
   if (model) {
     if (provider === 'anthropic') updates.model_anthropic = model
+    else if (provider === 'bank_coding') updates.model_bank_coding = model
     else if (provider === 'glm') updates.model_glm = model
     else if (provider === 'deepseek') updates.model_deepseek = model
     else if (provider === 'custom') updates.model_custom = model
@@ -694,6 +700,7 @@ app.post('/settings/provider', (req, res) => {
   if (openai_model && provider === 'custom') updates.openai_model_custom = openai_model.trim()
   if (parsedContextLimit !== undefined && parsedContextLimit !== null) {
     if (provider === 'anthropic') updates.context_limit_anthropic = parsedContextLimit
+    else if (provider === 'bank_coding') updates.context_limit_bank_coding = parsedContextLimit
     else if (provider === 'glm') updates.context_limit_glm = parsedContextLimit
     else if (provider === 'deepseek') updates.context_limit_deepseek = parsedContextLimit
     else if (provider === 'custom') updates.context_limit_custom = parsedContextLimit
@@ -748,21 +755,24 @@ app.post('/settings/provider/activate', (req, res) => {
   const current = getSettings()
   const key =
     provider === 'anthropic' ? current.api_key_anthropic :
+    provider === 'bank_coding' ? current.api_key_bank_coding || '' :
     provider === 'glm'       ? current.api_key_glm :
     provider === 'deepseek'  ? current.api_key_deepseek :
     provider === 'custom'    ? current.api_key_custom : ''
   const model =
     provider === 'anthropic' ? current.model_anthropic :
+    provider === 'bank_coding' ? current.model_bank_coding || '' :
     provider === 'glm'       ? current.model_glm :
     provider === 'deepseek'  ? current.model_deepseek :
     provider === 'custom'    ? current.model_custom : ''
   const contextLimit =
     provider === 'anthropic' ? current.context_limit_anthropic :
+    provider === 'bank_coding' ? current.context_limit_bank_coding || DEFAULT_CONTEXT_LIMIT :
     provider === 'glm'       ? current.context_limit_glm :
     provider === 'deepseek'  ? current.context_limit_deepseek :
     provider === 'custom'    ? current.context_limit_custom : current.context_limit
   const baseUrl =
-    provider === 'custom' ? current.base_url_custom : (PROVIDER_BASE_URLS[provider] ?? '')
+    provider === 'custom' ? current.base_url_custom : (getProvider(provider)?.weworker.baseUrl ?? '')
   try {
     if (provider === 'custom') normalizeLlmUrlInput(baseUrl, current.base_url_is_full_custom ?? false)
   } catch (e) {
@@ -772,7 +782,7 @@ app.post('/settings/provider/activate', (req, res) => {
   const updates: Partial<ReturnType<typeof getSettings>> = {
     active_provider: provider,
     active_model_configuration: '',
-    active_auth_type: provider === 'custom' ? current.custom_auth_type : 'api_key',
+    active_auth_type: provider === 'custom' ? current.custom_auth_type : provider === 'bank_coding' ? 'auth_token' : 'api_key',
     api_key: key,
     model,
     context_limit: contextLimit,
@@ -805,6 +815,7 @@ function resolveProviderAccess(body: ProviderRequestBody) {
   const settings = getSettings()
   const savedApiKey =
     configuration?.api_key ?? (provider.id === 'anthropic' ? settings.api_key_anthropic :
+      provider.id === 'bank_coding' ? settings.api_key_bank_coding || '' :
       provider.id === 'glm' ? settings.api_key_glm :
       provider.id === 'deepseek' ? settings.api_key_deepseek : settings.api_key_custom)
   const savedOpenAiApiKey = configuration?.openai_api_key ?? (provider.id === 'custom' ? settings.openai_api_key_custom || savedApiKey : savedApiKey)
@@ -846,6 +857,7 @@ function resolveProviderRequest(body: ProviderRequestBody) {
   const savedModel =
     getModelConfiguration(settings, body.provider)?.model ?? (
     access.provider.id === 'anthropic' ? settings.model_anthropic :
+    access.provider.id === 'bank_coding' ? settings.model_bank_coding || '' :
     access.provider.id === 'glm' ? settings.model_glm :
     access.provider.id === 'deepseek' ? settings.model_deepseek : settings.model_custom)
   const savedOpenAiModel = getModelConfiguration(settings, body.provider)?.openai_model || savedModel
@@ -1185,59 +1197,7 @@ app.post('/settings/weixin/qr-poll', async (req, res) => {
 
 // 鈹€鈹€ Skills 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-function readSkill(name: string): { name: string; content: string; enabled: boolean; resources: ReturnType<typeof listSkillDirectoryResources> } | null {
-  const dir = path.join(SKILLS_DIR, name)
-  const active = path.join(dir, 'SKILL.md')
-  const disabled = path.join(dir, 'SKILL.md.disabled')
-  try {
-    const resources = listSkillDirectoryResources(dir)
-    if (fs.existsSync(active)) {
-      return { name, content: fs.readFileSync(active, 'utf8'), enabled: true, resources }
-    } else if (fs.existsSync(disabled)) {
-      return { name, content: fs.readFileSync(disabled, 'utf8'), enabled: false, resources }
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function extractSkillNameFromMarkdown(content: string): string {
-  const match = String(content || '').match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!match) return ''
-  const nameLine = match[1].split(/\r?\n/).find((line) => /^\s*name\s*:/.test(line))
-  if (!nameLine) return ''
-  return nameLine
-    .replace(/^\s*name\s*:\s*/, '')
-    .trim()
-    .replace(/^['"]|['"]$/g, '')
-    .trim()
-}
-
-function isTemplateSkillName(name: string): boolean {
-  const normalized = String(name || '').trim()
-  return !normalized || normalized.includes('{{') || normalized.includes('}}')
-}
-
-function sanitizeSkillDirectoryName(name: string): string {
-  return (name || 'custom')
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
-    .replace(/^\.+$/, '_')
-    .trim() || 'custom'
-}
-
-app.get('/skills', (_req, res) => {
-  try {
-    fs.mkdirSync(SKILLS_DIR, { recursive: true })
-    const dirs = fs.readdirSync(SKILLS_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name)
-    const skills = dirs.map(readSkill).filter(Boolean)
-    res.json(skills)
-  } catch {
-    res.json([])
-  }
-})
+app.use(createSkillManagementRouter(SKILLS_DIR))
 
 app.post('/skills/import-zip', express.raw({ type: ['application/zip', 'application/x-zip-compressed'], limit: '50mb' }), async (req, res) => {
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
@@ -1267,35 +1227,6 @@ app.post('/skills/import-zip-path', async (req, res) => {
   } catch (error) {
     res.status(400).json({ detail: error instanceof Error ? error.message : '导入 Skill ZIP 失败' })
   }
-})
-
-app.post('/skills', (req, res) => {
-  const { name, previousName, content, resources } = req.body as { name: string; previousName?: string; content: string; resources?: unknown[] }
-  if (!name?.trim() || !content?.trim()) {
-    res.status(400).json({ detail: 'name and content required' })
-    return
-  }
-  const frontmatterName = extractSkillNameFromMarkdown(content)
-  const preferredName = frontmatterName && !isTemplateSkillName(frontmatterName) ? frontmatterName : name
-  const safeName = sanitizeSkillDirectoryName(preferredName)
-  const previousSafeName = previousName?.trim() ? sanitizeSkillDirectoryName(previousName) : ''
-  const dir = path.join(SKILLS_DIR, safeName)
-  if (previousSafeName && previousSafeName !== safeName) {
-    const previousDir = path.join(SKILLS_DIR, previousSafeName)
-    if (fs.existsSync(dir)) {
-      res.status(409).json({ detail: `Skill name already exists: ${safeName}` })
-      return
-    }
-    if (fs.existsSync(previousDir)) {
-      fs.renameSync(previousDir, dir)
-    }
-  }
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'SKILL.md'), content)
-  const savedResources = Array.isArray(resources)
-    ? saveSkillDirectoryResources(dir, resources)
-    : listSkillDirectoryResources(dir)
-  res.json({ ok: true, name: safeName, resources: savedResources })
 })
 
 app.post('/skills/:name/resources/import', (req, res) => {
@@ -1339,27 +1270,6 @@ app.get('/skills/:name/directory', (req, res) => {
     return
   }
   res.json({ ok: true, path: dir })
-})
-
-// Toggle skill enabled/disabled
-app.post('/skills/:name/toggle', (req, res) => {
-  const safeName = sanitizeSkillDirectoryName(req.params.name)
-  const dir = path.join(SKILLS_DIR, safeName)
-  const active = path.join(dir, 'SKILL.md')
-  const disabled = path.join(dir, 'SKILL.md.disabled')
-  try {
-    if (fs.existsSync(active)) {
-      fs.renameSync(active, disabled)
-      res.json({ ok: true, enabled: false })
-    } else if (fs.existsSync(disabled)) {
-      fs.renameSync(disabled, active)
-      res.json({ ok: true, enabled: true })
-    } else {
-      res.status(404).json({ detail: 'Skill not found' })
-    }
-  } catch (e: any) {
-    res.status(500).json({ detail: e.message })
-  }
 })
 
 app.delete('/skills/:name', (req, res) => {
@@ -3211,7 +3121,7 @@ async function handleChatRequest(req: express.Request<{ id: string }>, res: expr
       new Set([...enabledAdapterIds, ...toolkitById.keys()]),
     )
     const toolkitHit = siteGate.adapterId ? toolkitById.get(siteGate.adapterId) : undefined
-    const siteToolkit = siteGate.adapterId
+    const siteToolkit = siteGate.adapterId && !fs.existsSync(path.join(SKILLS_DIR, `webcli-${siteGate.adapterId}`, 'SKILL.md.disabled'))
       ? (toolkitHit ? resolveToolkitSkillPrompt(toolkitHit) : resolveSiteToolkitPrompt(siteGate.adapterId))
       : null
     if (siteGate.reason !== 'miss') {

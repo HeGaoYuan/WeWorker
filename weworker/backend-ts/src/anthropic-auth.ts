@@ -12,7 +12,7 @@ export function usesAnthropicBearerToken(
   providerId: string | undefined,
   customAuthType?: AnthropicAuthType,
 ): boolean {
-  return providerId === 'builtin' || (providerId === 'custom'
+  return providerId === 'builtin' || providerId === 'bank_coding' || (providerId === 'custom'
     && normalizeAnthropicAuthType(customAuthType) === 'auth_token')
 }
 

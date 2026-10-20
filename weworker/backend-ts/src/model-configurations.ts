@@ -89,7 +89,7 @@ export function renameModelConfiguration(settings: Settings, id: string, value: 
 
 export function createModelConfiguration(settings: Settings, providerId: string) {
   const provider = getProvider(providerId)
-  if (!provider || isBuiltinProvider(providerId)) throw new Error('请选择预置或自定义供应商')
+  if (!provider || isBuiltinProvider(providerId) || providerId === 'bank_coding') throw new Error('请选择预置或自定义供应商')
   const id = `model-${randomUUID()}`
   const nameUpdates = modelConfigurationNameUpdates(settings)
   const names = new Set(Object.values(buildModelConfigurationNames(settings)))

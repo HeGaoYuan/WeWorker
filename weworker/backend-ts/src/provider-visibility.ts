@@ -2,11 +2,11 @@ import { PROVIDERS, getProvider } from './provider-registry.js'
 import type { Settings } from './config.js'
 
 // Provider visibility / "added" state for the model picker.
-// The three fixed presets are always visible. Custom legacy configurations stay
+// Fixed presets are always visible. Custom legacy configurations stay
 // visible when explicitly added or previously configured.
 
 export function isFixedProvider(id: string): boolean {
-  return ['anthropic', 'glm', 'deepseek'].includes(id) && !!getProvider(id)
+  return ['anthropic', 'glm', 'bank_coding', 'deepseek'].includes(id) && !!getProvider(id)
 }
 
 // Preset provider ids offered in the "add provider" dialog.

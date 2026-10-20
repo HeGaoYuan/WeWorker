@@ -59,6 +59,18 @@ afterEach(() => {
 })
 
 describe('listToolkitSkills：扫描与容错', () => {
+  it('honors toggles immediately even with cached manifests and a different directory name', () => {
+    const dir = tempSkillsDir()
+    writeSkill(dir, 'custom-folder', TOOLKIT)
+    const active = path.join(dir, 'custom-folder', 'SKILL.md')
+    fs.writeFileSync(active, '# Example')
+    expect(listToolkitSkills({ skillsDir: dir })).toHaveLength(1)
+    fs.renameSync(active, `${active}.disabled`)
+    expect(listToolkitSkills({ skillsDir: dir })).toEqual([])
+    fs.renameSync(`${active}.disabled`, active)
+    expect(listToolkitSkills({ skillsDir: dir })).toHaveLength(1)
+  })
+
   it('识别 adapter_type=toolkit 的 skill，域名去重并小写', () => {
     const dir = tempSkillsDir()
     writeSkill(dir, 'example-toolkit', TOOLKIT)

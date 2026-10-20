@@ -119,7 +119,7 @@ export function buildProviderProbeTargets(providerId, openAiBaseUrl) {
 }
 
 export function isFixedProvider(id) {
-  return ['anthropic', 'glm', 'deepseek'].includes(id)
+  return ['anthropic', 'glm', 'bank_coding', 'deepseek'].includes(id)
 }
 
 export function buildChatProviderOptions(providerList, providers, activeProvider) {
@@ -186,6 +186,7 @@ export function buildSettingsProviderLists(providerList, providers) {
     !provider.builtin
     && provider.id !== 'builtin'
     && provider.id !== 'builtin_dev'
+    && provider.id !== 'bank_coding'
   ))
   return { visible: namedVisible, addable }
 }

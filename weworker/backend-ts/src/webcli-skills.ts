@@ -27,7 +27,8 @@ export function syncBundledWebcliSkills(target: string, source = path.join(resol
     throw new Error('当前客户端缺少配套 WebCLI 探索 Skill。开发态请重新构建 WebCLI；安装版请更新客户端，不要改用全局旧版 CLI。')
   }
   for (const { relative, content } of files) {
-    const destination = path.join(target, relative)
+    const active = path.join(target, relative)
+    const destination = path.basename(relative) === 'SKILL.md' && fs.existsSync(`${active}.disabled`) ? `${active}.disabled` : active
     if (fs.existsSync(destination) && fs.readFileSync(destination).equals(content)) continue
     fs.mkdirSync(path.dirname(destination), { recursive: true })
     fs.writeFileSync(destination, content)

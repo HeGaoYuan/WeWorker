@@ -1,5 +1,5 @@
 import { buildAllowedLlmBaseUrls, normalizeLlmBaseUrl, type ProviderEntry } from './llm-egress.js'
-import { BUILTIN_PROVIDERS } from './builtin-provider.js'
+import { BANK_CODING_PROVIDER, BUILTIN_PROVIDERS, resolveBankCodingProvider } from './builtin-provider.js'
 
 declare const __BUILD_PROVIDERS__: ProviderEntry[]
 
@@ -9,6 +9,7 @@ const DEV_PROVIDERS: ProviderEntry[] = [
   ...BUILTIN_PROVIDERS,
   { id: 'anthropic', name: 'Anthropic', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' }, webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: 'https://api.anthropic.com', structuredOutput: 'anthropic_json_schema' } },
   { id: 'glm', name: '智谱 coding plan', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://open.bigmodel.cn/api/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', structuredOutput: 'openai_json_object' } },
+  BANK_CODING_PROVIDER,
   { id: 'deepseek', name: 'DeepSeek', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.deepseek.com/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: 'https://api.deepseek.com', structuredOutput: 'openai_json_object' } },
   { id: 'custom', name: '自定义', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: '' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: '', structuredOutput: 'openai_json_object' } },
 ]
@@ -20,7 +21,8 @@ export const PROVIDER_BASE_URLS: Record<string, string> = Object.fromEntries(
 )
 
 export function getProvider(providerId: string): ProviderEntry | undefined {
-  return PROVIDERS.find(provider => provider.id === providerId)
+  const provider = PROVIDERS.find(provider => provider.id === providerId)
+  return provider ? resolveBankCodingProvider(provider) : undefined
 }
 
 export function findProviderByWeWorkerBaseUrl(baseUrl: string | undefined): ProviderEntry | undefined {
@@ -45,5 +47,5 @@ export const ALLOWED_PROVIDER_IDS = new Set(PROVIDERS.map(p => p.id))
 export const ALLOWED_LLM_BASE_URLS = buildAllowedLlmBaseUrls(PROVIDERS)
 
 export function buildRuntimeAllowedLlmBaseUrls(...extraBaseUrls: Array<string | undefined>): Set<string> {
-  return buildAllowedLlmBaseUrls(PROVIDERS, extraBaseUrls.filter(Boolean).join(','))
+  return buildAllowedLlmBaseUrls(PROVIDERS.map(p => resolveBankCodingProvider(p)), extraBaseUrls.filter(Boolean).join(','))
 }
