@@ -29,5 +29,5 @@ test('router bang aliases come from the backend config, not a hand-maintained li
 
 test('configured aliases are listed in the bang menu alongside sites and tools', () => {
   assert.match(inputBarSource, /bang:alias:/)
-  assert.match(inputBarSource, /if \(item\?\.kind === 'alias'\) return 'route'/)
+  assert.match(inputBarSource, /if \(item\?\.kind === 'alias'\) return '快捷指令'/)
 })

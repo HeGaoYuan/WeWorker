@@ -27,11 +27,11 @@ test('each app launch shares one fresh exploration identity between managers', (
   assert.notEqual(launch(), launch())
 })
 
-function loadManager(spawn, isPackaged = false) {
+function loadManager(spawn, isPackaged = false, env = {}) {
   const source = fs.readFileSync(new URL('../managers.js', import.meta.url), 'utf8')
   const body = source.slice(source.indexOf('export class NodeManager'), source.indexOf('\nfunction waitForPort(')).replace('export class', 'class')
   return vm.runInNewContext(`${body}; NodeManager`, {
-    path, __dirname: path.resolve('electron'), process: { env: {}, execPath: 'electron', resourcesPath: path.resolve('fixture-resources') },
+    path, URL, __dirname: path.resolve('electron'), process: { env, execPath: 'electron', resourcesPath: path.resolve('fixture-resources') },
     app: { isPackaged }, utilityProcess: { fork: (file, args, options) => spawn(file, args, options) }, randomUUID: () => 'fixture-instance',
     resolveWebwrightHome: () => 'fixture-home', buildWebwrightEnvironment: env => env,
     resolveClaudeCodePath: () => '/weworker-fixtures/claude',
@@ -83,4 +83,22 @@ test('startup exceptions are logged and leave an error state', async () => {
   assert.equal(manager._status, 'error')
   assert.equal(manager._starting, false)
   assert.ok(logs.some(message => message.includes('startup failed: fixture spawn failure')))
+})
+
+test('development backend trusts the actual renderer origin, including alternate ports', async () => {
+  for (const [env, expected] of [
+    [{ WEWORKER_RENDERER_DEV_URL: 'http://127.0.0.1:5181/' }, 'http://127.0.0.1:5181'],
+    [{ WEWORKER_DEV_SERVER_URL: 'http://localhost:5174/preview' }, 'http://localhost:5174'],
+    [{ WEWORKER_RENDERER_DEV_URL: 'http://127.0.0.1:5181', WEWORKER_DEV_SERVER_URL: 'http://localhost:5174' }, 'http://127.0.0.1:5181'],
+    [{}, 'http://localhost:5173'],
+  ]) {
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    const Manager = loadManager((_cmd, _args, options) => {
+      assert.equal(options.env.WEWORKER_RENDERER_ORIGIN, expected)
+      return child
+    }, false, env)
+    await new Manager(() => {}).start()
+  }
 })

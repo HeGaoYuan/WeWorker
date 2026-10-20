@@ -17,6 +17,7 @@ import { useSettingsStore } from '../../store/settings.js'
 import { useStylesStore, resolveStyleId } from '../../store/styles.js'
 import StylePicker from './StylePicker.jsx'
 import { useChatInputFillStore } from '../../store/chat-input-fill.js'
+import { useChatDraft } from '../../store/chat-drafts.js'
 import { buildResumePrompt, isPlanChangeIntent, isResumeIntent } from '../../utils/chat-generation-stop.js'
 import { buildOpenWarmupRequest } from '../../utils/chat-warmup.js'
 import { applyAssistantStreamEvent, insertSteeringIntoMessages, updateAssistantMessages } from '../../utils/chat-stream-events.js'
@@ -47,8 +48,7 @@ export default function ChatView({ workId, embedded = false, renderEmpty, onTurn
   const streaming = useWorksStore((s) => s.streamingWorkIds.has(workId))
   const [error, setError] = useState(null)
   const handleSendRef = useRef(null)
-  const [inputText, setInputText] = useState('')
-  const [attachments, setAttachments] = useState([])
+  const { inputText, setInputText, attachments, setAttachments } = useChatDraft(`work:${workId}`)
   const fillSeq = useChatInputFillStore((s) => s.seq)
   const fillText = useChatInputFillStore((s) => s.text)
   const handledFillSeqRef = useRef(fillSeq)

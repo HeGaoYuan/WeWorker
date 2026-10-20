@@ -1281,48 +1281,112 @@ html.dark {
 
 .chat-slash-menu {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--text-muted));
+  border-radius: 13px;
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px color-mix(in srgb, #111827 10%, transparent);
+  padding: 5px;
 }
 
 .chat-slash-menu-scroll {
-  max-height: 196px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  gap: 0;
 }
 
 .chat-slash-menu--empty {
+  display: block;
   padding: 10px 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+}
+
+.chat-slash-menu-header,
+.chat-slash-menu-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+  padding: 0 9px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 520;
+}
+
+.chat-slash-menu-header {
+  justify-content: space-between;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-weight: 620;
+}
+
+.chat-slash-menu-shortcut,
+.chat-slash-menu-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.chat-slash-menu kbd {
+  min-width: 18px;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, var(--text-muted));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-primary) 76%, transparent);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.chat-slash-menu-footer {
+  min-height: 27px;
+  justify-content: flex-end;
+  border-top: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  margin-top: 4px;
+}
+
+.chat-slash-menu-footer > span {
+  gap: 3px;
 }
 
 .chat-slash-menu-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .chat-slash-menu-item {
-  min-height: 36px;
+  min-height: 34px;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) minmax(128px, 0.9fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
+  gap: 9px;
+  padding: 5px 9px;
   color: var(--text-primary);
   font-family: inherit;
   text-align: left;
   box-sizing: border-box;
+  cursor: pointer;
 }
 
 .chat-slash-menu-item__icon {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   flex-shrink: 0;
 }
 
@@ -1330,12 +1394,12 @@ html.dark {
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 7px;
 }
 
 .chat-slash-menu-item__title {
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 590;
   line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
@@ -1345,9 +1409,9 @@ html.dark {
 .chat-slash-menu-item__hint {
   min-width: 0;
   font-size: 12px;
-  font-weight: 520;
+  font-weight: 450;
   line-height: 1.25;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1355,41 +1419,38 @@ html.dark {
 
 .chat-slash-menu-item__command {
   min-width: 0;
-  display: block;
   justify-self: end;
-  max-width: 100%;
-  padding: 0;
-  color: var(--text-muted);
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.2;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.25;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .chat-slash-menu-item__icon svg {
-  width: 13px;
-  height: 13px;
-}
-
-.chat-slash-menu-item--terminal .chat-slash-menu-item__icon {
-  color: #38bdf8;
-  background: color-mix(in srgb, #38bdf8 14%, transparent);
-}
-
-.chat-slash-menu-item--terminal .chat-slash-menu-item__command {
-  color: var(--text-muted);
-  text-transform: none;
+  width: 12px;
+  height: 12px;
 }
 
 @media (max-width: 640px) {
-  .chat-slash-menu-item {
-    grid-template-columns: 20px minmax(0, 1fr);
+  .chat-slash-menu-header {
+    gap: 6px;
+    padding: 0 6px;
   }
 
-  .chat-slash-menu-item__command {
+  .chat-slash-menu-footer {
+    justify-content: space-between;
+    gap: 4px;
+    padding: 0 6px;
+  }
+}
+
+@media (max-width: 390px) {
+  .chat-slash-menu-item__command,
+  .chat-slash-menu-shortcut {
     display: none;
   }
 }

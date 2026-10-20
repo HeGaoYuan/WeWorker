@@ -1,18 +1,27 @@
 import { create } from 'zustand'
-import { useWorksStore } from './works'
+import { useWorksStore } from './works.js'
 import { backendFetch } from '../api/http.js'
 import { leaveWebsiteExploration } from './website-exploration.js'
 
 export const useScheduledTasksStore = create((set, get) => ({
   tasks: [],
+  tasksStatus: 'idle',
   activeTaskId: null,
   executions: {}, // taskId -> TaskExecution[]
 
   loadTasks: async () => {
-    const res = await backendFetch('/scheduled-tasks')
-    if (!res.ok) return
-    const data = await res.json()
-    set({ tasks: Array.isArray(data.tasks) ? data.tasks : [] })
+    set({ tasksStatus: 'loading' })
+    try {
+      const res = await backendFetch('/scheduled-tasks')
+      if (!res.ok) {
+        set({ tasksStatus: 'error' })
+        return
+      }
+      const data = await res.json()
+      set({ tasks: Array.isArray(data.tasks) ? data.tasks : [], tasksStatus: 'ready' })
+    } catch {
+      set({ tasksStatus: 'error' })
+    }
   },
 
   createTask: async (config) => {
