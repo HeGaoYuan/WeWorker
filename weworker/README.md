@@ -163,9 +163,9 @@ npm run build:win
 | `encryptedApiKey` | 内置托管模型的 AES-256-GCM 密文，格式为 `iv.tag.ciphertext`（各段使用 base64url）；仅 Backend 解密，普通供应商不允许配置此字段 |
 | `presentation` | 设置页展示用副标题及主题颜色 |
 
-`fixed`、`builtin`、`fixedModel`、`allowMultiple` 和 `authType` 在 JSON 中必须显式声明。普通供应商的 API Key 仍由用户填写并按现有方式保存。内置模型的加密 API Key 与全部预设网关集中在 `model.json`，内置托管凭据只由后端解密；不再使用代码中的密钥密文或加密网关常量。Renderer 构建注入、开发服务的 JSON 模块与 Backend 供应商元数据均剔除密文字段。行内供应商继续使用用户填写的 Key 与动态模型列表。显式环境变量优先，JSON 中填写的网关优先于旧部署文件；旧部署文件仅在对应 JSON 网关为空时兼容读取。内置模型缺少密文且未设置环境变量时不可用，不回退到代码中的旧密钥。
+`fixed`、`builtin`、`fixedModel`、`allowMultiple` 和 `authType` 在 JSON 中必须显式声明。公开配置仅保留内置模型、Anthropic、智谱 coding plan、DeepSeek 和自定义供应商。普通供应商的 API Key 仍由用户填写并按现有方式保存。内置模型的加密 API Key 与全部预设网关集中在 `model.json`，内置托管凭据只由后端解密；不再使用代码中的密钥密文或加密网关常量。Renderer 构建注入、开发服务的 JSON 模块与 Backend 供应商元数据均剔除密文字段。显式环境变量优先，JSON 中填写的网关优先于旧部署文件；旧部署文件仅在对应 JSON 网关为空时兼容读取。内置模型缺少密文且未设置环境变量时不可用，不回退到代码中的旧密钥。
 
-开发启动和生产构建读取同一份 JSON。修改后 Vite 开发服务会自动重新加载构建 Profile 及其引用的模型配置，更新注入页面的固定供应商等标记；Backend 仍需重启。已打包应用需要重新构建，不支持安装后直接修改 JSON 热更新。构建校验会拒绝非法字段、重复 ID、无效默认供应商及包含凭据的网关地址；现有供应商运行时使用当前 JSON 网关，避免旧保存地址覆盖新配置。新增供应商 ID 仍需配套后端配置存储支持，不能仅添加 JSON 条目。
+开发启动和生产构建读取同一份 JSON。现有供应商的精简版与完整版配置可以在构建前整份覆盖 `model.json`，无需修改代码或同时调整构建 Profile；列表、默认供应商、网关、鉴权及固定规则均跟随覆盖后的文件。保留条目原有 ID 和必需字段即可兼容已保存设置；不在 JSON 中的条目不会被代码自动补回。修改后 Vite 开发服务会自动重新加载构建 Profile 及其引用的模型配置，更新注入页面的固定供应商等标记；Backend 仍需重启。已打包应用需要重新构建，不支持安装后直接修改 JSON 热更新。构建校验会拒绝非法字段、重复 ID、无效默认供应商及包含凭据的网关地址；现有供应商运行时使用当前 JSON 网关，避免旧保存地址覆盖新配置。新增供应商 ID 仍需配套后端配置存储支持，不能仅添加 JSON 条目。
 
 `adapters` 只控制打包范围，开发模式下所有 Adapter 都可用。派生发行版将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
 

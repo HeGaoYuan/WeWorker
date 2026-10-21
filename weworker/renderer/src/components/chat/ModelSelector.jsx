@@ -167,12 +167,12 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         value={model || ''}
         options={modelOptions}
         onChange={value => changeSelection(value, 'model')}
-        disabled={unavailable || fixedModel}
+        disabled={unavailable}
         ariaLabel="模型选择"
         placement="top"
         minMenuWidth={280}
-        searchable
-        allowCustom
+        searchable={!fixedModel}
+        allowCustom={!fixedModel}
         searchPlaceholder="搜索或输入模型名"
         renderOptionSuffix={renderModelHealth}
         menuHeader={(

@@ -14,14 +14,13 @@ afterEach(() => {
 
 test('built-in metadata is visible before configuration without claiming a key exists', () => {
   assert.ok(PROVIDERS.some(provider => provider.id === 'builtin'))
-  assert.ok(PROVIDERS.some(provider => provider.id === 'builtin_dev'))
   assert.equal(initialState.providers.builtin.has_key, false)
   assert.equal(initialState.providers.builtin.readonly, true)
 })
 
-test('renderer initial state lists built-ins and the three fixed presets before settings load', () => {
+test('renderer initial state lists the built-ins and fixed presets declared in JSON before settings load', () => {
   const { visible } = buildSettingsProviderLists(PROVIDERS, initialState.providers)
-  assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev', 'anthropic', 'glm', 'bank_coding', 'deepseek'])
+  assert.deepEqual(visible.map(provider => provider.id), PROVIDERS.filter(provider => provider.builtin || provider.fixed).map(provider => provider.id))
 })
 
 test('unavailable built-in activation preserves the previous selection', async () => {
@@ -46,20 +45,23 @@ test('built-in activation uses server state and does not send credentials from t
 })
 
 
-test('fixed coding provider is fixed, visible and cannot be added twice', () => {
+test('provider visibility and initial state follow the JSON entries', () => {
   const { visible, addable } = buildSettingsProviderLists(PROVIDERS, {})
-  const entry = visible.find(provider => provider.id === 'bank_coding')
-  assert.ok(entry)
-  assert.equal(entry.defaultModel, '')
-  assert.deepEqual(entry.models, [])
-  assert.equal(addable.some(provider => provider.id === 'bank_coding'), false)
-  assert.notEqual(initialState.providers.bank_coding.readonly, true)
-  assert.equal(isBuiltinProvider('bank_coding'), false)
-  assert.equal(initialState.providers.bank_coding.has_key, false)
+  for (const provider of PROVIDERS) {
+    assert.equal(visible.some(item => item.id === provider.id), Boolean(provider.builtin || provider.fixed))
+    assert.equal(initialState.providers[provider.id].readonly === true, provider.builtin === true)
+  }
+  for (const id of ['fixture-unconfigured-provider']) {
+    assert.equal(visible.some(provider => provider.id === id), false)
+    assert.equal(addable.some(provider => provider.id === id), false)
+    assert.equal(initialState.providers[id], undefined)
+    assert.equal(isBuiltinProvider(id), false)
+  }
 })
 
-test('user-configured coding provider supports model selection', () => {
-  assert.equal(hasFixedModel('bank_coding'), false)
-  assert.equal(hasFixedModel('builtin'), true)
-  assert.equal(hasFixedModel('builtin_dev'), true)
+test('model locks and managed credentials follow JSON flags', () => {
+  for (const provider of PROVIDERS) {
+    assert.equal(hasFixedModel(provider.id), provider.fixedModel === true)
+    assert.equal(isBuiltinProvider(provider.id), provider.builtin === true)
+  }
 })

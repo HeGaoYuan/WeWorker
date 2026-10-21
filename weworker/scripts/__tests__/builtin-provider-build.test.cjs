@@ -24,12 +24,10 @@ test('public profile and compiled backend expose identical credential-free built
   validateBuildProfile(profile);
   const runtime = registryFor(profile);
   const builtin = profile.providers.find(p => p.id === 'builtin');
-  const builtinDev = profile.providers.find(p => p.id === 'builtin_dev');
   assert.ok(builtin);
-  assert.ok(builtinDev);
   assert.deepEqual(runtime.getProvider('builtin'), publicProviders([builtin])[0]);
-  assert.deepEqual(runtime.getProvider('builtin_dev'), publicProviders([builtinDev])[0]);
-  assert.ok(new URL(builtinDev.weworker.baseUrl));
+  assert.deepEqual(runtime.PROVIDERS, publicProviders(profile.providers));
+  assert.deepEqual([...runtime.ALLOWED_PROVIDER_IDS], profile.providers.map(p => p.id));
   const defines = createEsbuildDefines(profile);
   assert.deepEqual(JSON.parse(defines.__BUILD_PROVIDERS__), publicProviders(profile.providers));
   for (const entry of profile.providers) {
@@ -64,13 +62,16 @@ test('build profile accepts providers without a built-in model but keeps non-emp
 
 
 test('fixed coding provider survives profile compilation without deployment data', () => {
-  const provider = profile.providers.find(p => p.id === 'bank_coding');
-  assert.ok(provider);
+  const template = profile.providers.find(p => p.id === 'anthropic');
+  const provider = { ...template, id: 'bank_coding', name: 'Fixture coding provider', allowMultiple: false,
+    weworker: { ...template.weworker, baseUrl: 'https://example.com' },
+    webwright: { ...template.webwright, baseUrl: 'https://example.org' } };
+  const configured = mergeBuildProfile(profile, { providers: { upsert: [provider] } });
   assert.equal(provider.defaultModel, '');
   assert.deepEqual(provider.models, []);
   assert.ok(new URL(provider.weworker.baseUrl));
   assert.ok(new URL(provider.webwright.baseUrl));
-  assert.deepEqual(registryFor(profile).PROVIDERS.find(p => p.id === 'bank_coding'), provider);
-  const excluded = mergeBuildProfile(profile, { providers: { remove: ['bank_coding'] } });
+  assert.deepEqual(registryFor(configured).PROVIDERS.find(p => p.id === 'bank_coding'), provider);
+  const excluded = mergeBuildProfile(configured, { providers: { remove: ['bank_coding'] } });
   assert.equal(registryFor(excluded).getProvider('bank_coding'), undefined);
 });

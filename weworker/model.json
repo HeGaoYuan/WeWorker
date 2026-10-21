@@ -27,32 +27,6 @@
       "encryptedApiKey": "KblwyJ8H-s6noP51.8CHYHFuC2Ry2BHjvRIby9g.OQVfEBpevOgdzHsJbpAS7lEJrTa-k1Ua4r77Uy3zMxZ0yRQnIEQy-EFyOu2YqA"
     },
     {
-      "id": "builtin_dev",
-      "name": "内置模型（开发VDI）",
-      "models": [
-        "deepseek-v4-flash"
-      ],
-      "defaultModel": "deepseek-v4-flash",
-      "weworker": {
-        "protocol": "anthropic_messages",
-        "baseUrl": "http://172.21.3.106"
-      },
-      "webwright": {
-        "protocol": "anthropic_messages",
-        "modelClass": "anthropic",
-        "baseUrl": "http://172.21.3.106",
-        "structuredOutput": "anthropic_json_schema"
-      },
-      "fixed": false,
-      "builtin": true,
-      "fixedModel": true,
-      "allowMultiple": false,
-      "authType": "api_key",
-      "apiKeyEnv": "WEWORKER_BUILTIN_DEV_API_KEY",
-      "baseUrlEnv": "WEWORKER_BUILTIN_DEV_BASE_URL",
-      "encryptedApiKey": "q3iCt7pfm3Pl6f9d.eqpJWf0ivJaNijO28M30lQ.8uA0XScKmGMO9Iv8G4VA66XCz9RGvQ0TvQ"
-    },
-    {
       "id": "anthropic",
       "name": "Anthropic",
       "models": [],
@@ -103,33 +77,6 @@
         "color": "#339CFF",
         "bg": "rgba(51,156,255,0.12)"
       }
-    },
-    {
-      "id": "bank_coding",
-      "name": "行内 coding plan",
-      "models": [],
-      "defaultModel": "",
-      "weworker": {
-        "protocol": "anthropic_messages",
-        "baseUrl": "http://172.21.11.82/public/"
-      },
-      "webwright": {
-        "protocol": "anthropic_messages",
-        "modelClass": "anthropic",
-        "baseUrl": "http://172.21.11.82/public/",
-        "structuredOutput": "anthropic_json_schema"
-      },
-      "fixed": true,
-      "builtin": false,
-      "fixedModel": false,
-      "allowMultiple": false,
-      "authType": "auth_token",
-      "presentation": {
-        "subtitle": "GLM Coding Plan",
-        "color": "#339CFF",
-        "bg": "rgba(51,156,255,0.12)"
-      },
-      "baseUrlEnv": "WEWORKER_BANK_CODING_BASE_URL"
     },
     {
       "id": "deepseek",
