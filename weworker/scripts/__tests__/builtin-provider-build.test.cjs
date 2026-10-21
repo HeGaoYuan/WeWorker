@@ -7,7 +7,8 @@ const { mergeBuildProfile } = require('../build-profile-overlay.cjs');
 const { validateBuildProfile } = require('../build-profile-validator.cjs');
 const { createEsbuildDefines } = require('../bundle-backend-ts.cjs');
 const root = path.resolve(__dirname, '../..');
-const profile = JSON.parse(fs.readFileSync(path.join(root, 'build-profile.json'), 'utf8'));
+const { loadBuildProfile, publicProviders } = require('../model-provider-config.cjs');
+const profile = loadBuildProfile();
 
 function registryFor(profile) {
   const built = buildSync({ entryPoints: [path.join(root, 'backend-ts/src/provider-registry.ts')],
@@ -23,15 +24,15 @@ test('public profile and compiled backend expose identical credential-free built
   validateBuildProfile(profile);
   const runtime = registryFor(profile);
   const builtin = profile.providers.find(p => p.id === 'builtin');
-  const builtinDev = profile.providers.find(p => p.id === 'builtin_dev');
   assert.ok(builtin);
-  assert.ok(builtinDev);
-  assert.deepEqual(runtime.getProvider('builtin'), builtin);
-  assert.deepEqual(runtime.getProvider('builtin_dev'), builtinDev);
-  assert.equal(builtinDev.weworker.baseUrl, '');
+  assert.deepEqual(runtime.getProvider('builtin'), publicProviders([builtin])[0]);
+  assert.deepEqual(runtime.PROVIDERS, publicProviders(profile.providers));
+  assert.deepEqual([...runtime.ALLOWED_PROVIDER_IDS], profile.providers.map(p => p.id));
   const defines = createEsbuildDefines(profile);
-  assert.deepEqual(JSON.parse(defines.__BUILD_PROVIDERS__), profile.providers);
-  assert.doesNotMatch(JSON.stringify(profile.providers), /api_key|apiKey|token|secret/i);
+  assert.deepEqual(JSON.parse(defines.__BUILD_PROVIDERS__), publicProviders(profile.providers));
+  for (const entry of profile.providers) {
+    for (const field of ['api_key', 'apiKey', 'token', 'secret']) assert.equal(entry[field], undefined);
+  }
 });
 
 test('overlay can replace a managed provider endpoint without runtime reinsertion', () => {
@@ -44,7 +45,7 @@ test('overlay can replace a managed provider endpoint without runtime reinsertio
   validateBuildProfile(effective);
   const runtime = registryFor(effective);
   assert.equal(runtime.getProvider('builtin'), undefined);
-  assert.deepEqual(runtime.getProvider('builtin_dev'), managed);
+  assert.deepEqual(runtime.getProvider('builtin_dev'), publicProviders([managed])[0]);
   assert.ok(runtime.ALLOWED_LLM_BASE_URLS.has('https://example.com/v1'));
 });
 
@@ -61,13 +62,16 @@ test('build profile accepts providers without a built-in model but keeps non-emp
 
 
 test('fixed coding provider survives profile compilation without deployment data', () => {
-  const provider = profile.providers.find(p => p.id === 'bank_coding');
-  assert.ok(provider);
+  const template = profile.providers.find(p => p.id === 'anthropic');
+  const provider = { ...template, id: 'bank_coding', name: 'Fixture coding provider', allowMultiple: false,
+    weworker: { ...template.weworker, baseUrl: 'https://example.com' },
+    webwright: { ...template.webwright, baseUrl: 'https://example.org' } };
+  const configured = mergeBuildProfile(profile, { providers: { upsert: [provider] } });
   assert.equal(provider.defaultModel, '');
   assert.deepEqual(provider.models, []);
-  assert.equal(provider.weworker.baseUrl, '');
-  assert.equal(provider.webwright.baseUrl, '');
-  assert.deepEqual(registryFor(profile).PROVIDERS.find(p => p.id === 'bank_coding'), provider);
-  const excluded = mergeBuildProfile(profile, { providers: { remove: ['bank_coding'] } });
+  assert.ok(new URL(provider.weworker.baseUrl));
+  assert.ok(new URL(provider.webwright.baseUrl));
+  assert.deepEqual(registryFor(configured).PROVIDERS.find(p => p.id === 'bank_coding'), provider);
+  const excluded = mergeBuildProfile(configured, { providers: { remove: ['bank_coding'] } });
   assert.equal(registryFor(excluded).getProvider('bank_coding'), undefined);
 });

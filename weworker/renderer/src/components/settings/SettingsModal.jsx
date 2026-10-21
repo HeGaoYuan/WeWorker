@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo, useRef, useId } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiOutlined, AppstoreAddOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DisconnectOutlined, DownOutlined, EditOutlined, LinkOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
-import { isBuiltinProvider } from '../../store/settings.js'
+import { isBuiltinProvider, hasFixedModel } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
 import SkillsTab from './SkillsTab.jsx'
 import LogsTab from './LogsTab.jsx'
@@ -1492,8 +1492,8 @@ function ModelTab() {
       name,
       api_key: '',
       openai_api_key: '',
-      model: stored.model || p?.models[0] || '',
-      openai_model: stored.openai_model ?? (stored.model || p?.models[0] || ''),
+      model: hasFixedModel(providerType(pid)) ? p.defaultModel : stored.model || p?.defaultModel || '',
+      openai_model: hasFixedModel(providerType(pid)) ? p.defaultModel : stored.openai_model ?? (stored.model || p?.defaultModel || ''),
       context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
       base_url_is_full: stored.base_url_is_full === true,
@@ -1555,6 +1555,7 @@ function ModelTab() {
   }
 
   const loadModels = async (pid, explicitRefresh = false, target = 'weworker') => {
+    if (hasFixedModel(providerType(pid))) return
     const key = catalogKey(pid, target)
     const requestId = (catalogRequestIds.current[key] || 0) + 1
     catalogRequestIds.current[key] = requestId
@@ -2110,6 +2111,7 @@ function ModelTab() {
                         <AppDropdownSelect
                           value={f.model}
                           options={modelOptions}
+                          disabled={hasFixedModel(templateId)}
                           onChange={(value) => setFormField(p.id, 'model', value)}
                           ariaLabel="模型"
                           minMenuWidth={280}
@@ -2119,7 +2121,7 @@ function ModelTab() {
                           allowCustom
                           searchPlaceholder="搜索或输入模型名"
                         />
-                        <button type="button" onClick={() => loadModels(p.id, true)} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
+                        <button type="button" onClick={() => loadModels(p.id, true)} disabled={hasFixedModel(templateId) || loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                           {loadingModels ? '获取中…' : '刷新模型'}
                         </button>
                       </div>
@@ -2176,6 +2178,7 @@ function ModelTab() {
                           <AppDropdownSelect
                             value={f.model}
                             options={modelOptions}
+                            disabled={hasFixedModel(templateId)}
                             onChange={(value) => setFormField(p.id, 'model', value)}
                             ariaLabel="Claude Code 模型"
                             minMenuWidth={280}
@@ -2185,7 +2188,7 @@ function ModelTab() {
                             allowCustom
                             searchPlaceholder="搜索或输入模型名"
                           />
-                          <button type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
+                          <button type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={hasFixedModel(templateId) || loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                             {loadingModels ? '获取中…' : '刷新模型'}
                           </button>
                         </div>
@@ -2235,13 +2238,14 @@ function ModelTab() {
                                     <AppDropdownSelect
                                       value={f.openai_model}
                                       options={openAiModelOptions}
+                                      disabled={hasFixedModel(templateId)}
                                       onChange={(value) => setFormField(p.id, 'openai_model', value)}
                                       ariaLabel="网站探索agent模型"
                                       minMenuWidth={280}
                                       matchAnchorWidth
                                       className="settings-model-dropdown"
                                     />
-                                    <button type="button" onClick={() => loadModels(p.id, true, 'webwright')} disabled={loadingOpenAiModels || Boolean(openAiCatalogIssue)} className="settings-btn settings-btn-secondary">
+                                    <button type="button" onClick={() => loadModels(p.id, true, 'webwright')} disabled={hasFixedModel(templateId) || loadingOpenAiModels || Boolean(openAiCatalogIssue)} className="settings-btn settings-btn-secondary">
                                       {loadingOpenAiModels ? '获取中…' : '刷新模型'}
                                     </button>
                                   </div>

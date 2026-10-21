@@ -1,5 +1,6 @@
 const { validateBuildProfile } = require('./build-profile-validator.cjs');
-const profile = require('../build-profile.json');
+const { loadBuildProfile } = require('./model-provider-config.cjs');
+const profile = loadBuildProfile();
 
 // Test 1: valid profile
 try { validateBuildProfile(profile); console.log('PASS: valid profile accepted'); } catch(e) { console.log('FAIL:', e.message); }

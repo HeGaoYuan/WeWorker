@@ -22,6 +22,7 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
   const [catalog, setCatalog] = useState(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
+  const fixedModel = hasFixedModel(providers[activeProvider]?.provider_id || activeProvider)
   const pendingRef = useRef(false)
   const autoCheckProvider = useRef(null)
   const healthResults = useModelHealthStore(state => state.results)
@@ -47,7 +48,7 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         void checkModels(activeProvider, buildModelOptions(data.models, model).map(item => item.value))
       }
     }
-    if (hasFixedModel(activeProvider)) {
+    if (fixedModel) {
       finishCatalog({ models: [model || definition?.defaultModel].filter(Boolean) })
       return () => controller.abort()
     }
@@ -65,7 +66,7 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
       if (isFixedProvider(value)) { setError(''); setKeyProvider(value) }
       return
     }
-    if (kind === 'model' && hasFixedModel(activeProvider)) return
+    if (kind === 'model' && fixedModel) return
     if (value === (kind === 'provider' ? activeProvider : model)) return
     pendingRef.current = true
     setPending(true)
@@ -170,8 +171,8 @@ export default function ModelSelector({ disabled, onPendingChange, thinkingEffor
         ariaLabel="模型选择"
         placement="top"
         minMenuWidth={280}
-        searchable
-        allowCustom
+        searchable={!fixedModel}
+        allowCustom={!fixedModel}
         searchPlaceholder="搜索或输入模型名"
         renderOptionSuffix={renderModelHealth}
         menuHeader={(

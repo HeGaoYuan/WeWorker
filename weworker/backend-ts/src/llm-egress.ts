@@ -3,6 +3,14 @@ export interface ProviderEntry {
   name: string
   models: string[]
   defaultModel: string
+  fixed?: boolean
+  builtin?: boolean
+  fixedModel?: boolean
+  allowMultiple?: boolean
+  authType?: 'auth_token' | 'api_key'
+  apiKeyEnv?: string
+  baseUrlEnv?: string
+  presentation?: { subtitle: string; color: string; bg: string }
   weworker: { protocol: 'anthropic_messages'; baseUrl: string }
   webwright: {
     protocol: 'anthropic_messages' | 'openai_chat_completions'

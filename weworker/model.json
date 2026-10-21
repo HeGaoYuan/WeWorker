@@ -1,0 +1,134 @@
+{
+  "defaultProvider": "anthropic",
+  "providers": [
+    {
+      "id": "builtin",
+      "name": "内置模型",
+      "models": [
+        "ark-code-latest"
+      ],
+      "defaultModel": "ark-code-latest",
+      "weworker": {
+        "protocol": "anthropic_messages",
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/plan"
+      },
+      "webwright": {
+        "protocol": "openai_chat_completions",
+        "modelClass": "zhipu",
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+        "structuredOutput": "openai_json_object"
+      },
+      "fixed": false,
+      "builtin": true,
+      "fixedModel": true,
+      "allowMultiple": false,
+      "authType": "auth_token",
+      "apiKeyEnv": "WEWORKER_BUILTIN_API_KEY",
+      "encryptedApiKey": "KblwyJ8H-s6noP51.8CHYHFuC2Ry2BHjvRIby9g.OQVfEBpevOgdzHsJbpAS7lEJrTa-k1Ua4r77Uy3zMxZ0yRQnIEQy-EFyOu2YqA"
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "models": [],
+      "defaultModel": "",
+      "weworker": {
+        "protocol": "anthropic_messages",
+        "baseUrl": "https://api.anthropic.com"
+      },
+      "webwright": {
+        "protocol": "anthropic_messages",
+        "modelClass": "anthropic",
+        "baseUrl": "https://api.anthropic.com",
+        "structuredOutput": "anthropic_json_schema"
+      },
+      "fixed": true,
+      "builtin": false,
+      "fixedModel": false,
+      "allowMultiple": true,
+      "authType": "api_key",
+      "presentation": {
+        "subtitle": "Claude 系列",
+        "color": "#D97706",
+        "bg": "rgba(217,119,6,0.12)"
+      }
+    },
+    {
+      "id": "glm",
+      "name": "智谱 coding plan",
+      "models": [],
+      "defaultModel": "",
+      "weworker": {
+        "protocol": "anthropic_messages",
+        "baseUrl": "https://open.bigmodel.cn/api/anthropic"
+      },
+      "webwright": {
+        "protocol": "openai_chat_completions",
+        "modelClass": "zhipu",
+        "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+        "structuredOutput": "openai_json_object"
+      },
+      "fixed": true,
+      "builtin": false,
+      "fixedModel": false,
+      "allowMultiple": true,
+      "authType": "api_key",
+      "presentation": {
+        "subtitle": "智谱 AI",
+        "color": "#339CFF",
+        "bg": "rgba(51,156,255,0.12)"
+      }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "models": [],
+      "defaultModel": "",
+      "weworker": {
+        "protocol": "anthropic_messages",
+        "baseUrl": "https://api.deepseek.com/anthropic"
+      },
+      "webwright": {
+        "protocol": "openai_chat_completions",
+        "modelClass": "openai_chat",
+        "baseUrl": "https://api.deepseek.com",
+        "structuredOutput": "openai_json_object"
+      },
+      "fixed": true,
+      "builtin": false,
+      "fixedModel": false,
+      "allowMultiple": true,
+      "authType": "api_key",
+      "presentation": {
+        "subtitle": "深度求索",
+        "color": "#06B6D4",
+        "bg": "rgba(6,182,212,0.12)"
+      }
+    },
+    {
+      "id": "custom",
+      "name": "自定义",
+      "models": [],
+      "defaultModel": "",
+      "weworker": {
+        "protocol": "anthropic_messages",
+        "baseUrl": ""
+      },
+      "webwright": {
+        "protocol": "openai_chat_completions",
+        "modelClass": "openai_chat",
+        "baseUrl": "",
+        "structuredOutput": "openai_json_object"
+      },
+      "fixed": false,
+      "builtin": false,
+      "fixedModel": false,
+      "allowMultiple": true,
+      "authType": "auth_token",
+      "presentation": {
+        "subtitle": "LiteLLM / 代理",
+        "color": "#8B5CF6",
+        "bg": "rgba(139,92,246,0.12)"
+      }
+    }
+  ]
+}

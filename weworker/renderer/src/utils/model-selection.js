@@ -1,3 +1,6 @@
+import { isFixedProvider, isBuiltinProvider, configuredProvider } from './provider-config.js'
+export { isFixedProvider } from './provider-config.js'
+
 export function buildModelOptions(models, currentModel, { annotateCurrent = true } = {}) {
   const values = [...new Set((Array.isArray(models) ? models : [])
     .map((model) => String(model || '').trim())
@@ -118,13 +121,9 @@ export function buildProviderProbeTargets(providerId, openAiBaseUrl) {
   return ['weworker', 'webwright']
 }
 
-export function isFixedProvider(id) {
-  return ['anthropic', 'glm', 'bank_coding', 'deepseek'].includes(id)
-}
-
 export function buildChatProviderOptions(providerList, providers, activeProvider) {
   const configured = buildSettingsProviderLists(providerList, providers).visible
-  const builtin = item => item.builtin || item.id === 'builtin' || item.id === 'builtin_dev'
+  const builtin = item => item.builtin || isBuiltinProvider(item.id)
   const custom = id => (providers[id]?.provider_id || id) === 'custom'
   const customReady = id => Boolean(providers[id]?.has_key && String(providers[id]?.base_url || '').trim())
   const visible = configured.filter(item => builtin(item) || (custom(item.id)
@@ -144,7 +143,7 @@ export function buildChatProviderOptions(providerList, providers, activeProvider
 export function isProviderVisibleInSettings(provider, stored) {
   if (isFixedProvider(provider?.id)) return true
   if (provider?.builtin) return true
-  if (provider?.id === 'builtin' || provider?.id === 'builtin_dev') return true
+  if (isBuiltinProvider(provider?.id)) return true
   if (!stored) return false
   const model = String(stored.model || '').trim()
   return Boolean(
@@ -171,7 +170,7 @@ export function buildSettingsProviderLists(providerList, providers) {
     const supplierName = provider.name || provider.id
     let name = isFixedProvider(provider.id) ? supplierName : storedProviders[provider.id]?.name?.trim()
     if (!name) {
-      if (provider.builtin || provider.id === 'builtin' || provider.id === 'builtin_dev') {
+      if (provider.builtin || isBuiltinProvider(provider.id)) {
         name = supplierName
       } else {
         let number = 1
@@ -184,9 +183,8 @@ export function buildSettingsProviderLists(providerList, providers) {
   })
   const addable = allProviders.filter((provider) => (
     !provider.builtin
-    && provider.id !== 'builtin'
-    && provider.id !== 'builtin_dev'
-    && provider.id !== 'bank_coding'
+    && !isBuiltinProvider(provider.id)
+    && (provider.allowMultiple ?? configuredProvider(provider.id)?.allowMultiple) !== false
   ))
   return { visible: namedVisible, addable }
 }

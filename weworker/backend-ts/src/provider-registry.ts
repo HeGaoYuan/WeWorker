@@ -1,20 +1,8 @@
 import { buildAllowedLlmBaseUrls, normalizeLlmBaseUrl, type ProviderEntry } from './llm-egress.js'
-import { BANK_CODING_PROVIDER, BUILTIN_PROVIDERS, resolveBankCodingProvider } from './builtin-provider.js'
+import { resolveBankCodingProvider } from './builtin-provider.js'
+import { CONFIGURED_PROVIDERS } from './provider-config.js'
 
-declare const __BUILD_PROVIDERS__: ProviderEntry[]
-
-// 供应商只写死构建期的路由与安全配置（协议、地址、认证、结构化输出）。
-// 模型名属于供应商侧数据，这里不再内置列表与默认值，一律以模型列表接口为准。
-const DEV_PROVIDERS: ProviderEntry[] = [
-  ...BUILTIN_PROVIDERS,
-  { id: 'anthropic', name: 'Anthropic', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' }, webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: 'https://api.anthropic.com', structuredOutput: 'anthropic_json_schema' } },
-  { id: 'glm', name: '智谱 coding plan', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://open.bigmodel.cn/api/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', structuredOutput: 'openai_json_object' } },
-  BANK_CODING_PROVIDER,
-  { id: 'deepseek', name: 'DeepSeek', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.deepseek.com/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: 'https://api.deepseek.com', structuredOutput: 'openai_json_object' } },
-  { id: 'custom', name: '自定义', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: '' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: '', structuredOutput: 'openai_json_object' } },
-]
-
-export const PROVIDERS: ProviderEntry[] = typeof __BUILD_PROVIDERS__ !== 'undefined' ? __BUILD_PROVIDERS__ : DEV_PROVIDERS
+export const PROVIDERS: ProviderEntry[] = CONFIGURED_PROVIDERS
 
 export const PROVIDER_BASE_URLS: Record<string, string> = Object.fromEntries(
   PROVIDERS.map(p => [p.id, p.weworker.baseUrl])

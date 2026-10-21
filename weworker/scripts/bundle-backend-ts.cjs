@@ -110,39 +110,22 @@ function createEsbuildDefines(currentBuildDefines, promptsRoot = PROMPTS_ROOT) {
   return {
     'import.meta.url': '__importMetaUrl',
     'import.meta.dirname': '__dirname',
-    '__BUILD_PROVIDERS__': JSON.stringify(currentBuildDefines.providers),
+    '__BUILD_MODEL_CONFIG__': 'true',
+    '__BUILD_PROVIDERS__': JSON.stringify(publicProviders(currentBuildDefines.providers)),
+    '__BUILD_PROVIDER_CREDENTIALS__': JSON.stringify(Object.fromEntries(currentBuildDefines.providers.filter(p => p.builtin && p.encryptedApiKey).map(p => [p.id, p.encryptedApiKey]))),
     '__BUILD_DEFAULT_PROVIDER__': JSON.stringify(currentBuildDefines.defaultProvider),
     '__BUILD_PROMPTS__': JSON.stringify(loadBuildPrompts(promptsRoot)),
     '__BUILD_TIMESTAMP__': JSON.stringify(Date.now()),
   }
 }
 
-// Read .build-defines.json for provider injection; fall back to defaults for dev mode
-const definesPath = path.resolve(__dirname, '../build/.build-defines.json')
-let buildDefines
-try {
-  buildDefines = JSON.parse(fs.readFileSync(definesPath, 'utf-8'))
-} catch {
-  console.warn('[bundle-backend-ts] .build-defines.json not found, using built-in defaults (dev mode)')
-  buildDefines = {
-    providers: [
-      {"id":"builtin","name":"内置模型","models":["ark-code-latest"],"defaultModel":"ark-code-latest","weworker":{"protocol":"anthropic_messages","baseUrl":"https://ark.cn-beijing.volces.com/api/plan"},"webwright":{"protocol":"openai_chat_completions","modelClass":"zhipu","baseUrl":"https://ark.cn-beijing.volces.com/api/plan/v3","structuredOutput":"openai_json_object"}},
-      {"id":"builtin_dev","name":"内置模型（开发VDI）","models":["deepseek-v4-flash"],"defaultModel":"deepseek-v4-flash","weworker":{"protocol":"anthropic_messages","baseUrl":""},"webwright":{"protocol":"anthropic_messages","modelClass":"anthropic","baseUrl":"","structuredOutput":"anthropic_json_schema"}},
-      { id: 'anthropic', name: 'Anthropic', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' }, webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: 'https://api.anthropic.com', structuredOutput: 'anthropic_json_schema' } },
-      { id: 'glm', name: '智谱 coding plan', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://open.bigmodel.cn/api/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', structuredOutput: 'openai_json_object' } },
-      {"id":"bank_coding","name":"行内 coding plan","models":[],"defaultModel":"","weworker":{"protocol":"anthropic_messages","baseUrl":""},"webwright":{"protocol":"anthropic_messages","modelClass":"anthropic","baseUrl":"","structuredOutput":"anthropic_json_schema"}},
-      { id: 'deepseek', name: 'DeepSeek', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.deepseek.com/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: 'https://api.deepseek.com', structuredOutput: 'openai_json_object' } },
-      { id: 'custom', name: '自定义', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: '' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: '', structuredOutput: 'openai_json_object' } },
-    ],
-    defaultProvider: 'anthropic',
-  }
-}
+const { loadBuildDefines, publicProviders } = require('./model-provider-config.cjs')
 
 function bundleBackend(options = {}) {
   const outFile = options.outFile ?? (options.outDir ? path.join(options.outDir, 'server.cjs') : OUT_FILE)
   const outDir = options.outDir ?? path.dirname(outFile)
   const profileEntry = options.profileEntry === undefined ? PROFILE_ENTRY : options.profileEntry
-  const currentBuildDefines = options.buildDefines ?? buildDefines
+  const currentBuildDefines = options.buildDefines ?? loadBuildDefines()
   const keyringExternals = ['@napi-rs/keyring']
   const platformPackage = KEYRING_PLATFORM_PACKAGES[`${process.platform}-${process.arch}`]
   if (platformPackage) keyringExternals.push(platformPackage)

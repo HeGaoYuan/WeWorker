@@ -6,44 +6,15 @@ import { createDecipheriv } from 'node:crypto'
 import { DEFAULT_CONTEXT_LIMIT } from './context-window.js'
 import { normalizeLlmBaseUrl, type ProviderEntry } from './llm-egress.js'
 
-// Public provider metadata only. Credential material remains private to this module.
-export const BUILTIN_PROVIDER: ProviderEntry = {
-  id: 'builtin',
-  name: '内置模型',
-  models: ['ark-code-latest'],
-  defaultModel: 'ark-code-latest',
-  weworker: { protocol: 'anthropic_messages', baseUrl: 'https://ark.cn-beijing.volces.com/api/plan' },
-  webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3', structuredOutput: 'openai_json_object' },
-}
+import { configuredProvider, configuredEncryptedApiKey, CONFIGURED_PROVIDERS } from './provider-config.js'
 
-// The endpoint is resolved only when this provider is used, so settings APIs
-// and renderer metadata never receive it.
-export const BUILTIN_DEV_PROVIDER: ProviderEntry = {
-  id: 'builtin_dev',
-  name: '内置模型（开发VDI）',
-  models: ['deepseek-v4-flash'],
-  defaultModel: 'deepseek-v4-flash',
-  weworker: { protocol: 'anthropic_messages', baseUrl: '' },
-  webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: '', structuredOutput: 'anthropic_json_schema' },
-}
-
-export const BANK_CODING_PROVIDER: ProviderEntry = {
-  id: 'bank_coding',
-  name: '行内 coding plan',
-  models: [],
-  defaultModel: '',
-  weworker: { protocol: 'anthropic_messages', baseUrl: '' },
-  webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: '', structuredOutput: 'anthropic_json_schema' },
-}
-
-export const BUILTIN_PROVIDERS: ProviderEntry[] = [BUILTIN_PROVIDER, BUILTIN_DEV_PROVIDER]
+// Credential material remains Backend-only; all public metadata comes from JSON.
+export const BUILTIN_PROVIDER = configuredProvider('builtin')!
+export const BUILTIN_DEV_PROVIDER = configuredProvider('builtin_dev')!
+export const BANK_CODING_PROVIDER = configuredProvider('bank_coding')!
+export const BUILTIN_PROVIDERS = CONFIGURED_PROVIDERS.filter(provider => provider.builtin)
 
 const EMBEDDED_SECRET_KEY = Buffer.from('33cfebfe2c3549b3de27164524c466c12dd9caac3f2f7fac50cf076b8b5b0b6f', 'hex')
-const EMBEDDED_SECRETS = {
-  builtin: 'KblwyJ8H-s6noP51.8CHYHFuC2Ry2BHjvRIby9g.OQVfEBpevOgdzHsJbpAS7lEJrTa-k1Ua4r77Uy3zMxZ0yRQnIEQy-EFyOu2YqA',
-  builtin_dev: 'q3iCt7pfm3Pl6f9d.eqpJWf0ivJaNijO28M30lQ.8uA0XScKmGMO9Iv8G4VA66XCz9RGvQ0TvQ',
-  builtin_dev_base_url: 'PY9VxSj_gvqEjoGY.zhSELoqJYreGYQ_oVyKVTA.7_0LiCEO9X1yHE2mQFHPh0d8RA',
-} as const
 
 function decryptEmbeddedSecret(payload: string): string {
   const [iv, authTag, encrypted] = payload.split('.')
@@ -54,7 +25,7 @@ function decryptEmbeddedSecret(payload: string): string {
 }
 
 export function isBuiltinProvider(id: string | undefined): boolean {
-  return id === 'builtin' || id === 'builtin_dev'
+  return configuredProvider(id)?.builtin === true
 }
 
 // Deployment values are local to the Backend and never part of provider metadata.
@@ -66,35 +37,35 @@ function bankCodingDeployment(env: NodeJS.ProcessEnv): { baseUrl: string } {
     if (value && typeof value === 'object' && !Array.isArray(value)) local = value
   } catch { /* Unconfigured deployments remain unavailable. */ }
   return {
-    baseUrl: (env.WEWORKER_BANK_CODING_BASE_URL || (typeof local.baseUrl === 'string' ? local.baseUrl : '')).trim(),
+    baseUrl: (env[configuredProvider('bank_coding')?.baseUrlEnv || ''] || (typeof local.baseUrl === 'string' ? local.baseUrl : '')).trim(),
   }
 }
 
 export function getBuiltinApiKey(id: string, env: NodeJS.ProcessEnv = process.env): string {
-  const variable = id === 'builtin' ? 'WEWORKER_BUILTIN_API_KEY'
-    : id === 'builtin_dev' ? 'WEWORKER_BUILTIN_DEV_API_KEY' : ''
+  const provider = configuredProvider(id)
+  if (!provider?.builtin) return ''
+  const variable = provider.apiKeyEnv
   const override = variable ? (env[variable] || '').trim() : ''
   if (override) return override
-  if (id === 'builtin') return decryptEmbeddedSecret(EMBEDDED_SECRETS.builtin)
-  if (id === 'builtin_dev') return decryptEmbeddedSecret(EMBEDDED_SECRETS.builtin_dev)
-  return ''
+  const encrypted = configuredEncryptedApiKey(id)
+  return encrypted ? decryptEmbeddedSecret(encrypted) : ''
 }
 
 function getBuiltinRuntimeProvider(provider: ProviderEntry, env: NodeJS.ProcessEnv = process.env): ProviderEntry {
   if (provider.id !== 'builtin_dev') return provider
-  const baseUrl = (env.WEWORKER_BUILTIN_DEV_BASE_URL || '').trim() || decryptEmbeddedSecret(EMBEDDED_SECRETS.builtin_dev_base_url)
+  const baseUrl = (env[provider.baseUrlEnv || ''] || provider.weworker.baseUrl || '').trim()
   if (!baseUrl) throw new Error('内置模型服务尚未配置，请联系应用提供方或使用其他模型')
   const normalized = normalizeLlmBaseUrl(baseUrl)
   return {
     ...provider,
     weworker: { ...provider.weworker, baseUrl: normalized },
-    webwright: { ...provider.webwright, baseUrl: normalized },
+    webwright: { ...provider.webwright, baseUrl: env[provider.baseUrlEnv || ''] ? normalized : provider.webwright.baseUrl || normalized },
   }
 }
 
 export function isBuiltinProviderConfigured(provider: ProviderEntry, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (!getBuiltinApiKey(provider.id, env)) return false
   try {
+    if (!getBuiltinApiKey(provider.id, env)) return false
     getBuiltinRuntimeProvider(provider, env)
     return true
   } catch {
@@ -122,7 +93,7 @@ export function builtinProviderAccess(provider: ProviderEntry, env: NodeJS.Proce
     model: runtimeProvider.defaultModel,
     anthropicBaseUrl: runtimeProvider.weworker.baseUrl,
     openaiBaseUrl: runtimeProvider.webwright.baseUrl,
-    anthropicAuthType: runtimeProvider.id === 'builtin' ? 'auth_token' as const : 'api_key' as const,
+    anthropicAuthType: runtimeProvider.authType || 'api_key' as const,
   }
 }
 
@@ -165,8 +136,11 @@ export function resolveBuiltinSettings(settings: Settings, providers: ProviderEn
 // The deployment supplies only the gateway address. User keys follow normal settings storage.
 export function resolveBankCodingProvider(provider: ProviderEntry, env: NodeJS.ProcessEnv = process.env): ProviderEntry {
   if (provider.id !== 'bank_coding') return provider
-  const baseUrl = bankCodingDeployment(env).baseUrl || provider.weworker.baseUrl
-  const normalized = baseUrl ? normalizeLlmBaseUrl(baseUrl) : ''
+  // Explicit JSON gateways take precedence over the legacy local deployment file.
+  if (provider.weworker.baseUrl && !(env[provider.baseUrlEnv || ''] || '').trim()) return provider
+  const baseUrl = bankCodingDeployment(env).baseUrl
+  if (!baseUrl) return provider
+  const normalized = normalizeLlmBaseUrl(baseUrl)
   return { ...provider, weworker: { ...provider.weworker, baseUrl: normalized }, webwright: { ...provider.webwright, baseUrl: normalized } }
 }
 
@@ -176,9 +150,9 @@ export function resolveBankCodingSettings(settings: Settings, providers: Provide
   return {
     ...settings,
     api_key: provider ? settings.api_key_bank_coding || '' : '',
-    model: provider ? settings.model_bank_coding || '' : '',
+    model: provider ? (provider.fixedModel ? provider.defaultModel : settings.model_bank_coding || provider.defaultModel || '') : '',
     base_url: provider ? resolveBankCodingProvider(provider, env).weworker.baseUrl : '',
-    active_auth_type: 'auth_token',
+    active_auth_type: provider?.authType || 'auth_token',
     base_url_is_full: false,
     context_limit: settings.context_limit_bank_coding || DEFAULT_CONTEXT_LIMIT,
   }

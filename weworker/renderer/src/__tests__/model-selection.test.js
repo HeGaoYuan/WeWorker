@@ -17,11 +17,11 @@ it('shows unconfigured presets in chat with key state, keeping configured additi
 })
 
 it('hides custom configurations missing a conversation key or URL, including the active entry', () => {
-  const templates = [{ id: 'builtin' }, { id: 'builtin_dev' }, { id: 'custom' }]
+  const templates = [{ id: 'builtin' }, { id: 'custom' }]
   for (const id of ['custom', 'model-custom']) {
     for (const fields of [{ has_key: false, base_url: 'https://example.com' }, { has_key: true, base_url: '  ' }, { has_key: false, openai_has_key: true, openai_base_url: 'https://example.org' }]) {
       const options = buildChatProviderOptions(templates, { [id]: { provider_id: 'custom', ...fields } }, id)
-      assert.deepEqual(options.map(item => item.value), ['builtin', 'builtin_dev'])
+      assert.deepEqual(options.map(item => item.value), ['builtin'])
       assert.ok(options.every(item => item.keyConfigured === true))
     }
     const options = buildChatProviderOptions(templates, { [id]: { provider_id: 'custom', has_key: true, base_url: 'https://example.com' } }, id)
@@ -177,7 +177,7 @@ describe('provider model selection', () => {
 
   it('initially shows built-ins and fixed presets despite empty credentials', () => {
     const templates = [
-      { id: 'builtin' }, { id: 'builtin_dev' },
+      { id: 'builtin' },
       { id: 'anthropic', defaultModel: 'default-claude' },
       { id: 'deepseek', defaultModel: 'default-deepseek' },
       { id: 'custom', defaultModel: '' },
@@ -187,7 +187,7 @@ describe('provider model selection', () => {
       deepseek: { model: 'default-deepseek', has_key: false },
       custom: { model: '', base_url: '', openai_base_url: '' },
     })
-    assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'builtin_dev', 'anthropic', 'deepseek'])
+    assert.deepEqual(visible.map(provider => provider.id), ['builtin', 'anthropic', 'deepseek'])
     assert.deepEqual(addable.map(provider => provider.id), ['anthropic', 'deepseek', 'custom'])
   })
 
