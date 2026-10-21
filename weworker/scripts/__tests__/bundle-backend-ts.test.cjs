@@ -32,6 +32,7 @@ function createPromptDirectory(t, files = PROMPT_FILES) {
 test('backend bundle reads and injects all six fixed prompts', (t) => {
   const promptsRoot = createPromptDirectory(t)
   const defines = createEsbuildDefines({ providers: [], defaultProvider: 'test' }, promptsRoot)
+  assert.ok(JSON.parse(defines.__BUILD_TIMESTAMP__) > 0)
 
   assert.deepEqual(JSON.parse(defines.__BUILD_PROMPTS__), {
     agent: 'content:agent.md\n',
@@ -77,9 +78,13 @@ test('final backend bundle contains the prompt loader and all embedded prompts',
 
   const outDir = createTempDirectory(t, 'weworker-backend-bundle-')
   const bundlePath = path.join(outDir, 'custom-server.cjs')
+  const buildStartedAt = Date.now()
   bundleBackend({ outDir, outFile: bundlePath })
 
   const bundleSource = fs.readFileSync(bundlePath, 'utf8')
+  const builtAt = Number(bundleSource.match(/SKILL_BUILD_TIME = true \? ([\d.e+]+)/)?.[1])
+  assert.ok(builtAt >= buildStartedAt && builtAt <= Date.now(), 'final bundle must embed this compilation timestamp')
+  assert.doesNotMatch(bundleSource, /typeof __BUILD_TIMESTAMP__/)
   assert.match(bundleSource, /Unknown prompt ID:/)
   assert.match(bundleSource, /Missing embedded prompt:/)
 

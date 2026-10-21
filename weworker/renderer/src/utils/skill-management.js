@@ -7,7 +7,11 @@ export function skillDirectoryName(tool) {
 export function withInstalledSkillState(tool, installed) {
   const directoryName = skillDirectoryName(tool)
   const entry = installed.find(item => item.name === directoryName)
-  return { ...tool, directoryName, enabled: entry?.enabled === true, draft: entry?.draft === true, installed: !!entry }
+  return {
+    ...tool, directoryName, enabled: entry?.enabled === true, draft: entry?.draft === true, installed: !!entry,
+    createdAt: entry?.createdAt ?? tool.createdAt,
+    creationOrderKey: entry?.creationOrderKey ?? tool.creationOrderKey,
+  }
 }
 
 export function publicSkillEntries(entries, siteSkills) {

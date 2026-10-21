@@ -113,6 +113,7 @@ function createEsbuildDefines(currentBuildDefines, promptsRoot = PROMPTS_ROOT) {
     '__BUILD_PROVIDERS__': JSON.stringify(currentBuildDefines.providers),
     '__BUILD_DEFAULT_PROVIDER__': JSON.stringify(currentBuildDefines.defaultProvider),
     '__BUILD_PROMPTS__': JSON.stringify(loadBuildPrompts(promptsRoot)),
+    '__BUILD_TIMESTAMP__': JSON.stringify(Date.now()),
   }
 }
 

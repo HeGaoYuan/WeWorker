@@ -1,4 +1,5 @@
 import { createSkillManagementRouter, sanitizeSkillDirectoryName } from './skill-management.js'
+import { officialSkillBuildTime } from './skill-build-time.js'
 import { randomUUID as channelQrId, createHash } from 'node:crypto'
 import { changeChannelConfiguration, createChannelMutationQueue, getChannelConfiguration, isChannelType, publicChannelSettings, type ChannelType } from './channels/channel-configurations.js'
 import express from 'express'
@@ -1199,7 +1200,9 @@ app.post('/settings/weixin/qr-poll', async (req, res) => {
 
 // 鈹€鈹€ Skills 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-app.use(createSkillManagementRouter(SKILLS_DIR))
+app.use(createSkillManagementRouter(SKILLS_DIR, (name) => officialSkillBuildTime(name,
+  (id) => parseAllAdapters().get(id)?.managed?.source === 'builtin',
+)))
 
 app.post('/skills/import-zip', express.raw({ type: ['application/zip', 'application/x-zip-compressed'], limit: '50mb' }), async (req, res) => {
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
