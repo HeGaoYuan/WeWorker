@@ -53,6 +53,15 @@ export interface WorkWithMessages extends Work {
   messages: Message[]
 }
 
+export interface AgentNotificationTarget {
+  /** WeCom chat id for a group or user id for a direct message. */
+  id: string
+  chat_type: 1 | 2
+  /** The member whose message let this Agent observe the target. */
+  observed_user_id: string
+  observed_at: string
+}
+
 export interface ScheduledTask {
   id: string
   title: string
@@ -60,6 +69,14 @@ export interface ScheduledTask {
   prompt_template: string
   enabled: boolean
   notify_channels: string[]
+  /** Present only for a task created through a dedicated Agent. */
+  agent_id?: string
+  /** The Agent owner who authorized task creation and notification targets. */
+  owner_user_id?: string
+  /** Explicitly authorized WeCom targets. Never fall back to the last chat. */
+  notification_targets?: AgentNotificationTarget[]
+  /** A durable Agent-only conversation used as task context across executions. */
+  context_work_id?: string
   created_at: string
   updated_at: string
 }
@@ -122,6 +139,10 @@ function db(): DatabaseSync {
       prompt_template TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       notify_channels TEXT NOT NULL DEFAULT '[]',
+      agent_id TEXT DEFAULT NULL,
+      owner_user_id TEXT DEFAULT NULL,
+      notification_targets TEXT NOT NULL DEFAULT '[]',
+      context_work_id TEXT DEFAULT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -165,6 +186,14 @@ function db(): DatabaseSync {
     _db.exec('ALTER TABLE works ADD COLUMN project_id TEXT DEFAULT NULL REFERENCES projects(id) ON DELETE SET NULL')
   } catch {
     // Column already exists — ignore
+  }
+  for (const statement of [
+    "ALTER TABLE scheduled_tasks ADD COLUMN agent_id TEXT DEFAULT NULL",
+    "ALTER TABLE scheduled_tasks ADD COLUMN owner_user_id TEXT DEFAULT NULL",
+    "ALTER TABLE scheduled_tasks ADD COLUMN notification_targets TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE scheduled_tasks ADD COLUMN context_work_id TEXT DEFAULT NULL",
+  ]) {
+    try { _db.exec(statement) } catch { /* column already exists */ }
   }
   return _db
 }
@@ -425,6 +454,12 @@ function rowToScheduledTask(row: Record<string, unknown>): ScheduledTask {
     prompt_template: row.prompt_template as string,
     enabled: (row.enabled as number) === 1,
     notify_channels: JSON.parse(row.notify_channels as string) as string[],
+    agent_id: typeof row.agent_id === 'string' && row.agent_id ? row.agent_id : undefined,
+    owner_user_id: typeof row.owner_user_id === 'string' && row.owner_user_id ? row.owner_user_id : undefined,
+    notification_targets: (() => {
+      try { return JSON.parse(String(row.notification_targets ?? '[]')) as AgentNotificationTarget[] } catch { return [] }
+    })(),
+    context_work_id: typeof row.context_work_id === 'string' && row.context_work_id ? row.context_work_id : undefined,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
   }
@@ -437,7 +472,7 @@ export function createScheduledTask(
   const id = randomUUID()
   db()
     .prepare(
-      'INSERT INTO scheduled_tasks (id, title, cron_expression, prompt_template, enabled, notify_channels, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO scheduled_tasks (id, title, cron_expression, prompt_template, enabled, notify_channels, agent_id, owner_user_id, notification_targets, context_work_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       id,
@@ -446,6 +481,10 @@ export function createScheduledTask(
       task.prompt_template,
       task.enabled ? 1 : 0,
       JSON.stringify(task.notify_channels),
+      task.agent_id ?? null,
+      task.owner_user_id ?? null,
+      JSON.stringify(task.notification_targets ?? []),
+      task.context_work_id ?? null,
       now,
       now
     )
@@ -456,6 +495,10 @@ export function createScheduledTask(
     prompt_template: task.prompt_template,
     enabled: task.enabled,
     notify_channels: task.notify_channels,
+    agent_id: task.agent_id,
+    owner_user_id: task.owner_user_id,
+    notification_targets: task.notification_targets ?? [],
+    context_work_id: task.context_work_id,
     created_at: now,
     updated_at: now,
   }
@@ -485,6 +528,10 @@ export function listScheduledTasks(): ScheduledTaskWithLastExecution[] {
   }))
 }
 
+export function listScheduledTasksForAgent(agentId: string): ScheduledTaskWithLastExecution[] {
+  return listScheduledTasks().filter((task) => task.agent_id === agentId)
+}
+
 export function getScheduledTask(id: string): ScheduledTask | null {
   const row = db()
     .prepare('SELECT * FROM scheduled_tasks WHERE id = ?')
@@ -495,7 +542,7 @@ export function getScheduledTask(id: string): ScheduledTask | null {
 
 export function updateScheduledTask(
   id: string,
-  updates: Partial<Pick<ScheduledTask, 'title' | 'cron_expression' | 'prompt_template' | 'enabled' | 'notify_channels'>>
+  updates: Partial<Pick<ScheduledTask, 'title' | 'cron_expression' | 'prompt_template' | 'enabled' | 'notify_channels' | 'notification_targets'>>
 ): ScheduledTask | null {
   const existing = getScheduledTask(id)
   if (!existing) return null
@@ -522,6 +569,10 @@ export function updateScheduledTask(
   if (updates.notify_channels !== undefined) {
     setClauses.push('notify_channels = ?')
     values.push(JSON.stringify(updates.notify_channels))
+  }
+  if (updates.notification_targets !== undefined) {
+    setClauses.push('notification_targets = ?')
+    values.push(JSON.stringify(updates.notification_targets))
   }
 
   if (setClauses.length === 0) return existing
@@ -650,6 +701,16 @@ export function getLatestChannelNotifyTarget(channelType: string): ChannelNotify
   }
 }
 
+/** All observed targets for an Agent channel, newest first. */
+export function listChannelNotifyTargets(channelType: string): ChannelNotifyTarget[] {
+  const rows = db().prepare('SELECT * FROM channel_notify_targets WHERE channel_type = ? ORDER BY updated_at DESC').all(channelType) as Array<Record<string, unknown>>
+  return rows.map((row) => {
+    let extra: Record<string, string> = {}
+    try { extra = JSON.parse(String(row.extra ?? '{}')) as Record<string, string> } catch { /* malformed legacy row */ }
+    return { channel_type: String(row.channel_type), user_id: String(row.user_id), extra, updated_at: String(row.updated_at) }
+  })
+}
+
 /** Return the current database instance (for testing only). */
 export function _getTestDb(): DatabaseSync {
   return db()
@@ -700,6 +761,10 @@ export function _initTestDb(): void {
       prompt_template TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       notify_channels TEXT NOT NULL DEFAULT '[]',
+      agent_id TEXT DEFAULT NULL,
+      owner_user_id TEXT DEFAULT NULL,
+      notification_targets TEXT NOT NULL DEFAULT '[]',
+      context_work_id TEXT DEFAULT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

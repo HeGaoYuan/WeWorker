@@ -152,24 +152,7 @@ export class WecomChannel implements Channel {
     if (!this._lastUserId) {
       throw new Error('没有可用的企业微信用户，无法发送通知（需要用户先跟机器人对话过）')
     }
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) {
-      throw new Error('企业微信 WebSocket 未连接')
-    }
-
-    // Use aibot_send_msg for proactive push
-    for (const chunk of splitMessage(text)) {
-      this._send({
-        cmd: 'aibot_send_msg',
-        headers: { req_id: randomUUID() },
-        body: {
-          chatid: this._lastUserId,
-          chat_type: this._lastChatType,
-          msgtype: 'markdown',
-          markdown: { content: chunk },
-        },
-      })
-    }
-    log.info(`notification sent to ${this._lastUserId}`)
+    await this.sendNotificationToTarget({ id: this._lastUserId, chatType: this._lastChatType as 1 | 2 }, text)
 
     // Persist to work
     try {
@@ -180,6 +163,26 @@ export class WecomChannel implements Channel {
     } catch (e) {
       log.error('failed to persist notification to work:', e)
     }
+  }
+
+  async sendNotificationToTarget(target: { id: string; chatType: 1 | 2 }, text: string): Promise<void> {
+    const chatId = String(target?.id ?? '').trim()
+    if (!chatId) throw new Error('通知目标无效')
+    if (target.chatType !== 1 && target.chatType !== 2) throw new Error('通知目标类型无效')
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) throw new Error('企业微信 WebSocket 未连接')
+    for (const chunk of splitMessage(text)) {
+      this._send({
+        cmd: 'aibot_send_msg',
+        headers: { req_id: randomUUID() },
+        body: {
+          chatid: chatId,
+          chat_type: target.chatType,
+          msgtype: 'markdown',
+          markdown: { content: chunk },
+        },
+      })
+    }
+    log.info(`notification sent to explicit target (${target.chatType})`)
   }
 
   private _send(data: object): void {
@@ -627,6 +630,17 @@ export class WecomChannel implements Channel {
         cmd: 'aibot_respond_msg',
         headers: { req_id: reqId },
         body: { msgtype: 'stream', stream: { id: randomUUID(), finish: true, content: `当前对话 ID: ${shortId}` } },
+      })
+      return
+    }
+
+    if (command === '/targetid') {
+      const targetId = chatType === 'single' ? userId : (chatId ?? userId)
+      const targetLabel = chatType === 'group' ? '当前群聊' : '当前单聊'
+      this._send({
+        cmd: 'aibot_respond_msg',
+        headers: { req_id: reqId },
+        body: { msgtype: 'stream', stream: { id: randomUUID(), finish: true, content: `${targetLabel} ID：${targetId}\n可在 WeWorker「专属 Agent → 任务」中将它授权为定时消息通知目标。` } },
       })
       return
     }

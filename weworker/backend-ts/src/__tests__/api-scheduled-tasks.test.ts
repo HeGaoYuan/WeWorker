@@ -19,6 +19,9 @@ import {
   createWork,
   createTaskExecution,
   listTaskExecutions,
+  listScheduledTasksForAgent,
+  saveChannelNotifyTarget,
+  listChannelNotifyTargets,
 } from '../works-store.js'
 import { Scheduler } from '../scheduler.js'
 
@@ -209,6 +212,24 @@ describe('PATCH /scheduled-tasks/:id', () => {
 
     const updated = updateScheduledTask(task.id, { notify_channels: ['weixin', 'qq'] })
     expect(updated!.notify_channels).toEqual(['weixin', 'qq'])
+  })
+})
+
+describe('dedicated Agent task metadata', () => {
+  it('persists the Agent owner, durable context and explicitly selected targets', () => {
+    const task = createScheduledTask({
+      title: 'Check example changes', cron_expression: '*/2 * * * *', prompt_template: 'Inspect example.com', enabled: true, notify_channels: [],
+      agent_id: 'agent-example', owner_user_id: 'owner-example', context_work_id: 'work-context',
+      notification_targets: [{ id: 'group-placeholder', chat_type: 2, observed_user_id: 'owner-example', observed_at: '2026-01-01T00:00:00.000Z' }],
+    })
+    expect(listScheduledTasksForAgent('agent-example')).toMatchObject([{ id: task.id, owner_user_id: 'owner-example', context_work_id: 'work-context' }])
+    expect(getScheduledTask(task.id)?.notification_targets).toEqual(task.notification_targets)
+  })
+
+  it('lists every observed target for a dedicated Agent channel', () => {
+    saveChannelNotifyTarget('agent:agent-example', 'direct-placeholder', { chat_type: '1', user_id: 'owner-example' })
+    saveChannelNotifyTarget('agent:agent-example', 'group-placeholder', { chat_type: '2', user_id: 'owner-example' })
+    expect(listChannelNotifyTargets('agent:agent-example').map((target) => target.user_id).sort()).toEqual(['direct-placeholder', 'group-placeholder'])
   })
 })
 

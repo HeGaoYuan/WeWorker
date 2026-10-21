@@ -11,6 +11,8 @@ import { assertPathInsideUserDirectory } from './user-directory-guard.js'
 import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import * as store from './works-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
+import { channelManager } from './channels/channel-manager.js'
+import { getAgent, addAgentWork } from './dedicated-agents/agent-store.js'
 import { describeUserFile, NO_FILE_DELIVERY, NO_IMAGE_DELIVERY, readUserImage, type UserMediaSink } from './user-media.js'
 import {
   getLatestCacheFile,
@@ -227,6 +229,8 @@ interface McpServerContext {
    * conversation, resolved at call time (a reused session rebinds it per turn).
    */
   userMedia?: () => UserMediaSink | null
+  /** Dedicated Agent identity comes from the trusted runtime, never model input. */
+  dedicatedAgent?: { agentId: string; ownerUserId: string; actorUserId?: string; taskId?: string }
 }
 
 /** Names only: used by the context inspector, never sent as an extra prompt. */
@@ -280,6 +284,10 @@ export function buildMcpServer(opts?: McpServerContext) {
   const channelAskUserHandler = opts?.channelAskUserHandler ?? null
   const currentUserMedia = (): UserMediaSink | null => opts?.userMedia?.() ?? null
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
+  const dedicatedAgent = opts?.dedicatedAgent
+  const dedicatedChannelKey = dedicatedAgent ? `agent:${dedicatedAgent.agentId}` : ''
+  const isDedicatedOwner = !!dedicatedAgent?.ownerUserId
+    && (!dedicatedAgent.actorUserId || dedicatedAgent.actorUserId === dedicatedAgent.ownerUserId)
   const platform = opts?.platform ?? process.platform
   const nativeCommandTool = platform === 'win32' ? 'PowerShell' : 'Bash'
 
@@ -414,14 +422,13 @@ export function buildMcpServer(opts?: McpServerContext) {
         })).describe('可选项列表（2-6个）'),
       },
       async ({ question, options }) => {
-        const workId = currentWorkId()
-        if (!workId) {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active work context' }) }] }
-        }
-
         if (channelAskUserHandler) {
           const answer = await channelAskUserHandler(question, options)
           return { content: [{ type: 'text' as const, text: JSON.stringify({ answer }) }] }
+        }
+        const workId = currentWorkId()
+        if (!workId) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active work context' }) }] }
         }
 
         const toolCallId = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
@@ -443,6 +450,82 @@ export function buildMcpServer(opts?: McpServerContext) {
       }
     ),
 
+    tool(
+      'list_agent_notification_targets',
+      '列出当前专属 Agent 已观察到、可由主人授权给定时任务的企业微信单聊或群聊目标。只能选择此列表中的 target_id，不能猜测或填写其他群/用户。',
+      {},
+      async () => {
+        if (!dedicatedAgent) return toolText({ error: '此工具仅供专属 Agent 使用' })
+        if (!isDedicatedOwner) return toolText({ error: '只有专属 Agent 的主人可以查看或配置通知目标' })
+        const targets = store.listChannelNotifyTargets(dedicatedChannelKey).flatMap((entry) => {
+          const chatType = Number(entry.extra.chat_type)
+          if (chatType !== 1 && chatType !== 2) return []
+          return [{ target_id: entry.user_id, kind: chatType === 2 ? 'group' : 'direct', observed_at: entry.updated_at }]
+        })
+        return toolText({ targets, hint: '群聊必须先有成员与该机器人对话，才会出现在此列表中。' })
+      },
+    ),
+    tool(
+      'create_agent_scheduled_task',
+      '创建当前专属 Agent 的定时任务。仅在主人已通过对话明确确认任务内容、执行频率和通知目标后调用。任务运行时由 Agent 自行决定是否调用 send_agent_message；未调用就不会发送消息。',
+      {
+        title: z.string().min(1).max(80),
+        cron_expression: z.string().min(1).max(100),
+        prompt_template: z.string().min(1).max(4000),
+        target_ids: z.array(z.string().min(1).max(256)).min(1).max(10).describe('来自 list_agent_notification_targets 的 target_id'),
+        confirmed: z.literal(true).describe('仅在主人已明确确认后传 true'),
+      },
+      async ({ title, cron_expression, prompt_template, target_ids }) => {
+        if (!dedicatedAgent) return toolText({ error: '此工具仅供专属 Agent 使用' })
+        if (!isDedicatedOwner) return toolText({ error: '只有专属 Agent 的主人可以创建定时任务' })
+        const validation = Scheduler.validateCron(cron_expression)
+        if (!validation.valid) return toolText({ error: `无效的 cron 表达式: ${validation.error}` })
+        const agent = getAgent(dedicatedAgent.agentId)
+        if (!agent || !agent.enabled) return toolText({ error: '专属 Agent 不存在或已停用' })
+        const observed = store.listChannelNotifyTargets(dedicatedChannelKey)
+        const selected = [...new Set(target_ids)].map((id) => observed.find((entry) => entry.user_id === id)).filter(Boolean)
+        if (selected.length !== new Set(target_ids).size) return toolText({ error: '通知目标不在该专属 Agent 已观察到的企业微信会话中' })
+        const targets = selected.map((entry) => ({
+          id: entry!.user_id,
+          chat_type: Number(entry!.extra.chat_type) as 1 | 2,
+          observed_user_id: entry!.extra.user_id || '',
+          observed_at: entry!.updated_at,
+        }))
+        if (targets.some((target) => target.chat_type !== 1 && target.chat_type !== 2)) return toolText({ error: '通知目标类型无效' })
+        const contextWork = store.createWork(`【定时】${title}`, agent.project_id ?? null)
+        addAgentWork(agent.id, contextWork.id)
+        const task = store.createScheduledTask({
+          title, cron_expression, prompt_template, enabled: true, notify_channels: [],
+          agent_id: agent.id, owner_user_id: agent.owner_user_id,
+          notification_targets: targets, context_work_id: contextWork.id,
+        })
+        scheduler.register(task.id, task.cron_expression)
+        return toolText({ success: true, task, next_run: Scheduler.getNextRun(task.cron_expression)?.toISOString() ?? null })
+      },
+    ),
+    tool(
+      'send_agent_message',
+      '向当前定时任务已授权的企业微信单聊或群聊主动发送消息。是否调用由你根据任务说明和本轮检查结果自主决定；未调用则不会推送。不得向未授权目标发送。',
+      {
+        target_id: z.string().min(1).max(256),
+        message: z.string().min(1).max(6000),
+      },
+      async ({ target_id, message }) => {
+        if (!dedicatedAgent?.taskId) return toolText({ success: false, error: '主动消息仅能在专属 Agent 定时任务运行中发送' })
+        const task = store.getScheduledTask(dedicatedAgent.taskId)
+        if (!task || task.agent_id !== dedicatedAgent.agentId || !task.enabled) return toolText({ success: false, error: '定时任务不存在、未授权或已停用' })
+        const target = (task.notification_targets ?? []).find((entry) => entry.id === target_id)
+        if (!target) return toolText({ success: false, error: '目标不在此任务的授权通知列表中' })
+        const channel = channelManager.getChannel(dedicatedChannelKey)
+        if (!channel?.sendNotificationToTarget) return toolText({ success: false, error: '企业微信机器人当前未连接或不支持主动消息' })
+        try {
+          await channel.sendNotificationToTarget({ id: target.id, chatType: target.chat_type }, message)
+          return toolText({ success: true, target_id, delivered: true })
+        } catch (error) {
+          return toolText({ success: false, target_id, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    ),
     tool(
       'create_scheduled_task',
       '创建一个定时任务。定时任务会按照 cron 表达式周期性执行指定的 AI 任务。创建后任务默认启用，会立即注册到调度器。',

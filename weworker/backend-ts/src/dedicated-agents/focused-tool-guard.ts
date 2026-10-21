@@ -142,7 +142,8 @@ const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
 
 export type FocusedGuardDecision = { behavior: 'allow' } | { behavior: 'deny'; message: string }
 
-export function createFocusedToolGuard(allowedSiteIds: string[], knownSiteIds: string[] = []) {
+export function createFocusedToolGuard(allowedSiteIds: string[], knownSiteIds: string[] = [], allowedMcpTools: string[] = []) {
+  const permittedMcpTools = new Set([...ALLOWED_MCP_TOOLS, ...allowedMcpTools])
   return (toolName: string, input: Record<string, unknown>): FocusedGuardDecision => {
     if (toolName === 'Bash' || toolName === 'PowerShell') {
       const check = checkFocusedWebcliCommand(input?.command, allowedSiteIds, knownSiteIds)
@@ -155,7 +156,7 @@ export function createFocusedToolGuard(allowedSiteIds: string[], knownSiteIds: s
     if (WRITE_TOOLS.has(toolName)) {
       return { behavior: 'deny', message: '专属 Agent 不修改本地文件。' }
     }
-    if (toolName.startsWith('mcp__') && !ALLOWED_MCP_TOOLS.has(toolName)) {
+    if (toolName.startsWith('mcp__') && !permittedMcpTools.has(toolName)) {
       return { behavior: 'deny', message: `专属 Agent 不能使用 ${toolName}。` }
     }
     return { behavior: 'allow' }

@@ -19,6 +19,8 @@ import { enforceConfiguredMemoryBudget } from './memory/memory-capacity.js'
 import type { MemoryEventTrigger, MemoryScope, MemoryType, MemoryUpdateCandidate } from './memory/memory-types.js'
 import { redactSensitive } from './http-security.js'
 import { createTurnTimingLedger } from './turn-timing.js'
+import { getAgent } from './dedicated-agents/agent-store.js'
+import { buildAgentChatOptions } from './dedicated-agents/agent-runtime.js'
 
 const memoryLog = createLogger('memory')
 
@@ -108,8 +110,18 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
   const previousExecution = store.listTaskExecutions(task.id)[0]
   const now = new Date()
   const timeStr = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-  const workTitle = `[定时] ${task.title} · ${timeStr}`
-  const work = store.createWork(workTitle)
+  // 1. Dedicated-Agent tasks reuse their own durable task conversation. This
+  // lets the model reason over previous checks and decide whether to notify.
+  const agent = task.agent_id ? getAgent(task.agent_id) : null
+  if (task.agent_id && (!agent || !agent.enabled)) {
+    const work = store.createWork(`[定时] ${task.title} · 已停用`)
+    const execution = store.createTaskExecution(task.id, work.id)
+    store.updateTaskExecution(execution.id, { status: 'failed', error_message: '专属 Agent 不存在或已停用', completed_at: new Date().toISOString() })
+    return { workId: work.id, executionId: execution.id, status: 'failed', error: '专属 Agent 不存在或已停用' }
+  }
+  const work = agent && task.context_work_id
+    ? (store.getWork(task.context_work_id) ?? store.createWork(`【定时】${task.title}`, agent.project_id ?? null))
+    : store.createWork(`[定时] ${task.title} · ${timeStr}`)
 
   // 2. Create execution record (pending)
   const execution = store.createTaskExecution(task.id, work.id)
@@ -124,7 +136,9 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
   let memoryCandidate: MemoryUpdateCandidate | undefined
 
   // 3. Append the prompt template as user message
-  store.appendMessage(work.id, 'user', [{ type: 'text', text: task.prompt_template }])
+  store.appendMessage(work.id, 'user', [{ type: 'text', text: agent
+    ? `【定时任务执行】\n${task.prompt_template}\n\n请自行判断本轮是否值得通知。只有确有必要时才调用 send_agent_message；不调用就不会发送任何消息。`
+    : task.prompt_template }])
 
   // 4. Update execution to running
   store.updateTaskExecution(execution.id, { status: 'running' })
@@ -168,6 +182,10 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
       workId: workWithMessages.id,
       styleId,
       memoryScope: taskMemoryContext.scope,
+      ...(agent ? {
+        ...buildAgentChatOptions({ agent, siteName: agent.site_id, taskId: task.id, knownSiteIds: [...allAdapters.keys()] }),
+        memoryEnabled: false,
+      } : {}),
       memoryExpectedType: 'task_execution',
       memoryTriggerHint: previousExecution?.status === 'failed' ? 'task_recovered' : 'task_completed',
       previousTaskFailed: previousExecution?.status === 'failed',

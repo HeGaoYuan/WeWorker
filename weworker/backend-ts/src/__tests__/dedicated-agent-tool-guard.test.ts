@@ -62,6 +62,7 @@ describe('focused tool guard', () => {
     expect(guard('Write', { file_path: 'notes.txt' }).behavior).toBe('deny')
     expect(guard('mcp__weworker__create_scheduled_task', {}).behavior).toBe('deny')
     expect(guard('mcp__weworker__ask_user', {})).toEqual({ behavior: 'allow' })
+    expect(createFocusedToolGuard(SITES, [], ['mcp__weworker__send_agent_message'])('mcp__weworker__send_agent_message', {})).toEqual({ behavior: 'allow' })
     expect(guard('Skill', {})).toEqual({ behavior: 'allow' })
     expect(FOCUSED_AGENT_DISALLOWED_TOOLS).toContain('mcp__weworker__weworker_powershell')
   })

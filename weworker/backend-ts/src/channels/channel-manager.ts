@@ -15,12 +15,19 @@ export interface ChannelStatus {
   error?: string
 }
 
+export interface ChannelNotificationTarget {
+  id: string
+  chatType: 1 | 2
+}
+
 export interface Channel {
   start(): Promise<void>
   stop(): Promise<void>
   getStatus(): ChannelStatus
   /** 主动发送通知消息（可选，不是所有通道都支持） */
   sendNotification?(text: string): Promise<void>
+  /** Actively send to an explicitly authorized target (no last-chat fallback). */
+  sendNotificationToTarget?(target: ChannelNotificationTarget, text: string): Promise<void>
 }
 
 export class ChannelManager {

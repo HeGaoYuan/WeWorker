@@ -11,6 +11,7 @@ import { parseAllAdapters } from '../adapter-parser.js'
 import type { DedicatedAgentRecord } from './agent-store.js'
 import { createFocusedToolGuard, FOCUSED_AGENT_DISALLOWED_TOOLS } from './focused-tool-guard.js'
 import { locateSkill } from './skill-library.js'
+import { buildMcpServer } from '../tools.js'
 import type { WecomProfileChatOptions } from '../channels/wecom-channel.js'
 
 const log = createLogger('dedicated-agent-runtime')
@@ -154,7 +155,7 @@ export function buildAgentSystemPrompt(input: {
     '- 一次只执行一条 webcli 命令；引号外不能出现管道、重定向、变量、`;`、`#` 或多条命令（不要写 `Start-Sleep; webcli ...`），也不要使用 `webcli trace`。需要传给网站的复杂文本放进单引号参数里。',
     '- 未登录、扩展需要重载、没有匹配的页面或命令被拒绝时，等待和重试不会恢复：不要 Start-Sleep 或重复调用，直接告诉当前用户需要做什么；参数或命令格式错误时先修正再调用。',
     '- 你的回复会发到企业微信或微信聊天里：先给结论，再给关键依据；只贴必要的原始输出，避免大段刷屏。',
-    '- 不读取、修改或发送本机文件，不创建定时任务。',
+    '- 不读取、修改或发送本机文件，不创建通用定时任务。专属 Agent 的主人可在明确确认任务内容、频率和通知目标后创建专属定时任务；定时任务运行时由你自行决定是否调用主动消息工具。',
   )
   return lines.join('\n')
 }
@@ -162,6 +163,10 @@ export function buildAgentSystemPrompt(input: {
 export function buildAgentChatOptions(input: {
   agent: DedicatedAgentRecord
   siteName: string
+  /** Set for inbound WeCom turns; only the pairing owner can manage tasks. */
+  actorUserId?: string
+  /** Set by the scheduler, enabling only this task's explicit message targets. */
+  taskId?: string
   runtimeSkillsDir?: string
   agentsRoot?: string
   libraryDir?: string
@@ -180,8 +185,21 @@ export function buildAgentChatOptions(input: {
       siteName: input.siteName,
       privateSkillAvailable: !!input.agent.skill_name && !synced.missingPrivateSkill,
     }),
-    extraToolGuard: createFocusedToolGuard([input.agent.site_id], input.knownSiteIds ?? [...parseAllAdapters().keys()]),
+    extraToolGuard: createFocusedToolGuard([input.agent.site_id], input.knownSiteIds ?? [...parseAllAdapters().keys()], [
+      'mcp__weworker__list_agent_notification_targets',
+      'mcp__weworker__create_agent_scheduled_task',
+      ...(input.taskId ? ['mcp__weworker__send_agent_message'] : []),
+    ]),
     extraDisallowedTools: [...FOCUSED_AGENT_DISALLOWED_TOOLS],
+    mcpServerOverride: buildMcpServer({
+      channelPermissionMode: 'full',
+      dedicatedAgent: {
+        agentId: input.agent.id,
+        ownerUserId: input.agent.owner_user_id,
+        actorUserId: input.actorUserId,
+        taskId: input.taskId,
+      },
+    }),
   }
 }
 
