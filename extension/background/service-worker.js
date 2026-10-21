@@ -2797,6 +2797,21 @@ async function handleNativeMessage(msg) {
         // tab to another host in its scope (search.*, order.* …).
         if (!tab && !declaredRoute) tab = pickRecentScopeTab(tabs, selected.manifest, excludeTabDomain);
         if (!tab?.id) {
+          // A preceding generic open_browser may have redirected the only site tab to SSO.
+          // Do not open a second business tab: hand the existing SSO tab to the host login flow,
+          // which already recognises pendingUrl and reuses it.
+          const loginTab = selected.manifest.auth
+            ? tabs.find((candidate) => Number.isInteger(candidate?.id)
+              && isLoginPageUrl(selected.manifest, loginTabUrl(selected.manifest, candidate), { root: true }))
+            : null;
+          if (loginTab) {
+            throw authRequiredError({
+              site: selected.manifest.name,
+              phase: 'navigation',
+              pageUrl: authDisplayUrl(loginTabUrl(selected.manifest, loginTab)),
+              message: '网站正在登录，登录完成后将继续调用。',
+            });
+          }
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await createBrowserTab({ url: startUrl, active: false });
           // Learn where the site sends this host (regional or brand domains) before the first call.

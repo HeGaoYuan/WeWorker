@@ -51,7 +51,7 @@ export function describeAdapterForSkill(adapter: SkillAuthorAdapter): string {
     `网站：${adapter.name}（Adapter ID：${adapter.id}）`,
     adapter.description ? `说明：${adapter.description}` : '',
     adapter.requiresAuth
-      ? `需要登录：是。操作前先执行 \`webcli call ${adapter.authCheckTool || `${adapter.id}.check_login_status`}\` 确认登录状态。`
+      ? `需要登录：是。直接调用用户请求的业务工具；未登录时 WeWorker 会自动打开登录页并处理登录。仅在用户明确询问登录状态时，才调用 \`webcli call ${adapter.authCheckTool || `${adapter.id}.check_login_status`}\`。`
       : '需要登录：否',
     '',
     '可用工具（调用格式：webcli call <工具名> --参数名=参数值）：',
@@ -74,7 +74,8 @@ const SYSTEM_PROMPT = `你是 WeWorker 的 Skill 作者。WeWorker 通过 Adapte
 3. 如果用户内容里出现密码、Token、Cookie、密钥等敏感信息，不要写进 Skill，用「<请在使用时向用户确认>」代替。
 4. 把用户的目标拆成具体的「常用操作配方」：每个配方说明适用场景和对应的 webcli 命令示例。
 5. 只有标记为【写操作（需确认）】的工具必须写明“执行前先向用户确认”。标记为【写操作（无需二次确认）】的工具在用户请求且参数明确时直接执行，不要求二次确认。
-6. 用简体中文，结构清晰，避免空话；面向 AI 执行者，而不是面向人类读者。
+6. 对需要登录的网站，执行步骤应直接调用用户请求的业务工具；WeWorker 会在未登录时自动处理登录。不要把 check-login-status 或 open_browser 写成业务操作前的常规步骤，除非用户明确询问登录状态或给出的工具说明明确要求手工页面准备。
+7. 用简体中文，结构清晰，避免空话；面向 AI 执行者，而不是面向人类读者。
 
 输出格式（严格遵守）：
 - 先输出完整的 SKILL.md，必须以 YAML frontmatter 开头：
@@ -83,7 +84,7 @@ name: <调用方给定的 skill 名称，原样使用>
 description: "<一句话：在什么情况下使用这个 Skill，包含用户可能说出的关键词>"
 allowed-tools: Bash(webcli call *)
 ---
-- 正文建议包含这些小节：职责边界、领域知识、执行步骤（第一步确认登录/可用状态）、常用操作配方、注意事项与约束、回答方式、待补充（不要猜）。
+- 正文建议包含这些小节：职责边界、领域知识、执行步骤（直接调用业务工具；未登录时由 WeWorker 处理）、常用操作配方、注意事项与约束、回答方式、待补充（不要猜）。
 - SKILL.md 之后单独一行输出 ${EXAMPLES_SEPARATOR}
 - 再输出 3 个用户可能直接对 Agent 说的示例问题，每行一个，不要编号。
 不要输出其他解释，不要用代码块包裹整个输出。`
