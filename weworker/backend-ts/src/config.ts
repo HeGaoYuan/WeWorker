@@ -1,3 +1,4 @@
+import { DEFAULT_PROVIDER, configuredProvider, resolveConfiguredSettings } from './provider-config.js'
 import { migrateChannelConfigurations, type ChannelConfigurations, type ChannelType } from './channels/channel-configurations.js'
 import { resolveBuiltinSettings, resolveBankCodingSettings } from './builtin-provider.js'
 import { PROVIDERS } from './provider-registry.js'
@@ -362,31 +363,19 @@ interface EncryptedSettingsBlob {
 
 
 
-declare const __BUILD_DEFAULT_PROVIDER__: string
-
-
-
-const _defaultProvider = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
-
-  ? __BUILD_DEFAULT_PROVIDER__
-
-  : 'anthropic'
-
-
-
 const DEFAULTS: Settings = {
 
   onboarding_completed: false,
 
-  active_provider: _defaultProvider,
+  active_provider: DEFAULT_PROVIDER,
 
   api_key: '',
 
-  base_url: 'https://api.anthropic.com',
+  base_url: configuredProvider(DEFAULT_PROVIDER)?.weworker.baseUrl || '',
 
   // 模型名是供应商侧的数据（随时会改名或上下架），构建期不写死默认值；
   // 激活供应商时以模型列表接口返回为准，取不到则由用户在模型下拉中手填。
-  model: '',
+  model: configuredProvider(DEFAULT_PROVIDER)?.defaultModel || '',
 
   context_limit: DEFAULT_CONTEXT_LIMIT,
 
@@ -754,7 +743,7 @@ export function resetSettingsStateForTests(): void {
 
 export function getSettings(): Settings {
   if (!_settings) _settings = loadSettingsFromRaw(readRawSettingsFile())
-  return resolveBankCodingSettings(resolveBuiltinSettings(_settings, PROVIDERS), PROVIDERS)
+  return resolveBankCodingSettings(resolveBuiltinSettings(resolveConfiguredSettings(_settings, PROVIDERS), PROVIDERS), PROVIDERS)
 }
 
 

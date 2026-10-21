@@ -1,3 +1,5 @@
+import { configuredProvider } from './provider-config.js'
+
 export type AnthropicAuthType = 'auth_token' | 'api_key'
 
 export function normalizeAnthropicAuthType(value: unknown): AnthropicAuthType {
@@ -12,8 +14,10 @@ export function usesAnthropicBearerToken(
   providerId: string | undefined,
   customAuthType?: AnthropicAuthType,
 ): boolean {
-  return providerId === 'builtin' || providerId === 'bank_coding' || (providerId === 'custom'
-    && normalizeAnthropicAuthType(customAuthType) === 'auth_token')
+  const type = providerId === 'custom'
+    ? normalizeAnthropicAuthType(customAuthType ?? configuredProvider(providerId)?.authType)
+    : configuredProvider(providerId)?.authType
+  return type === 'auth_token'
 }
 
 export function buildAnthropicAuthHeaders(

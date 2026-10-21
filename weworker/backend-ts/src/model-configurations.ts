@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Settings } from './config.js'
 import { getProvider, PROVIDERS } from './provider-registry.js'
+import { configuredModel } from './provider-config.js'
 import { buildProviderVisibility, isFixedProvider } from './provider-visibility.js'
 import { isBuiltinProvider } from './builtin-provider.js'
 import { DEFAULT_CONTEXT_LIMIT, parseContextLimit } from './context-window.js'
@@ -89,7 +90,7 @@ export function renameModelConfiguration(settings: Settings, id: string, value: 
 
 export function createModelConfiguration(settings: Settings, providerId: string) {
   const provider = getProvider(providerId)
-  if (!provider || isBuiltinProvider(providerId) || providerId === 'bank_coding') throw new Error('请选择预置或自定义供应商')
+  if (!provider || provider.builtin || provider.allowMultiple === false) throw new Error('请选择预置或自定义供应商')
   const id = `model-${randomUUID()}`
   const nameUpdates = modelConfigurationNameUpdates(settings)
   const names = new Set(Object.values(buildModelConfigurationNames(settings)))
@@ -113,7 +114,7 @@ export function createModelConfiguration(settings: Settings, providerId: string)
     base_url_is_full: false,
     openai_base_url: active?.openai_base_url ?? provider.webwright.baseUrl,
     openai_base_url_is_full: false,
-    auth_type: active?.auth_type || 'api_key',
+    auth_type: active?.auth_type || (providerId === 'custom' ? 'api_key' : provider.authType) || 'api_key',
     ...(providerId === 'custom' ? {
       models_url: '',
       models_url_is_full: false,
@@ -129,7 +130,16 @@ export function getModelConfiguration(settings: Settings, id: string | undefined
   const configuration = id && Object.hasOwn(settings.model_configurations || {}, id)
     ? settings.model_configurations?.[id]
     : undefined
-  return configuration && getProvider(configuration.provider_id) ? configuration : undefined
+  const provider = configuration && getProvider(configuration.provider_id)
+  if (!configuration || !provider) return undefined
+  return { ...configuration, model: configuredModel(provider.id, configuration.model),
+    ...(provider.fixedModel ? { openai_model: provider.defaultModel } : {}),
+    ...(provider.id === 'custom' ? {} : {
+      base_url: provider.weworker.baseUrl, openai_base_url: provider.webwright.baseUrl,
+      base_url_is_full: false, openai_base_url_is_full: false,
+      auth_type: provider.authType || 'api_key',
+    }),
+  }
 }
 
 export function deleteModelConfiguration(settings: Settings, id: string): Partial<Settings> {
@@ -180,6 +190,7 @@ export function updateModelConfiguration(settings: Settings, id: string, input: 
       if (value && field === 'openai_api_key') next.openai_api_key = value
     } else if (field === 'model' || field === 'openai_model') {
       if (!value) throw new Error('请输入模型名称')
+      if (getProvider(current.provider_id)?.fixedModel && value !== configuredModel(current.provider_id, value)) throw new Error('此配置使用固定模型，不支持修改模型')
       if (field === 'openai_model') next.openai_model = value
       else next.model = value
     } else if (current.provider_id === 'custom') {
@@ -217,8 +228,8 @@ export function updateModelConfiguration(settings: Settings, id: string, input: 
 export function publicModelConfigurations(settings: Settings) {
   return Object.fromEntries(Object.entries(settings.model_configurations || {}).filter(([, configuration]) =>
     configuration && getProvider(configuration.provider_id),
-  ).map(([id, configuration]) => {
-    const { api_key, openai_api_key, ...publicFields } = configuration
+  ).map(([id]) => {
+    const { api_key, openai_api_key, ...publicFields } = getModelConfiguration(settings, id)!
     return [id, { ...publicFields, has_key: Boolean(api_key), has_openai_key: Boolean(openai_api_key ?? api_key), added: true, visible: true }]
   }))
 }

@@ -24,6 +24,21 @@ function providerInput() {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('user-configured coding provider', () => {
+  it('preserves distinct JSON gateways without a deployment override and honors a model lock', () => {
+    const provider = { ...BANK_CODING_PROVIDER, fixedModel: true, defaultModel: 'fixture-locked',
+      weworker: { ...BANK_CODING_PROVIDER.weworker, baseUrl: 'https://example.com/anthropic' },
+      webwright: { ...BANK_CODING_PROVIDER.webwright, baseUrl: 'https://example.org/v1' } }
+    const deployment = { WEWORKER_PROVIDER_DEPLOYMENTS_FILE: env.WEWORKER_PROVIDER_DEPLOYMENTS_FILE }
+    expect(resolveBankCodingProvider(provider, deployment)).toEqual(provider)
+    expect(resolveBankCodingSettings(saved, [provider], deployment)).toMatchObject({
+      base_url: 'https://example.com/anthropic', model: 'fixture-locked', api_key: 'fixture-user-key',
+    })
+    const file = path.join(root, 'legacy-gateway.json')
+    fs.writeFileSync(file, JSON.stringify({ bank_coding: { baseUrl: 'https://example.org/stale' } }))
+    expect(resolveBankCodingProvider(provider, { WEWORKER_PROVIDER_DEPLOYMENTS_FILE: file })).toEqual(provider)
+    expect(resolveBankCodingProvider(provider, env).weworker.baseUrl).toBe('https://example.com/public')
+  })
+
   it('requires a user key and ignores deployment credentials from files and environment', () => {
     const file = path.join(root, 'providers.json')
     fs.writeFileSync(file, JSON.stringify({ bank_coding: { apiKey: 'fixture-old-reference-key', baseUrl: 'https://example.org/public' } }))
@@ -32,7 +47,7 @@ describe('user-configured coding provider', () => {
     expect(getBuiltinApiKey('bank_coding', deployment)).toBe('')
     expect(publicBuiltinProviders([BANK_CODING_PROVIDER], deployment)).toEqual({})
     expect(resolveBankCodingSettings({ active_provider: 'bank_coding', api_key: 'fixture-stale-key' } as Settings, PROVIDERS, deployment).api_key).toBe('')
-    expect(resolveBankCodingProvider(BANK_CODING_PROVIDER, { WEWORKER_PROVIDER_DEPLOYMENTS_FILE: file }).weworker.baseUrl).toBe('https://example.org/public')
+    expect(resolveBankCodingProvider({ ...BANK_CODING_PROVIDER, weworker: { ...BANK_CODING_PROVIDER.weworker, baseUrl: '' } }, { WEWORKER_PROVIDER_DEPLOYMENTS_FILE: file }).weworker.baseUrl).toBe('https://example.org/public')
     expect(resolveBankCodingSettings(saved, [], deployment)).toMatchObject({ api_key: '', base_url: '' })
     expect(JSON.stringify(PROVIDERS)).not.toContain('fixture-user-key')
   })
