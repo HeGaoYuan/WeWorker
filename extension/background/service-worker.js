@@ -7284,12 +7284,19 @@ async function managedSiteManifest(site) {
   return manifest;
 }
 
+function loginTabUrl(manifest, tab) {
+  const candidates = [tab?.pendingUrl, tab?.url].filter((value) => typeof value === 'string' && value);
+  return candidates.find((value) => isLoginPageUrl(manifest, value, { root: true }))
+    || candidates[0]
+    || '';
+}
+
 async function findSiteLoginTab(manifest) {
-  // A tab from an earlier login has usually moved on to the site; only a tab that is
-  // on a login page now is reused.
+  // A tab may still expose its old business URL while pendingUrl already points to SSO.
+  // Check both so the auth flow reuses the redirecting tab instead of opening a second login page.
   siteLoginTabs.delete(manifest.name);
   const tabs = await chrome.tabs.query({});
-  return tabs.find((tab) => tab?.id && isLoginPageUrl(manifest, tab.url || tab.pendingUrl, { root: true })) || null;
+  return tabs.find((tab) => tab?.id && isLoginPageUrl(manifest, loginTabUrl(manifest, tab), { root: true })) || null;
 }
 
 /** Open (or reuse) the login page. Only declared hosts or recognised login pages are opened. */
@@ -7304,12 +7311,13 @@ async function openSiteLoginTab(msg) {
     if (!url) throw new Error('This Adapter declares no login page.');
     tab = await createBrowserTab({ url, active: true });
   } else if (!tab.active) {
-    tab = await chrome.tabs.update(tab.id, { active: true }) || tab;
+    const updated = await chrome.tabs.update(tab.id, { active: true });
+    tab = updated ? { ...tab, ...updated } : tab;
   }
   siteLoginTabs.set(manifest.name, tab.id);
   // The user's own Chrome: bring the login tab forward (WeWorker 浏览器 is shown by the Bridge).
   if (msg.focus === true && Number.isInteger(tab.windowId)) await focusBrowserWindow(tab.windowId).catch(() => {});
-  return { tabId: tab.id, url: tab.url || tab.pendingUrl || '' };
+  return { tabId: tab.id, url: loginTabUrl(manifest, tab) };
 }
 
 /** Where the login tab is, and the declared cookie check. Commands are checked by the Bridge. */
@@ -7321,7 +7329,7 @@ async function checkSiteLogin(msg) {
   if (Number.isInteger(known)) {
     const tab = await chrome.tabs.get(known).catch(() => null);
     if (tab?.id) {
-      const url = tab.url || tab.pendingUrl || '';
+      const url = loginTabUrl(manifest, tab);
       // A page that is still loading (for example right after submitting the form) counts as the login page.
       loginTab = { open: true, url, onLoginPage: tab.status !== 'complete' || isLoginPageUrl(manifest, url, { root: true }) };
     } else {
