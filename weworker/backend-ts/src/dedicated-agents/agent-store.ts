@@ -15,6 +15,8 @@ import { assertAllowedWeixinBaseUrl } from '../channel-egress.js'
 import { decryptSecret, encryptSecret, isSecretStoreReady } from '../secret-store.js'
 
 export type AgentChannelType = 'wecom' | 'weixin'
+/** Whether a WeCom agent is private to its pairing owner or shared through WeCom. */
+export type AgentAccessMode = 'owner_only' | 'wecom_authorized'
 
 export const AGENT_CHANNEL_LABELS: Record<AgentChannelType, string> = {
   wecom: '企业微信',
@@ -33,9 +35,11 @@ export interface DedicatedAgentRecord {
   enabled: boolean
   /** Which IM serves this agent. Records written before WeChat support are WeCom. */
   channel?: AgentChannelType
+  /** Owner-only by default; sharing is available only for WeCom bots. */
+  access_mode: AgentAccessMode
   wecom: { bot_id: string; secret_enc: string }
   weixin?: { bot_id: string; token_enc: string; base_url: string }
-  /** IM user id of the person who paired the bot. Only this user is served. */
+  /** IM user id of the person who paired the bot. */
   owner_user_id: string
   /** One-time code the owner sends to the bot to pair; '' after pairing. */
   pairing_code: string
@@ -65,6 +69,8 @@ export interface DedicatedAgentInput extends AgentBotInput {
   site_id: string
   skill_name?: string
   examples?: string[]
+  /** Only supported for WeCom agents; defaults to owner_only. */
+  access_mode?: AgentAccessMode
   project_id?: string
 }
 
@@ -74,6 +80,7 @@ export interface DedicatedAgentPatch {
   site_id?: string
   skill_name?: string
   examples?: string[]
+  access_mode?: AgentAccessMode
   enabled?: boolean
   bot?: AgentBotInput
   project_id?: string
@@ -115,10 +122,20 @@ export function agentChannel(agent: Pick<DedicatedAgentRecord, 'channel'>): Agen
   return agent.channel === 'weixin' ? 'weixin' : 'wecom'
 }
 
+/** Validate a requested access mode against the selected IM channel. */
+export function normalizeAgentAccessMode(value: unknown, channel: AgentChannelType): AgentAccessMode {
+  if (value === undefined || value === 'owner_only') return 'owner_only'
+  if (value === 'wecom_authorized' && channel === 'wecom') return 'wecom_authorized'
+  if (value === 'wecom_authorized') throw new DedicatedAgentError('允许企业微信授权用户仅适用于企业微信机器人')
+  throw new DedicatedAgentError('不支持的访问范围')
+}
+
 function normalizeRecord(agent: DedicatedAgentRecord): DedicatedAgentRecord {
+  const channel = agentChannel(agent)
   return {
     ...agent,
-    channel: agentChannel(agent),
+    channel,
+    access_mode: channel === 'wecom' && agent.access_mode === 'wecom_authorized' ? 'wecom_authorized' : 'owner_only',
     wecom: agent.wecom ?? { bot_id: '', secret_enc: '' },
   }
 }
@@ -290,6 +307,7 @@ export function createAgent(input: DedicatedAgentInput, options: ReservedBots = 
     examples: cleanExamples(input.examples),
     enabled: true,
     ...botFields(bot),
+    access_mode: normalizeAgentAccessMode(input.access_mode, bot.channel),
     owner_user_id: '',
     pairing_code: generatePairingCode(),
     work_ids: [],
@@ -328,6 +346,10 @@ export function updateAgent(id: string, patch: DedicatedAgentPatch, options: Res
     }
     if (patch.skill_name !== undefined) agent.skill_name = normalizeSkillName(patch.skill_name)
     if (patch.examples !== undefined) agent.examples = cleanExamples(patch.examples)
+    if (patch.access_mode !== undefined) {
+      const channel = patch.bot?.channel === 'weixin' ? 'weixin' : agentChannel(agent)
+      agent.access_mode = normalizeAgentAccessMode(patch.access_mode, channel)
+    }
     if (patch.enabled !== undefined) agent.enabled = patch.enabled === true
     if (patch.project_id !== undefined) agent.project_id = String(patch.project_id ?? '').trim()
     if (patch.bot) {
@@ -336,6 +358,7 @@ export function updateAgent(id: string, patch: DedicatedAgentPatch, options: Res
       const previousIdentity = botIdentity(agent)
       Object.assign(agent, botFields(bot))
       if (!agent.weixin) delete agent.weixin
+      if (agentChannel(agent) === 'weixin') agent.access_mode = 'owner_only'
       if (botIdentity(agent) !== previousIdentity) {
         // A different bot may be visible to different people: pair again.
         agent.owner_user_id = ''
@@ -422,6 +445,7 @@ export interface DedicatedAgentView {
   examples: string[]
   enabled: boolean
   channel: AgentChannelType
+  access_mode: AgentAccessMode
   wecom: { bot_id: string; has_secret: boolean }
   weixin: { bot_id: string; has_token: boolean }
   paired: boolean
@@ -442,6 +466,7 @@ export function toAgentView(agent: DedicatedAgentRecord): DedicatedAgentView {
     examples: [...agent.examples],
     enabled: agent.enabled,
     channel: agentChannel(agent),
+    access_mode: agent.access_mode,
     wecom: { bot_id: agent.wecom?.bot_id ?? '', has_secret: !!agent.wecom?.secret_enc },
     weixin: { bot_id: agent.weixin?.bot_id ?? '', has_token: !!agent.weixin?.token_enc },
     paired: !!agent.owner_user_id,

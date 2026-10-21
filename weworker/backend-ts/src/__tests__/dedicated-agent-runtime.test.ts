@@ -40,6 +40,7 @@ const agent = (overrides: Partial<DedicatedAgentRecord> = {}): DedicatedAgentRec
   skill_name: 'inventory-helper',
   examples: [],
   enabled: true,
+  access_mode: 'owner_only',
   wecom: { bot_id: 'placeholder-bot', secret_enc: 'placeholder' },
   owner_user_id: 'owner-user',
   pairing_code: '',

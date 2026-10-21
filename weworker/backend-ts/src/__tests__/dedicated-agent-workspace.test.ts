@@ -69,6 +69,16 @@ it.each(['wecom', 'weixin'])('creates a desktop-visible project and primary conv
   expect(works.getWork(next.data.conversation.id)?.project_id).toBe(agent.project_id)
 })
 
+it('persists the access scope provided at creation and through later edits', async () => {
+  const created = await call('post /dedicated-agents', { ...input, access_mode: 'wecom_authorized' })
+  expect(created.code).toBe(200)
+  expect(created.data.agent.access_mode).toBe('wecom_authorized')
+
+  const updated = await call('patch /dedicated-agents/:id', { access_mode: 'owner_only' }, { id: created.data.agent.id })
+  expect(updated.code).toBe(200)
+  expect(updated.data.agent.access_mode).toBe('owner_only')
+})
+
 it('removes only the newly created empty workspace when bot validation fails', async () => {
   const first = await call('post /dedicated-agents', input)
   const duplicate = await call('post /dedicated-agents', input)

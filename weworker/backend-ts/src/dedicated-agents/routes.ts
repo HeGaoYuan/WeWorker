@@ -454,6 +454,7 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
           site_id: adapter.id,
           skill_name: skillName,
           examples: Array.isArray(body.examples) ? body.examples as string[] : [],
+          access_mode: body.access_mode as 'owner_only' | 'wecom_authorized' | undefined,
           ...resolved.bot,
           project_id: workspace.project.id,
         }, reservedBots())
@@ -485,6 +486,7 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
         site_id: body.site_id as string | undefined,
         skill_name: body.skill_name as string | undefined,
         examples: Array.isArray(body.examples) ? body.examples as string[] : undefined,
+        access_mode: body.access_mode as 'owner_only' | 'wecom_authorized' | undefined,
         enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
         bot: resolved?.bot,
       }, reservedBots())

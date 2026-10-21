@@ -15,6 +15,7 @@ function agent(overrides: Partial<DedicatedAgentRecord> = {}): DedicatedAgentRec
     wecom: { bot_id: 'placeholder-bot', secret_enc: 'placeholder' },
     owner_user_id: '',
     pairing_code: '123456',
+    access_mode: 'owner_only',
     work_ids: [],
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
@@ -75,12 +76,20 @@ describe('dedicated agent access', () => {
     expect(later.paired).toEqual(['guesser'])
   })
 
-  it('serves only the owner after pairing', () => {
+  it('serves only the owner after pairing in the default private mode', () => {
     const owned = agent({ owner_user_id: 'owner-user', pairing_code: '' })
     expect(decide(owned, 'owner-user', 'Check stock').decision).toEqual({ kind: 'allow', mode: 'full' })
     const stranger = decide(owned, 'someone-else', 'Check stock').decision
     expect(stranger.kind).toBe('reply')
-    expect((stranger as { text: string }).text).toContain('只为它的主人服务')
+    expect((stranger as { text: string }).text).toContain('仅允许它的主人')
+  })
+
+  it('allows WeCom-authorized users when sharing is enabled', () => {
+    const shared = agent({ owner_user_id: 'owner-user', pairing_code: '', access_mode: 'wecom_authorized' })
+    expect(decide(shared, 'owner-user', 'Check stock').decision).toEqual({ kind: 'allow', mode: 'full' })
+    expect(decide(shared, 'authorized-user', 'Check stock').decision).toEqual({ kind: 'allow', mode: 'full' })
+    const weixin = agent({ channel: 'weixin', owner_user_id: 'owner-user', pairing_code: '', access_mode: 'wecom_authorized' })
+    expect(decide(weixin, 'someone-else', 'Check stock').decision.kind).toBe('reply')
   })
 
   it('stops serving when disabled or when the website capability is off', () => {
