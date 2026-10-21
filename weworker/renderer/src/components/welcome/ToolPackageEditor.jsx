@@ -1,11 +1,12 @@
 import AppSwitch from '../common/AppSwitch.jsx'
 import SkillAddMenu from './SkillAddMenu.jsx'
 import { skillDirectoryName, withInstalledSkillState, publicSkillEntries } from '../../utils/skill-management.js'
-import { RightOutlined, FileTextOutlined, FolderOutlined, PlusOutlined, EyeOutlined } from '@ant-design/icons'
+import { selectCatalogSkills, skillSelectionKey, findSelectedSkill, formatSkillCreatedAt } from '../../utils/skill-catalog.js'
+import { RightOutlined, FileTextOutlined, FolderOutlined, PlusOutlined, SortAscendingOutlined } from '@ant-design/icons'
 import './skill-files.css'
 import SkillTags from './SkillTags.jsx'
-import { SKILL_TAGS_STORAGE_KEY, skillTagKey, normalizeSkillTags, skillTags, matchesSkillSearch, loadSkillTagOverrides } from '../../utils/skill-tags.js'
-import { DropdownMenuCheck } from '../common/AppDropdownSelect.jsx'
+import { SKILL_TAGS_STORAGE_KEY, skillTagKey, normalizeSkillTags, skillTags, loadSkillTagOverrides } from '../../utils/skill-tags.js'
+import AppDropdownSelect, { DropdownMenuCheck } from '../common/AppDropdownSelect.jsx'
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createSiteScenario, deleteSiteScenario, fetchCustomSkillDirectory, fetchPublicSkillDirectory, importCustomSkillResources, importPublicSkillResources, importPublicSkillZipPath, loadSkillResourcePreview, resetSiteScenario, updateSiteCustomSkills, updateSiteScenario } from '../../api/sites-api.js'
 import { buildPreviewExtensionSet, enrichResourcesForPreview, isReadableResourceName } from '../../utils/resource-preview-extensions.js'
@@ -125,6 +126,8 @@ function normalizeTool(tool, source = 'official') {
     enabled: tool.enabled !== false,
     draft: tool.draft === true,
     directoryName: tool.directoryName,
+    createdAt: tool.createdAt,
+    creationOrderKey: tool.creationOrderKey,
     promptOnly: tool.promptOnly === true,
     source: resolvedSource,
   }
@@ -249,6 +252,8 @@ function cloneAsCustom(tool) {
   return {
     ...normalizeTool(tool, 'custom'),
     directoryName: undefined,
+    createdAt: undefined,
+    creationOrderKey: undefined,
     draft: false,
     id: makeSkillId(),
     name: `${tool.name || 'custom.skill'}_copy`,
@@ -806,11 +811,13 @@ function buildPublicBuiltinSkillTool(entry) {
     enabled: entry.enabled === true,
     draft: entry.draft === true,
     directoryName: entry.name,
+    createdAt: entry.createdAt,
+    creationOrderKey: entry.creationOrderKey,
   }
 }
 
 function buildPublicCustomSkillTool(entry) {
-  const markdown = entry.draft ? '' : typeof entry.content === 'string' ? entry.content : customSkillTemplateMarkdown
+  const markdown = entry.draft ? customSkillTemplateMarkdown : typeof entry.content === 'string' ? entry.content : customSkillTemplateMarkdown
   const meta = parseSkillMarkdownMeta(markdown)
   const name = entry.name || entry.id || makeSkillId()
   return {
@@ -827,6 +834,8 @@ function buildPublicCustomSkillTool(entry) {
     enabled: entry.enabled === true,
     draft: entry.draft === true,
     directoryName: entry.name,
+    createdAt: entry.createdAt,
+    creationOrderKey: entry.creationOrderKey,
   }
 }
 
@@ -936,6 +945,8 @@ export default function ToolPackageEditor({
 
   const [scenarioSearchQuery, setScenarioSearchQuery] = useState('')
   const [toolSearchQuery, setToolSearchQuery] = useState('')
+  const [skillFilter, setSkillFilter] = useState('all')
+  const [skillSort, setSkillSort] = useState('created')
   const [toolkitSearchQuery, setToolkitSearchQuery] = useState('')
   const [toolkitKind, setToolkitKind] = useState(TOOLKIT_KIND_SCENE)
   const systemTools = useSitesStore((s) => s.systemTools)
@@ -1094,7 +1105,7 @@ export default function ToolPackageEditor({
     try { window.localStorage.setItem(SKILL_TAGS_STORAGE_KEY, JSON.stringify(next)); setTagOverrides(next); return true }
     catch { void showAlert('标签保存失败，请重试'); return false }
   }
-  const visibleSkills = allSkills.filter(tool => matchesSkillSearch(tool, toolSearchQuery, getTags(tool)))
+  const visibleSkills = selectCatalogSkills(allSkills, { filter: skillFilter, sort: skillSort, query: toolSearchQuery, getTags })
   const filterToolkitToolsBySearch = (tools) => {
     const query = toolkitSearchQuery.trim().toLowerCase()
     if (!query) return tools
@@ -1116,7 +1127,7 @@ export default function ToolPackageEditor({
     { value: TOOLKIT_KIND_SCENE, label: '场景工具包' },
     { value: TOOLKIT_KIND_BUILTIN, label: '内置工具包' },
   ]), [])
-  const selectedTool = allSkills.find((tool) => toolKey(tool) === selectedToolKey) || null
+  const selectedTool = findSelectedSkill(allSkills, selectedToolKey)
   const visibleToolkitTools = useMemo(() => {
     const base = toolkitKind === TOOLKIT_KIND_BUILTIN
       ? builtinToolkitTools
@@ -1242,12 +1253,16 @@ export default function ToolPackageEditor({
         const saved = await persistPublicCustomSkill(skill, saveName)
         if (saved?.name) {
           const savedName = saved.name
+          // Update both catalogs together so a rename cannot briefly remove the
+          // selected card while the subsequent list refresh is still in flight.
+          setInstalledSkills((current) => current.map((entry) => entry.name === saveName ? saved : entry))
           setPublicCustomSkills((current) => current.map((item) => (
             (item.id === saveName || item.name === saveName)
               ? {
                   ...item,
                   id: savedName,
                   name: savedName,
+                  directoryName: savedName,
                   resources: Array.isArray(saved.resources) ? normalizeResources(saved.resources) : item.resources,
                 }
               : item
@@ -1261,7 +1276,7 @@ export default function ToolPackageEditor({
               catch { void showAlert('名称已保存，但标签同步失败，请重新设置标签') }
             }
             setPublicCustomSaveName(savedName)
-            setSelectedToolKey((current) => current === toolKey(skill) ? `public-custom::${savedName}` : current)
+            setSelectedToolKey((current) => current === skillSelectionKey(skill) ? skillSelectionKey({ ...skill, id: savedName }) : current)
           }
         }
         setPublicCustomSaveName('')
@@ -1328,17 +1343,21 @@ export default function ToolPackageEditor({
         || catalogOfficialSkills.find((tool) => tool.siteId === site.id)
         || catalogCustomSkills[0]
         || catalogOfficialSkills[0])
-    if (preferred) setSelectedToolKey(toolKey(preferred))
+    if (preferred) setSelectedToolKey(skillSelectionKey(preferred))
   }, [catalogCustomSkills, catalogOfficialSkills, catalogPublicBuiltinSkills, catalogPublicCustomSkills, isPublicScope, selectedToolKey, site.id, requestedPublicSkill])
 
   useEffect(() => {
     if (!selectedToolKey) return
-    const stillVisible = allSkills.some((tool) => toolKey(tool) === selectedToolKey)
-    if (stillVisible) return
+    const selected = findSelectedSkill(allSkills, selectedToolKey)
+    if (selected) {
+      const stableKey = skillSelectionKey(selected)
+      if (stableKey !== selectedToolKey) setSelectedToolKey(stableKey)
+      return
+    }
     const fallback = isPublicScope
       ? (catalogPublicCustomSkills[0] || catalogPublicBuiltinSkills[0])
       : (catalogCustomSkills[0] || catalogOfficialSkills[0])
-    setSelectedToolKey(fallback ? toolKey(fallback) : '')
+    setSelectedToolKey(fallback ? skillSelectionKey(fallback) : '')
   }, [allSkills, selectedToolKey, catalogCustomSkills, catalogOfficialSkills, catalogPublicBuiltinSkills, catalogPublicCustomSkills, isPublicScope])
 
   useEffect(() => {
@@ -1422,7 +1441,7 @@ export default function ToolPackageEditor({
   }
 
   const selectTool = async (tool) => {
-    const nextKey = toolKey(tool)
+    const nextKey = skillSelectionKey(tool)
     if (workspaceTab === WORKSPACE_TAB_SKILLS && selectedToolKey === nextKey) {
       setRightPaneView('skill')
       setRightPaneOpen(true)
@@ -1631,12 +1650,12 @@ export default function ToolPackageEditor({
     setToolSearchQuery('')
     const next = { ...cloneAsCustom(baseTool), id: `public-${makeSkillId().replace(/^custom-/, '')}`, source: 'public-custom', siteId: '', siteName: '' }
     setPublicCustomSkills((current) => [next, ...current])
-    setSelectedToolKey(toolKey(next))
+    setSelectedToolKey(skillSelectionKey(next))
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
     try {
       const saved = await persistPublicCustomSkill(next)
       await reloadPublicSkills()
-      setSelectedToolKey(toolKey({ ...next, id: saved.name }))
+      setSelectedToolKey(skillSelectionKey({ ...next, id: saved.name }))
     } catch (e) {
       void showAlert(e instanceof Error ? e.message : '新增 Skill 失败，请重试')
     }
@@ -1652,7 +1671,7 @@ export default function ToolPackageEditor({
     const next = buildPublicCustomSkillTool(data)
     setPublicCustomSkills(current => [...current, next])
     setToolSearchQuery('')
-    setSelectedToolKey(toolKey(next))
+    setSelectedToolKey(skillSelectionKey(next))
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
     setRightPaneView('skill')
     setRightPaneOpen(true)
@@ -1709,7 +1728,7 @@ export default function ToolPackageEditor({
         setPublicCustomSkills((current) => current.filter((skill) => skill.id !== diskName && skill.name !== diskName))
         const fallback = catalogPublicCustomSkills.find((tool) => tool.id !== diskName)
           || catalogPublicBuiltinSkills[0]
-        setSelectedToolKey(fallback ? toolKey(fallback) : '')
+        setSelectedToolKey(fallback ? skillSelectionKey(fallback) : '')
       } catch (e) {
         console.error('[tool-package] delete public custom skill failed:', e)
       }
@@ -1719,7 +1738,7 @@ export default function ToolPackageEditor({
     const ownerSiteId = selectedTool.siteId || site.id
     mutateCustomSkillsForSite(ownerSiteId, (current) => current.filter((skill) => skill.id !== selectedTool.id))
     const fallbackOfficial = catalogOfficialSkills.find((tool) => tool.siteId === site.id) || catalogOfficialSkills[0]
-    if (fallbackOfficial) setSelectedToolKey(toolKey(fallbackOfficial))
+    if (fallbackOfficial) setSelectedToolKey(skillSelectionKey(fallbackOfficial))
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
   }
 
@@ -1811,7 +1830,25 @@ export default function ToolPackageEditor({
           ) : (
             <>
           <div className="skill-catalog-toolbar">
+            <AppDropdownSelect
+              className="skill-catalog-filter"
+              ariaLabel="筛选 Skill"
+              value={skillFilter}
+              options={[{ value: 'all', label: '全部' }, { value: 'custom', label: '自定义' }]}
+              onChange={setSkillFilter}
+              minMenuWidth={120}
+            />
             <input type="search" aria-label="搜索 Skill 名称、描述或标签" placeholder="搜索名称、描述或标签" value={toolSearchQuery} onChange={event => setToolSearchQuery(event.target.value)} />
+            <AppDropdownSelect
+              className="skill-catalog-sort"
+              ariaLabel="Skill 排序"
+              prefix={<SortAscendingOutlined aria-hidden="true" />}
+              value={skillSort}
+              options={[{ value: 'created', label: '创建时间' }, { value: 'name', label: '名称' }]}
+              menuHeader="排序方式"
+              onChange={setSkillSort}
+              minMenuWidth={150}
+            />
             <SkillAddMenu busy={importingSkillZip} onUpload={importSkillZipFile} onCreate={createBlankSkill} />
           </div>
           {skillsLoadError && <div role="alert">{skillsLoadError}<button type="button" onClick={() => reloadPublicSkills().catch(error => setSkillsLoadError(error.message))}>重试</button></div>}
@@ -2274,25 +2311,42 @@ function ToolList({ tools, selectedTool, onSelect, getTags, onToggle, togglingSk
   return (
     <div className="skill-catalog-grid" style={toolListStyle}>
       {tools.map((tool) => {
-        const key = toolKey(tool)
-        const active = selectedTool && key === toolKey(selectedTool)
+        const key = skillSelectionKey(tool)
+        const active = !!selectedTool && key === skillSelectionKey(selectedTool)
+        const createdAtLabel = formatSkillCreatedAt(tool)
         return (
           <div
             key={key}
+            role="button"
+            tabIndex={0}
+            aria-label={tool.name || '未命名 skill'}
+            aria-pressed={active}
+            onClick={() => onSelect(tool)}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onSelect(tool)
+              }
+            }}
             draggable
-            onDragStart={(event) => event.dataTransfer.setData('application/x-weworker-tool', key)}
+            onDragStart={(event) => event.dataTransfer.setData('application/x-weworker-tool', toolKey(tool))}
             title={tool.name || '未命名 skill'}
             className={`tool-package-list-item skill-catalog-item${active ? ' is-active' : ''}`}
           >
-            <span style={toolNameStyle}>{tool.name}</span>
+            <span className="skill-card-heading">
+              <span style={toolNameStyle}>{tool.name}</span>
+              {createdAtLabel ? (
+                <time className="skill-card-created-at" dateTime={new Date(tool.createdAt).toISOString()} title={`创建／添加时间：${new Date(tool.createdAt).toLocaleString('zh-CN', { hour12: false })}`} aria-label={`创建／添加时间：${createdAtLabel}`}>
+                  {createdAtLabel}
+                </time>
+              ) : <span className="skill-card-created-at" title="暂无创建／添加时间">时间未知</span>}
+            </span>
             <span style={toolDescStyle}>{tool.draft ? '空白文件夹 · 待编写 SKILL.md' : tool.description || summarizeParams(tool.parameters)}</span>
             <span className="skill-catalog-list-tags">{getTags(tool).map(tag => <span key={tag}>{tag}</span>)}</span>
             <span className="skill-card-switch" title={tool.draft ? '请先编写 SKILL.md，再启用' : !tool.installed ? 'Skill 尚未安装，请刷新后重试' : tool.enabled ? '已启用，下次对话可加载' : '已关闭，下次对话不再加载'} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
               <AppSwitch aria-label={`启用 ${tool.name}`} checked={tool.enabled} disabled={!tool.installed || tool.draft || togglingSkills.has(skillDirectoryName(tool))} onChange={event => onToggle(tool, event.target.checked)} />
             </span>
-            <button type="button" className="skill-card-view" aria-label={`查看 ${tool.name || '未命名 skill'}`} onClick={(event) => { event.stopPropagation(); onSelect(tool) }}>
-              <EyeOutlined aria-hidden="true" />查看
-            </button>
           </div>
         )
       })}

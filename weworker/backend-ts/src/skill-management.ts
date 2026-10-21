@@ -11,6 +11,28 @@ function skillError(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode })
 }
 
+// Only filesystems without birth time need a persisted fallback. Keep this
+// outside individual Skill folders so newly created folders stay empty.
+function creationTime(root: string, stat: fs.BigIntStats): number {
+  const birthTime = Number(stat.birthtimeMs)
+  if (birthTime > 0) return birthTime
+  const metadataPath = path.join(root, '.skill-times.json')
+  const key = `${stat.dev}:${stat.ino}`
+  let times: Record<string, number> = {}
+  try {
+    const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) times = parsed
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (Number.isFinite(times[key]) && times[key] > 0) return times[key]
+  times[key] = Number(stat.mtimeMs) > 0 ? Number(stat.mtimeMs) : Date.now()
+  const temporaryPath = `${metadataPath}.tmp`
+  fs.writeFileSync(temporaryPath, JSON.stringify(times))
+  fs.renameSync(temporaryPath, metadataPath)
+  return times[key]
+}
+
 function resolveDirectory(root: string, name: unknown): string {
   if (typeof name !== 'string' || !name.trim() || name !== name.trim()
     || /[<>:"/\\|?*\x00-\x1F]/.test(name) || /[. ]$/.test(name)
@@ -29,14 +51,19 @@ function resolveDirectory(root: string, name: unknown): string {
   return directory
 }
 
-export function readManagedSkill(root: string, name: string) {
+export function readManagedSkill(root: string, name: string, builtAt?: number) {
   const dir = resolveDirectory(root, name)
   if (!fs.existsSync(dir)) skillError('Skill not found', 404)
   const active = path.join(dir, 'SKILL.md')
   const disabled = path.join(dir, 'SKILL.md.disabled')
   const file = fs.existsSync(disabled) ? disabled : fs.existsSync(active) ? active : null
+  // Directory birth time and identity survive document edits and folder renames.
+  // Do not use mtime/ctime: both can change when a Skill is edited or toggled.
+  const stat = fs.statSync(dir, { bigint: true })
   return {
     name, content: file ? fs.readFileSync(file, 'utf8') : '',
+    createdAt: builtAt && Number.isFinite(builtAt) && builtAt > 0 ? builtAt : creationTime(root, stat),
+    creationOrderKey: `${stat.dev}:${stat.ino}`,
     enabled: file === active, draft: file === null,
     resources: listSkillDirectoryResources(dir),
   }
@@ -90,13 +117,13 @@ export function saveManagedSkill(root: string, input: { name: string; previousNa
   return { ok: true, ...readManagedSkill(root, name) }
 }
 
-export function createSkillManagementRouter(root: string) {
+export function createSkillManagementRouter(root: string, officialBuildTime: (name: string) => number | undefined = () => undefined) {
   const router = Router()
   router.get('/skills', (_req, res, next) => {
     try {
       fs.mkdirSync(root, { recursive: true })
       const skills = fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).flatMap(entry => {
-        try { return [readManagedSkill(root, entry.name)] } catch { return [] }
+        try { return [readManagedSkill(root, entry.name, officialBuildTime(entry.name))] } catch { return [] }
       })
       res.json(skills)
     } catch (error) { next(error) }

@@ -15,6 +15,10 @@ test('disk state takes precedence over stale cached UI state; missing Skills do 
   assert.equal(withInstalledSkillState(tool, []).installed, false)
   assert.equal(withInstalledSkillState(tool, []).enabled, false)
   assert.equal(withInstalledSkillState(tool, [{ name: 'example', enabled: false, draft: true }]).draft, true)
+  const installed = withInstalledSkillState(tool, [{ name: 'example', createdAt: 123, creationOrderKey: '1:20' }])
+  assert.equal(installed.createdAt, 123)
+  assert.equal(installed.creationOrderKey, '1:20')
+  assert.equal(withInstalledSkillState(installed, []).createdAt, 123)
 })
 
 test('keeps shared and imported webcli-prefixed Skills visible without duplicating site cards', () => {

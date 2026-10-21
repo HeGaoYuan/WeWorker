@@ -4,6 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import yazl from 'yazl'
 import { importSkillZip, validateSkillZipEntryPath } from '../skill-zip-import.js'
+import { readManagedSkill } from '../skill-management.js'
 
 function makeZip(files: Record<string, string>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -34,7 +35,12 @@ describe('skill ZIP import', () => {
         'bundle/demo/SKILL.md': '---\nname: demo\n---\n\n# Demo',
         'bundle/demo/assets/example.txt': 'example',
       })
-      await expect(importSkillZip(zip, root)).resolves.toEqual([{ name: 'demo' }])
+      const startedAt = Date.now()
+      const imported = await importSkillZip(zip, root)
+      expect(imported).toMatchObject([{ name: 'demo', createdAt: expect.any(Number) }])
+      expect(imported[0].createdAt).toBeGreaterThanOrEqual(startedAt)
+      expect(imported[0].createdAt).toBeLessThanOrEqual(Date.now())
+      expect(readManagedSkill(root, 'demo').createdAt).toBe(imported[0].createdAt)
       expect(fs.readFileSync(path.join(root, 'demo', 'SKILL.md'), 'utf8')).toContain('# Demo')
       expect(fs.readFileSync(path.join(root, 'demo', 'assets', 'example.txt'), 'utf8')).toBe('example')
     } finally {

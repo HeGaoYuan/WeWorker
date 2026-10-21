@@ -2,12 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import yauzl from 'yauzl'
+import { readManagedSkill } from './skill-management.js'
 
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
 const MAX_ENTRY_COUNT = 512
 const MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 
-export type ImportedSkill = { name: string }
+export type ImportedSkill = { name: string; createdAt: number; creationOrderKey: string }
 
 function safeEntryPath(fileName: string): string {
   const normalized = String(fileName || '').replace(/\\/g, '/')
@@ -157,7 +158,10 @@ export async function importSkillZip(buffer: Buffer, skillsDir: string, archiveN
       const entries = fs.readdirSync(directory).sort((left, right) => Number(left === 'SKILL.md') - Number(right === 'SKILL.md'))
       for (const entry of entries) fs.renameSync(path.join(directory, entry), path.join(destination, entry))
     })
-    return names.map((name) => ({ name }))
+    return names.map((name) => {
+      const { createdAt, creationOrderKey } = readManagedSkill(skillsDir, name)
+      return { name, createdAt, creationOrderKey }
+    })
   } catch (error) {
     for (const item of moved.reverse()) fs.rmSync(item.destination, { recursive: true, force: true })
     throw error instanceof Error ? error : new Error('导入 Skill ZIP 失败')

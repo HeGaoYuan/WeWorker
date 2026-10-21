@@ -3,11 +3,12 @@ import path from 'node:path'
 import express from 'express'
 import type { Server } from 'node:http'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createSkillManagementRouter } from '../skill-management.js'
+import { createSkillManagementRouter, readManagedSkill } from '../skill-management.js'
 import { buildEnabledSkillIndex } from '../context/runtime-context.js'
 import { fingerprintSkillFiles } from '../chat-session.js'
 import { listCustomSkills, saveCustomSkills } from '../custom-skills.js'
 import { syncBundledWebcliSkills } from '../webcli-skills.js'
+import { officialSkillBuildTime } from '../skill-build-time.js'
 // @ts-expect-error Exercise the same installer used by desktop startup.
 import { installSkills } from '../../../../webcli/skill-installer.js'
 
@@ -28,7 +29,8 @@ beforeEach(async () => {
   root = fs.mkdtempSync(path.join(fixtureState.home, 'skills-'))
   fixtureState.root = path.join(root, 'skills')
   const app = express()
-  app.use(express.json(), createSkillManagementRouter(fixtureState.root))
+  app.use(express.json(), createSkillManagementRouter(fixtureState.root, name =>
+    officialSkillBuildTime(name, id => id === 'example', Date.UTC(2026, 0, 2))))
   server = await new Promise<Server>(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)) })
   url = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
@@ -42,13 +44,54 @@ const list = async () => (await fetch(`${url}/skills`)).json()
 
 describe('Skill management HTTP routes', () => {
   it('creates a physically empty folder, lists it after reload, and refuses activation until authored', async () => {
+    const startedAt = Date.now()
     const response = await post('/skills/folders', { name: 'example-skill' })
     expect(response.status).toBe(201)
     expect(fs.readdirSync(path.join(fixtureState.root, 'example-skill'))).toEqual([])
-    expect(await list()).toMatchObject([{ name: 'example-skill', content: '', enabled: false, draft: true, resources: [] }])
+    const firstListing = await list() as Array<{ name: string; createdAt: number | null; creationOrderKey: string }>
+    expect(firstListing).toMatchObject([{ name: 'example-skill', content: '', enabled: false, draft: true, resources: [] }])
+    expect(typeof firstListing[0].creationOrderKey).toBe('string')
+    const createdAt = firstListing[0].createdAt
+    expect(createdAt).toBeGreaterThanOrEqual(startedAt)
+    expect(createdAt).toBeLessThanOrEqual(Date.now())
     expect((await post('/skills/example-skill/toggle', { enabled: true })).status).toBe(409)
     expect((await post('/skills/folders', { name: 'example-skill' })).status).toBe(409)
     expect(fs.readdirSync(path.join(fixtureState.root, 'example-skill'))).toEqual([])
+    await post('/skills', { name: 'example-skill', previousName: 'example-skill', content: '---\nname: renamed-skill\n---\nAuthored' })
+    expect(await list()).toMatchObject([{ name: 'renamed-skill', createdAt, creationOrderKey: firstListing[0].creationOrderKey }])
+  })
+
+  it('uses the supplied build timestamp for official Skills without changing custom addition time', async () => {
+    await post('/skills', { name: 'webcli-example', content: '# Official' })
+    await post('/skills/folders', { name: 'custom-example' })
+    const buildTime = Date.UTC(2026, 0, 2)
+    expect(readManagedSkill(fixtureState.root, 'webcli-example', buildTime).createdAt).toBe(buildTime)
+    const custom = readManagedSkill(fixtureState.root, 'custom-example')
+    expect(custom.createdAt).toBeGreaterThan(buildTime)
+    expect(readManagedSkill(fixtureState.root, 'custom-example').createdAt).toBe(custom.createdAt)
+    expect(await list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'webcli-example', createdAt: buildTime }),
+      expect.objectContaining({ name: 'custom-example', createdAt: custom.createdAt }),
+    ]))
+  })
+
+  it('persists a stable fallback on filesystems without directory birth time', async () => {
+    await post('/skills/folders', { name: 'fallback' })
+    const originalStat = fs.statSync.bind(fs)
+    let modifiedAt = BigInt(Date.UTC(2026, 0, 2))
+    const stat = vi.spyOn(fs, 'statSync').mockImplementation(((file: fs.PathLike, options?: { bigint?: boolean }) => {
+      const result = originalStat(file, options as { bigint: true })
+      return options?.bigint ? { ...result, birthtimeMs: 0n, mtimeMs: modifiedAt } : result
+    }) as typeof fs.statSync)
+    try {
+      const first = readManagedSkill(fixtureState.root, 'fallback')
+      modifiedAt += 100000n
+      fs.renameSync(path.join(fixtureState.root, 'fallback'), path.join(fixtureState.root, 'renamed'))
+      expect(readManagedSkill(fixtureState.root, 'renamed').createdAt).toBe(first.createdAt)
+      expect(fs.readdirSync(path.join(fixtureState.root, 'renamed'))).toEqual([])
+    } finally {
+      stat.mockRestore()
+    }
   })
 
   it.each(['../escape', '..', '.', 'CON', 'LPT1.txt', 'trailing.', ' bad', 'a/b', 'a\\b', 'C:drive', ''])('rejects invalid folder name %s without writing', async name => {
