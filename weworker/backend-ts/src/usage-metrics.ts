@@ -94,3 +94,37 @@ export function resolveTurnApiDuration(
   }
   return { turnMs: raw - previousCumulativeMs, cumulativeMs: raw, baselineReset: false }
 }
+
+
+/** Tracks only the latest main request; message_delta may carry delayed input usage. */
+export function createContextUsageTracker() {
+  let current: RawUsage = {}
+  let streamingRequest = false
+  return {
+    observe(message: { type: string; parent_tool_use_id?: string | null; error?: unknown; message?: unknown; event?: unknown }): number | undefined {
+      if (!message.parent_tool_use_id && !message.error) {
+        const event = message.event as { type?: string; message?: { usage?: RawUsage }; usage?: RawUsage } | undefined
+        let usage: RawUsage | null | undefined
+        if (message.type === 'stream_event' && event?.type === 'message_start') {
+          current = {}
+          streamingRequest = true
+          usage = event.message?.usage
+        } else if (message.type === 'stream_event' && event?.type === 'message_delta') {
+          usage = event.usage
+        } else if (message.type === 'assistant') {
+          if (!streamingRequest) current = {}
+          usage = (message.message as { usage?: RawUsage | null } | undefined)?.usage
+        }
+        for (const field of ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'] as const) {
+          const value = usage?.[field]
+          if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+            // A full assistant message can still contain placeholder zeros.
+            if (message.type !== 'assistant' || value > 0 || current[field] == null) current[field] = value
+          }
+        }
+      }
+      const total = computeUsageMetrics(current).total_input_tokens
+      return total > 0 ? total : undefined
+    },
+  }
+}
