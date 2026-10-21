@@ -44,7 +44,7 @@ import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
 import { syncBundledWebcliSkills } from './webcli-skills.js'
 import { composeSystemPromptWithStyle } from './style-settings.js'
-import { computeUsageMetrics, createApiDurationTracker, resolveTurnApiDuration, type ApiDurationTracker } from './usage-metrics.js'
+import { computeUsageMetrics, createContextUsageTracker, createApiDurationTracker, resolveTurnApiDuration, type ApiDurationTracker } from './usage-metrics.js'
 import { assertAllowedLlmBaseUrl } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
@@ -1674,7 +1674,7 @@ async function* streamChatWithBaseUrl(
 
   let completed = false
   let turnFailed = false
-  let latestModelInputTokens: number | undefined
+  const contextUsageTracker = createContextUsageTracker()
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
@@ -1705,21 +1705,8 @@ async function* streamChatWithBaseUrl(
           present: reminderObserved,
         })
       }
-      if (msg.type === 'assistant') {
-        assistantResponseCount += 1
-        // Tool loops repeat their input; result.usage is billing, not current occupancy.
-        if (!msg.parent_tool_use_id && !msg.error) {
-          const usage = msg.message.usage
-          if (usage && typeof usage.input_tokens === 'number') {
-            const tokens = computeUsageMetrics({
-              input_tokens: usage.input_tokens,
-              cache_read_input_tokens: usage.cache_read_input_tokens ?? undefined,
-              cache_creation_input_tokens: usage.cache_creation_input_tokens ?? undefined,
-            }).total_input_tokens
-            if (Number.isFinite(tokens) && tokens >= 0) latestModelInputTokens = tokens
-          }
-        }
-      }
+      if (msg.type === 'assistant') assistantResponseCount += 1
+      const latestModelInputTokens = contextUsageTracker.observe(msg)
       for (const skillContext of skillContextCollector.observe(msg)) {
         turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
         log.info('skill_context_captured', { chars: skillContext.text.length })

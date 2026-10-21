@@ -352,3 +352,35 @@ it('calibrates normal context only from the latest request, not cumulative billi
   assert.equal(useWorksStore.getState().contextSnapshots['fixture-work'].displayed_total_tokens, 600)
   useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
 })
+
+
+it('keeps unknown calibration values null and uses local estimates', () => {
+  const snapshot = normalizeContextSnapshot({ estimated_total_tokens: 120, displayed_total_tokens: null, actual_input_tokens: null, categories: [{ id: 'conversation', estimated_tokens: 120, calibrated_tokens: null }] })
+  assert.equal(snapshot.actual_input_tokens, null)
+  assert.equal(snapshot.categories[0].calibrated_tokens, null)
+  assert.equal(snapshot.displayed_total_tokens, 120)
+  assert.equal(createContextTokenAnchor(snapshot), null)
+  assert.equal(normalizeContextSnapshot(snapshot).categories[0].calibrated_tokens, null)
+})
+
+it('recovers estimates from a zero-calibrated snapshot from an older backend', () => {
+  const snapshot = normalizeContextSnapshot({ token_source: 'provider_calibrated', estimated_total_tokens: 120, displayed_total_tokens: 0, actual_input_tokens: 0, categories: [{ id: 'conversation', estimated_tokens: 120, calibrated_tokens: 0 }] })
+  assert.equal(snapshot.token_source, 'estimated')
+  assert.equal(snapshot.displayed_total_tokens, 120)
+  assert.equal(snapshot.categories[0].calibrated_tokens, null)
+})
+
+it('does not clear context estimates or create a zero anchor for missing usage', () => {
+  const snapshot = normalizeContextSnapshot({ phase: 'request_start', estimated_total_tokens: 120, categories: [{ id: 'conversation', estimated_tokens: 120 }] })
+  for (const usage of [null, undefined, 0, -1, NaN]) {
+    assert.equal(calibrateContextSnapshot(snapshot, usage).displayed_total_tokens, 120)
+    assert.equal(calibrateCompactedContextSnapshot(snapshot, usage, null).displayed_total_tokens, 120)
+  }
+  useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
+  useWorksStore.getState().setContextSnapshot('fixture-work', snapshot)
+  useWorksStore.getState().setContextSnapshot('fixture-work', snapshot)
+  useWorksStore.getState().setContextUsage('fixture-work', { context_input_tokens: 0 })
+  assert.equal(useWorksStore.getState().contextSnapshots['fixture-work'].displayed_total_tokens, 120)
+  assert.equal(useWorksStore.getState().contextTokenAnchors['fixture-work'], undefined)
+  useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
+})

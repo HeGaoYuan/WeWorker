@@ -334,11 +334,11 @@ export const useWorksStore = create((set, get) => ({
       const current = s.contextSnapshots[workId]
       const isCompactionSnapshot = snapshot.compaction?.mode === 'conversation_only'
       const hasProviderUsage = snapshot.token_source === 'provider_calibrated'
-        && Number.isFinite(Number(snapshot.actual_input_tokens))
-      const nextSnapshot = !isCompactionSnapshot && !hasProviderUsage && snapshot.phase === 'request_start' && Number.isFinite(Number(current?.actual_input_tokens))
+        && Number.isFinite(Number(snapshot.actual_input_tokens)) && Number(snapshot.actual_input_tokens) > 0
+      const nextSnapshot = !isCompactionSnapshot && !hasProviderUsage && snapshot.phase === 'request_start' && Number.isFinite(Number(current?.actual_input_tokens)) && Number(current?.actual_input_tokens) > 0
         ? projectIncrementalContextSnapshot(snapshot, current.actual_input_tokens, current.estimated_total_tokens)
         : snapshot
-      const nextAnchor = Number.isFinite(Number(snapshot.actual_input_tokens)) && snapshot.token_source === 'provider_calibrated'
+      const nextAnchor = Number.isFinite(Number(snapshot.actual_input_tokens)) && Number(snapshot.actual_input_tokens) > 0 && snapshot.token_source === 'provider_calibrated'
         ? createContextTokenAnchor(snapshot)
         : s.contextTokenAnchors[workId]
       return {
@@ -351,7 +351,7 @@ export const useWorksStore = create((set, get) => ({
   setContextUsage: (workId, usage) => {
     const isCompactionProbe = usage?.kind === 'post_compaction_probe'
     const actualInputTokens = isCompactionProbe ? usage?.total_input_tokens : usage?.context_input_tokens
-    if (!workId || typeof actualInputTokens !== 'number' || !Number.isFinite(actualInputTokens) || actualInputTokens < 0) return
+    if (!workId || typeof actualInputTokens !== 'number' || !Number.isFinite(actualInputTokens) || actualInputTokens <= 0) return
     set((s) => {
       const current = s.contextSnapshots[workId]
       if (!current) return s

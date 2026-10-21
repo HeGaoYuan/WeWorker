@@ -2,7 +2,7 @@
  * P0.5: usage-metrics — token totals + cache-hit rate extraction.
  */
 import { describe, it, expect } from 'vitest'
-import { computeUsageMetrics, createApiDurationTracker, resolveTurnApiDuration } from '../usage-metrics.js'
+import { computeUsageMetrics, createContextUsageTracker, createApiDurationTracker, resolveTurnApiDuration } from '../usage-metrics.js'
 
 describe('P0.5: computeUsageMetrics', () => {
   it('sums fresh input + cache read + cache create into total_input_tokens', () => {
@@ -129,4 +129,18 @@ describe('resolveTurnApiDuration', () => {
       expect(sample.turnMs!).toBeGreaterThanOrEqual(0)
     }
   })
+})
+
+
+it('reads delayed stream usage, preserves cache fields and excludes child and billing usage', () => {
+  const tracker = createContextUsageTracker()
+  expect(tracker.observe({ type: 'stream_event', event: { type: 'message_start', message: { usage: { input_tokens: 0, cache_read_input_tokens: 0 } } } })).toBeUndefined()
+  expect(tracker.observe({ type: 'assistant', message: { usage: { input_tokens: 0 } } })).toBeUndefined()
+  expect(tracker.observe({ type: 'stream_event', event: { type: 'message_delta', usage: { input_tokens: 300, cache_read_input_tokens: 17000 } } })).toBe(17300)
+  expect(tracker.observe({ type: 'stream_event', event: { type: 'message_delta', usage: { output_tokens: 20 } } })).toBe(17300)
+  expect(tracker.observe({ type: 'assistant', message: { usage: { input_tokens: 0, cache_read_input_tokens: 0 } } })).toBe(17300)
+  expect(tracker.observe({ type: 'stream_event', parent_tool_use_id: 'fixture-child', event: { type: 'message_start', message: { usage: { input_tokens: 90000 } } } })).toBe(17300)
+  expect(tracker.observe({ type: 'result' })).toBe(17300)
+  expect(tracker.observe({ type: 'stream_event', event: { type: 'message_start', message: { usage: { input_tokens: 0 } } } })).toBeUndefined()
+  expect(tracker.observe({ type: 'stream_event', event: { type: 'message_delta', usage: { input_tokens: 200, cache_read_input_tokens: 10000 } } })).toBe(10200)
 })

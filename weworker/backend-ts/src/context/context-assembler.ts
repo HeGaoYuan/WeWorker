@@ -64,7 +64,7 @@ function allocateCalibratedTokens(categories: ContextCategorySnapshot[], actualT
 
 export function calibrateContextSnapshot(snapshot: ContextSnapshot, actualInputTokens?: number): ContextSnapshot {
   const actualTotal = Number(actualInputTokens)
-  if (!Number.isFinite(actualTotal)) return snapshot
+  if (!Number.isFinite(actualTotal) || actualTotal <= 0) return snapshot
   const normalizedActualTotal = Math.max(0, Math.round(actualTotal))
   return {
     ...snapshot,
@@ -189,7 +189,7 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
         toolCalls.set(event.id, { ...existing, result: event.result })
       } else if (event.type === 'usage') {
         const tokens = event.usage?.context_input_tokens
-        if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0) actualInputTokens = tokens
+        actualInputTokens = typeof tokens === 'number' && Number.isFinite(tokens) && tokens > 0 ? tokens : undefined
       }
     },
     finish(): [

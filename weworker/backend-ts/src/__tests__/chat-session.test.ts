@@ -47,7 +47,7 @@ import { clearDesktopAdapterCatalogCache } from '../adapter-catalog-cache.js'
 type Request = { prompt: string | AsyncIterable<{ message: { content: string } }>; options: Record<string, any> }
 
 /** Fake CLI: streaming input answers every pushed message; a string prompt answers once. */
-function installFakeCli(behavior: { hold?: Promise<void>; toolCall?: boolean; failTurn?: number; modelUsage?: boolean } = {}) {
+function installFakeCli(behavior: { hold?: Promise<void>; toolCall?: boolean; failTurn?: number; modelUsage?: boolean; zeroUsage?: boolean; delayedUsage?: boolean } = {}) {
   const sessions: Array<{ request: Request; received: string[]; closed: boolean }> = []
   mocks.query.mockImplementation((request: Request) => {
     const state = { request, received: [] as string[], closed: false }
@@ -65,6 +65,14 @@ function installFakeCli(behavior: { hold?: Promise<void>; toolCall?: boolean; fa
         yield { type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 30, cache_read_input_tokens: 50 } } }
         yield { type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 40, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 } } }
         yield { type: 'assistant', parent_tool_use_id: 'fixture-subagent', message: { content: [], usage: { input_tokens: 9000 } } }
+      }
+      if (behavior.zeroUsage) {
+        yield { type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 0, cache_read_input_tokens: 0 } } }
+      }
+      if (behavior.delayedUsage) {
+        yield { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { usage: { input_tokens: 0, cache_read_input_tokens: 0 } } } }
+        yield { type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 0, cache_read_input_tokens: 0 } } }
+        yield { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_delta', usage: { input_tokens: 200, cache_read_input_tokens: 1200 } } }
       }
       const failed = behavior.failTurn === index
       yield { type: 'result', subtype: failed ? 'error_during_execution' : 'success', is_error: failed, errors: failed ? ['fixture failure'] : [], result: `reply ${index}`, usage: { input_tokens: 10, output_tokens: 2 } }
@@ -136,6 +144,28 @@ afterEach(() => {
 })
 
 describe('desktop chat session reuse', () => {
+  it('calibrates the final snapshot from delayed stream usage instead of placeholder zeros', async () => {
+    installFakeCli({ delayedUsage: true })
+    const events = await collect([message('u1', 'fixture question')])
+    const usage = events.find(event => event.type === 'usage')?.usage
+    expect(usage?.total_input_tokens).toBe(10)
+    expect(usage?.context_input_tokens).toBe(1400)
+    const end = events.filter(event => event.type === 'context_snapshot').at(-1)?.context
+    expect(end?.token_source).toBe('provider_calibrated')
+    expect(end?.displayed_total_tokens).toBe(1400)
+    expect(end?.categories.reduce((sum, item) => sum + (item.calibrated_tokens ?? 0), 0)).toBe(1400)
+  })
+
+  it('keeps estimates when the latest model usage is zero instead of retaining a previous request', async () => {
+    installFakeCli({ modelUsage: true, zeroUsage: true })
+    const events = await collect([message('u1', 'hello')])
+    const usage = events.find(event => event.type === 'usage')?.usage
+    expect(usage?.context_input_tokens).toBeUndefined()
+    const end = events.filter(event => event.type === 'context_snapshot').at(-1)?.context
+    expect(end?.token_source).toBe('estimated')
+    expect(end?.displayed_total_tokens).toBeGreaterThan(0)
+  })
+
   it('uses only the latest main model input for context while preserving billing usage', async () => {
     installFakeCli({ modelUsage: true })
     const events = await collect([message('u1', 'fixture question')])

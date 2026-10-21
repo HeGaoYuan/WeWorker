@@ -36,6 +36,7 @@ export function createEmptyContextSnapshot(contextLimit = 1000000) {
 
 export function normalizeContextSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return null
+  const invalidCalibration = snapshot.token_source === 'provider_calibrated' && !(Number(snapshot.actual_input_tokens) > 0)
   const categories = Array.isArray(snapshot.categories)
     ? snapshot.categories
       .filter((item) => item && CONTEXT_CATEGORY_META[item.id])
@@ -43,7 +44,7 @@ export function normalizeContextSnapshot(snapshot) {
         id: item.id,
         scope: item.scope || CONTEXT_CATEGORY_META[item.id].scope,
         estimated_tokens: Math.max(0, Number(item.estimated_tokens) || 0),
-        calibrated_tokens: Number.isFinite(Number(item.calibrated_tokens))
+        calibrated_tokens: !invalidCalibration && item.calibrated_tokens != null && Number.isFinite(Number(item.calibrated_tokens))
           ? Math.max(0, Number(item.calibrated_tokens))
           : null,
       }))
@@ -55,11 +56,11 @@ export function normalizeContextSnapshot(snapshot) {
     phase: snapshot.phase === 'turn_end' ? 'turn_end' : 'request_start',
     estimated_total_tokens: estimatedTotal,
     context_limit: contextLimit,
-    actual_input_tokens: Number.isFinite(Number(snapshot.actual_input_tokens))
+    actual_input_tokens: !invalidCalibration && snapshot.actual_input_tokens != null && Number.isFinite(Number(snapshot.actual_input_tokens))
       ? Math.max(0, Number(snapshot.actual_input_tokens))
       : null,
-    token_source: snapshot.token_source === 'provider_calibrated' ? 'provider_calibrated' : 'estimated',
-    displayed_total_tokens: Number.isFinite(Number(snapshot.displayed_total_tokens))
+    token_source: !invalidCalibration && snapshot.token_source === 'provider_calibrated' ? 'provider_calibrated' : 'estimated',
+    displayed_total_tokens: !invalidCalibration && snapshot.displayed_total_tokens != null && Number.isFinite(Number(snapshot.displayed_total_tokens))
       ? Math.max(0, Number(snapshot.displayed_total_tokens))
       : estimatedTotal,
     compaction: snapshot.compaction && snapshot.compaction.mode === 'conversation_only'
@@ -78,7 +79,7 @@ export function normalizeContextSnapshot(snapshot) {
 export function calibrateContextSnapshot(snapshot, actualInputTokens) {
   if (!snapshot || typeof snapshot !== 'object') return snapshot
   const actualTotal = Number(actualInputTokens)
-  if (!Number.isFinite(actualTotal)) return snapshot
+  if (!Number.isFinite(actualTotal) || actualTotal <= 0) return snapshot
   const normalizedActualTotal = Math.max(0, Math.round(actualTotal))
   const categories = Array.isArray(snapshot.categories) ? snapshot.categories : []
   const estimatedTotal = categories.reduce((sum, item) => sum + (Math.max(0, Number(item.estimated_tokens) || 0)), 0)
@@ -114,7 +115,7 @@ export function calibrateContextSnapshot(snapshot, actualInputTokens) {
 export function createContextTokenAnchor(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return null
   const actualTotal = Number(snapshot.actual_input_tokens)
-  if (!Number.isFinite(actualTotal)) return null
+  if (!Number.isFinite(actualTotal) || actualTotal <= 0) return null
   const categories = Array.isArray(snapshot.categories) ? snapshot.categories : []
   const conversation = categories.find((item) => item?.id === 'conversation')
   const explicitConversationTokens = conversation?.calibrated_tokens == null
@@ -133,7 +134,8 @@ export function createContextTokenAnchor(snapshot) {
 export function calibrateCompactedContextSnapshot(snapshot, actualInputTokens, anchor) {
   if (!snapshot || typeof snapshot !== 'object') return snapshot
   const actualTotal = Number(actualInputTokens)
-  const nonConversationTokens = Number(anchor?.non_conversation_tokens)
+  if (!Number.isFinite(actualTotal) || actualTotal <= 0) return snapshot
+  const nonConversationTokens = anchor?.non_conversation_tokens == null ? Number.NaN : Number(anchor.non_conversation_tokens)
   if (!Number.isFinite(actualTotal) || !Number.isFinite(nonConversationTokens)) {
     return calibrateContextSnapshot(snapshot, actualInputTokens)
   }

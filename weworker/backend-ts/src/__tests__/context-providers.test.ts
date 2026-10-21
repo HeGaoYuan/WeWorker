@@ -144,3 +144,18 @@ it('counts a loaded Skill once even when its tool result arrives after the Skill
   expect(result.estimated_total_tokens).toBe(estimateContextTokens(text))
   expect(result.displayed_total_tokens).toBe(result.estimated_total_tokens)
 })
+
+
+it('retains nonzero estimates when provider usage is zero or absent', () => {
+  const start = assembleContext({ runtime: createRuntimeContext({ systemPrompt: 'System instructions', identityPrompt: '' }), work: createWorkContext({ conversation: 'Hello' }), longTerm: createLongTermMemoryContext(), sdkSystemPrompt: 'System instructions', sdkPrompt: 'Hello' }).snapshot
+  for (const tokens of [undefined, 0, -1, NaN]) {
+    const collector = createTurnContextCollector(start)
+    collector.observe({ type: 'text_delta', content: 'Hello there' })
+    collector.observe({ type: 'usage', usage: { context_input_tokens: tokens } })
+    const end = collector.finish()[0].context
+    expect(end.token_source).toBe('estimated')
+    expect(end.displayed_total_tokens).toBeGreaterThan(0)
+    expect(end.categories.some(item => item.estimated_tokens > 0)).toBe(true)
+    expect(calibrateContextSnapshot(start, tokens)).toBe(start)
+  }
+})
