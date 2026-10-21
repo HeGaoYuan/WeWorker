@@ -13,6 +13,7 @@ vi.mock('../agent.js', () => ({ clearStoredConversationCompaction: vi.fn() }))
 vi.mock('../adapter-parser.js', () => ({ parseAllAdapters: () => new Map([['example.com', { id: 'example.com' }]]) }))
 vi.mock('../dedicated-agents/agent-channel.js', () => ({
   getAgentChannelStatus: () => ({ status: 'stopped' }),
+  agentChannelKey: (id: string) => `agent:${id}`,
   startAgentChannel: vi.fn(), stopAgentChannel: vi.fn(), restartAgentChannel: vi.fn(),
 }))
 vi.mock('../dedicated-agents/agent-runtime.js', () => ({ removeAgentRuntime: vi.fn() }))

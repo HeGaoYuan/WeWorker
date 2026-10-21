@@ -125,6 +125,7 @@ describe('dedicated agent runtime and skill library', () => {
     // Unrecoverable errors must not trigger blind waits or retries.
     expect(prompt).toContain('webcli trace')
     expect(prompt).toContain('不要 Start-Sleep')
+    expect(prompt).toContain('主动消息工具')
   })
 
   it('rejects unsafe agent ids and removes the runtime directory', () => {

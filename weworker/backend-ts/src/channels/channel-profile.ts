@@ -8,13 +8,14 @@ import type { streamChat } from '../agent.js'
 import type { ChannelPermissionMode } from './channel-permissions.js'
 import type { MemoryScope } from '../memory/memory-types.js'
 
-export type ChannelCommand = '/new' | '/stop' | '/id' | '/myid' | '/help'
+export type ChannelCommand = '/new' | '/stop' | '/id' | '/myid' | '/targetid' | '/help'
 
 const COMMAND_ALIASES: Record<string, ChannelCommand> = {
   '/new': '/new', '/reset': '/new', '/clear': '/new', '新对话': '/new', '/新对话': '/new', '新建对话': '/new',
   '/stop': '/stop', '停止': '/stop', '/停止': '/stop',
   '/id': '/id',
   '/myid': '/myid',
+  '/targetid': '/targetid', '/chatid': '/targetid', '当前会话id': '/targetid', '当前会话 id': '/targetid', '会话id': '/targetid',
   '/help': '/help', '帮助': '/help', '/帮助': '/help',
 }
 
@@ -43,7 +44,7 @@ type StreamChatOptions = NonNullable<Parameters<typeof streamChat>[3]>
 /** Extra per-turn agent options a profile may contribute. */
 export type ChannelProfileChatOptions = Pick<
   StreamChatOptions,
-  'isolatedClaudeConfigDir' | 'appendSystemPrompt' | 'extraToolGuard' | 'extraDisallowedTools'
+  'isolatedClaudeConfigDir' | 'appendSystemPrompt' | 'extraToolGuard' | 'extraDisallowedTools' | 'mcpServerOverride'
 >
 
 export interface ChannelProfile {

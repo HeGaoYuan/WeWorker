@@ -29,6 +29,7 @@ import {
 import WecomQrBind, { BotChannelPicker } from './WecomQrBind.jsx'
 import { SkillEditorCard } from './SkillComposer.jsx'
 import AgentChatPanel from './AgentChatPanel.jsx'
+import AgentTaskPanel from './AgentTaskPanel.jsx'
 import AgentNameEditor from './AgentNameEditor.jsx'
 import { showConfirm } from '../../store/dialog.js'
 import { codeBadgeStyle, fieldStyle, hintStyle, labelStyle, monoStyle, sectionStyle, sectionTitleStyle, titleStyle } from './styles.js'
@@ -438,12 +439,15 @@ export default function AgentDetail({ agentId }) {
           tabBarStyle={{ marginBottom: 0 }}
           items={[
             { key: 'chat', label: `对话${conversations.length ? `（${conversations.length}）` : ''}` },
+            { key: 'tasks', label: '任务' },
             { key: 'settings', label: agent.paired ? '设置' : '设置（待配对）' },
           ]}
         />
       </div>
       {activeTab === 'chat' ? (
         <AgentChatPanel agent={agent} siteName={site?.name || agent.site_id} conversations={conversations} onConversationsChanged={refresh} />
+      ) : activeTab === 'tasks' ? (
+        <AgentTaskPanel agent={agent} />
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 24px 24px', borderTop: '1px solid var(--border)' }}>
           <div style={{ maxWidth: 860 }}>

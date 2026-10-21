@@ -126,6 +126,9 @@ describe('channel command parsing', () => {
     ['帮助', '/help'],
     ['/id', '/id'],
     ['/myid', '/myid'],
+    ['/targetid', '/targetid'],
+    ['/chatid', '/targetid'],
+    ['当前会话ID', '/targetid'],
   ])('recognizes %j', (input, expected) => {
     expect(parseChannelCommand(input)).toBe(expected)
   })

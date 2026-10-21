@@ -62,6 +62,7 @@ export function cronToSummary(expression: string): string {
 
 class Scheduler {
   private jobs: Map<string, ReturnType<typeof cron.schedule>> = new Map()
+  private running = new Set<string>()
 
   /**
    * 注册一个定时任务到调度器。
@@ -72,11 +73,14 @@ class Scheduler {
 
     const job = cron.schedule(cronExpression, async () => {
       const task = store.getScheduledTask(taskId)
-      if (!task || !task.enabled) return
+      if (!task || !task.enabled || this.running.has(taskId)) return
+      this.running.add(taskId)
       try {
         await executeTask(task)
       } catch (err) {
         log.error(`Failed to execute task ${taskId}:`, err)
+      } finally {
+        this.running.delete(taskId)
       }
     })
 

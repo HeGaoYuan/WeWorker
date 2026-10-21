@@ -10,6 +10,7 @@ import { parseAllAdapters, type ParsedAdapter } from '../adapter-parser.js'
 import * as works from '../works-store.js'
 import { createLogger } from '../logger.js'
 import {
+  agentChannel,
   addAgentWork,
   createAgent,
   deleteAgent,
@@ -25,7 +26,8 @@ import {
   type DedicatedAgentRecord,
   type ReservedBots,
 } from './agent-store.js'
-import { getAgentChannelStatus, restartAgentChannel, startAgentChannel, stopAgentChannel } from './agent-channel.js'
+import { getAgentChannelStatus, restartAgentChannel, startAgentChannel, stopAgentChannel, agentChannelKey } from './agent-channel.js'
+import { scheduler, Scheduler } from '../scheduler.js'
 import { removeAgentRuntime } from './agent-runtime.js'
 import { createWecomQrSessions } from './wecom-qr.js'
 import { createWeixinQrSessions } from './weixin-qr.js'
@@ -409,6 +411,71 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
     }
   })
 
+  app.get('/dedicated-agents/:id/tasks', (req, res) => {
+    try {
+      requireAgent(req.params.id)
+      res.json({ tasks: works.listScheduledTasksForAgent(req.params.id) })
+    } catch (error) { sendError(res, error) }
+  })
+
+  app.get('/dedicated-agents/:id/notification-targets', (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      if (agentChannel(agent) !== 'wecom') {
+        res.json({ targets: [] })
+        return
+      }
+      const targets = works.listChannelNotifyTargets(agentChannelKey(agent.id)).flatMap((entry) => {
+        const chatType = Number(entry.extra.chat_type)
+        if (chatType !== 1 && chatType !== 2) return []
+        return [{ id: entry.user_id, chat_type: chatType, observed_user_id: entry.extra.user_id || '', observed_at: entry.updated_at }]
+      })
+      res.json({ targets })
+    } catch (error) { sendError(res, error) }
+  })
+
+  app.patch('/dedicated-agents/:id/tasks/:taskId', (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      const task = works.getScheduledTask(req.params.taskId)
+      if (!task || task.agent_id !== agent.id) throw new DedicatedAgentError('定时任务不存在', 404)
+      const body = (req.body ?? {}) as Record<string, unknown>
+      if (body.cron_expression !== undefined) {
+        const validation = Scheduler.validateCron(String(body.cron_expression))
+        if (!validation.valid) throw new DedicatedAgentError(validation.error || 'Cron 表达式无效')
+      }
+      const targets = Array.isArray(body.notification_targets) ? body.notification_targets : undefined
+      const observed = works.listChannelNotifyTargets(agentChannelKey(agent.id))
+      const notificationTargets = targets?.map((target) => {
+        const value = target as Partial<works.AgentNotificationTarget>
+        const entry = observed.find((candidate) => candidate.user_id === value.id && Number(candidate.extra.chat_type) === Number(value.chat_type))
+        if (!entry) throw new DedicatedAgentError('通知目标必须来自该 Agent 已观察到的企业微信会话')
+        return { id: entry.user_id, chat_type: Number(entry.extra.chat_type) as 1 | 2, observed_user_id: entry.extra.user_id || '', observed_at: entry.updated_at }
+      })
+      const updated = works.updateScheduledTask(task.id, {
+        ...(typeof body.title === 'string' ? { title: body.title } : {}),
+        ...(typeof body.prompt_template === 'string' ? { prompt_template: body.prompt_template } : {}),
+        ...(typeof body.cron_expression === 'string' ? { cron_expression: body.cron_expression } : {}),
+        ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...(notificationTargets ? { notification_targets: notificationTargets } : {}),
+      })!
+      if (body.enabled === false) scheduler.unregister(updated.id)
+      else if (updated.enabled) scheduler.register(updated.id, updated.cron_expression)
+      res.json({ task: updated })
+    } catch (error) { sendError(res, error) }
+  })
+
+  app.delete('/dedicated-agents/:id/tasks/:taskId', (req, res) => {
+    try {
+      const agent = requireAgent(req.params.id)
+      const task = works.getScheduledTask(req.params.taskId)
+      if (!task || task.agent_id !== agent.id) throw new DedicatedAgentError('定时任务不存在', 404)
+      scheduler.unregister(task.id)
+      works.deleteScheduledTask(task.id)
+      res.json({ ok: true })
+    } catch (error) { sendError(res, error) }
+  })
+
   /** Start a conversation from the desktop; replies stay in the desktop. */
   app.post('/dedicated-agents/:id/conversations', (req, res) => {
     try {
@@ -502,6 +569,11 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
 
   app.post('/dedicated-agents/:id/pairing/reset', (req, res) => {
     try {
+      const agent = requireAgent(req.params.id)
+      for (const task of works.listScheduledTasksForAgent(agent.id)) {
+        scheduler.unregister(task.id)
+        works.updateScheduledTask(task.id, { enabled: false })
+      }
       res.json({ agent: viewWithStatus(resetPairing(req.params.id)) })
     } catch (error) {
       sendError(res, error)
@@ -511,6 +583,10 @@ export function registerDedicatedAgentRoutes(app: express.Express, deps: Dedicat
   app.delete('/dedicated-agents/:id', async (req, res) => {
     try {
       const agent = requireAgent(req.params.id)
+      for (const task of works.listScheduledTasksForAgent(agent.id)) {
+        scheduler.unregister(task.id)
+        works.deleteScheduledTask(task.id)
+      }
       await stopAgentChannel(agent.id)
       deleteAgent(agent.id)
       const deleteConversations = req.query.keep_conversations !== '1'

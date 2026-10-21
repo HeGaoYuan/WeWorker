@@ -192,9 +192,9 @@ export function createAgentProfile(agentId: string, options: { attempts?: Pairin
       const agent = getAgent(agentId)
       return { user: `${agent ? agentChannel(agent) : 'wecom'}:${userId}`, project: `agent:${agentId}` }
     },
-    chatOptions: () => {
+    chatOptions: (userId) => {
       const agent = current()
-      return buildAgentChatOptions({ agent, siteName: resolveSite(agent.site_id).name })
+      return buildAgentChatOptions({ agent, siteName: resolveSite(agent.site_id).name, actorUserId: userId })
     },
     onWorkCreated: (workId) => addAgentWork(agentId, workId),
   }
