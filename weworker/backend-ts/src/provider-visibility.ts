@@ -6,7 +6,7 @@ import type { Settings } from './config.js'
 // visible when explicitly added or previously configured.
 
 export function isFixedProvider(id: string): boolean {
-  return ['anthropic', 'glm', 'bank_coding', 'deepseek'].includes(id) && !!getProvider(id)
+  return getProvider(id)?.fixed === true
 }
 
 // Preset provider ids offered in the "add provider" dialog.
@@ -67,6 +67,7 @@ export function isProviderVisible(id: string, input: ProviderVisibilityInput): b
 
 export function buildProviderVisibility(s: Settings) {
   const legacy: Record<string, ProviderLegacyConfig> = {
+    bank_coding: { hasKey: !!s.api_key_bank_coding, model: s.model_bank_coding || '', defaultModels: [getProvider('bank_coding')?.defaultModel ?? ''] },
     anthropic: { hasKey: !!s.api_key_anthropic, model: s.model_anthropic, defaultModels: [getProvider('anthropic')?.defaultModel ?? ''] },
     glm: { hasKey: !!s.api_key_glm, model: s.model_glm, defaultModels: [getProvider('glm')?.defaultModel ?? ''] },
     deepseek: { hasKey: !!s.api_key_deepseek, model: s.model_deepseek, defaultModels: [getProvider('deepseek')?.defaultModel ?? ''] },

@@ -16,12 +16,12 @@
 const fs = require('fs');
 const path = require('path');
 const { validateBuildProfile } = require('./build-profile-validator.cjs');
+const { loadBuildProfile, mergeConfiguredProfile } = require('./model-provider-config.cjs');
 const {
   DEFAULT_ICON,
   buildRegistryFromManifests,
 } = require('./adapter-registry-sync.cjs');
 const {
-  mergeBuildProfile,
   mergeExtensionManifest,
   parseBuildOptions,
   readJson,
@@ -63,9 +63,9 @@ async function main() {
   let overlay = {};
   try {
     options = parseBuildOptions(process.argv.slice(2));
-    const baseProfile = readJson(PROFILE_PATH, 'build-profile.json');
+    const baseProfile = loadBuildProfile(PROFILE_PATH);
     if (options.overlayPath) overlay = readJson(options.overlayPath, 'build overlay');
-    profile = mergeBuildProfile(baseProfile, overlay);
+    profile = mergeConfiguredProfile(baseProfile, overlay);
   } catch (err) {
     console.error(`[prepare-build] ERROR: ${err.message}`);
     process.exit(1);
@@ -128,6 +128,10 @@ async function main() {
 
   const buildDefines = {
     profile: options.profileName,
+    providerOverlay: {
+      ...(overlay.providers ? { providers: overlay.providers } : {}),
+      ...(overlay.defaultProvider ? { defaultProvider: overlay.defaultProvider } : {}),
+    },
     providers: profile.providers,
     defaultProvider: profile.defaultProvider,
     commitHash: (() => {

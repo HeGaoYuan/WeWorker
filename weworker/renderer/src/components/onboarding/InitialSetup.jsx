@@ -6,11 +6,9 @@ import { isFixedProvider } from '../../utils/model-selection.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
 import './initial-setup.css'
 
-const INITIAL_PROVIDER_IDS = new Set(['builtin', 'builtin_dev', 'anthropic', 'glm', 'bank_coding', 'deepseek'])
-
 function providerOptions() {
   return PROVIDERS
-    .filter(provider => INITIAL_PROVIDER_IDS.has(provider.id) && (isBuiltinProvider(provider.id) || isFixedProvider(provider.id)))
+    .filter(provider => isBuiltinProvider(provider.id) || isFixedProvider(provider.id))
     .map(provider => ({
       value: provider.id,
       label: provider.name,

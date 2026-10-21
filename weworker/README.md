@@ -114,46 +114,68 @@ npm run build:mac
 npm run build:win
 ```
 
-### 构建配置：build-profile.json
+### 模型配置与构建 Profile
 
-公开发行版由 [`build-profile.json`](build-profile.json) 决定打包哪些适配器和 AI 提供商：
+模型供应商统一定义在 [`model.json`](model.json)，[`build-profile.json`](build-profile.json) 通过 `modelProviders` 引用该文件，并继续声明要打包的 Adapter：
 
 ```json
 {
-  "adapters": ["mail.qq.com", "jd.com", ...],
-  "providers": [
-    {
-      "id": "anthropic",
-      "name": "Anthropic",
-      "models": ["claude-sonnet-4-6"],
-      "defaultModel": "claude-sonnet-4-6",
-      "weworker": { "protocol": "anthropic_messages", "baseUrl": "https://api.anthropic.com" },
-      "webwright": { "protocol": "anthropic_messages", "modelClass": "anthropic", "baseUrl": "https://api.anthropic.com", "structuredOutput": "anthropic_json_schema" }
-    }
-  ],
-  "defaultProvider": "anthropic"
+  "modelProviders": "./model.json",
+  "adapters": ["mail.qq.com", "jd.com"]
 }
 ```
 
-#### 字段说明
+模型配置示例（地址和模型名称仅为占位）：
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `adapters` | `string[]` | 要打包的适配器 ID 列表，对应仓库根 `adapters/` 下的目录名。未列出的适配器不会进入安装包，构建时会报错 |
-| `providers` | `object[]` | 用户可选的 AI 提供商列表。每项声明 `models`、`defaultModel`，以及 WeWorker／Webwright 各自使用的明确协议、Adapter、Base URL 和结构化输出策略 |
-| `defaultProvider` | `string` | 默认选中的提供商 ID，必须存在于 `providers` 的 `id` 中 |
+```json
+{
+  "defaultProvider": "example",
+  "providers": [{
+    "id": "example",
+    "name": "示例供应商",
+    "models": [],
+    "defaultModel": "",
+    "fixed": true,
+    "builtin": false,
+    "fixedModel": false,
+    "allowMultiple": true,
+    "authType": "api_key",
+    "weworker": { "protocol": "anthropic_messages", "baseUrl": "https://example.com/anthropic" },
+    "webwright": { "protocol": "openai_chat_completions", "modelClass": "openai_chat", "baseUrl": "https://example.org/v1", "structuredOutput": "openai_json_object" },
+    "presentation": { "subtitle": "示例服务", "color": "#2563eb", "bg": "#eff6ff" }
+  }]
+}
+```
 
-> **提示**：`adapters` 只控制打包哪些适配器，开发模式下（`npm run dev`）所有适配器都可用，不受此限制。如需查看所有可用适配器，见仓库根 `adapters/` 目录。
+| 字段 | 说明 |
+|------|------|
+| `defaultProvider` | 默认供应商 ID，必须存在于 `providers` 中 |
+| `id` / `name` | 稳定标识与默认显示名称；现有供应商的 ID 应保持不变，以兼容已保存设置 |
+| `weworker` | 主对话协议及网关 `baseUrl` |
+| `webwright` | 网站探索agent 的协议、模型 Adapter、网关及结构化输出策略；字段名为内部兼容标识 |
+| `fixed` | 是否为固定供应商：常驻显示、名称固定且不可删除；不代表固定模型名称 |
+| `builtin` | 是否由应用托管凭据并使用只读服务配置 |
+| `fixedModel` | 是否锁定 `defaultModel`；为 `true` 时必须提供非空默认模型 |
+| `models` / `defaultModel` | 备用模型列表与默认模型；普通供应商保留空列表并从网关 API 获取可选模型 |
+| `allowMultiple` | 是否允许从该供应商模板新增独立配置；托管内置模型不支持新增副本 |
+| `authType` | `api_key` 使用 `x-api-key`，`auth_token` 使用 Bearer 鉴权 |
+| `apiKeyEnv` / `baseUrlEnv` | 既有内置模型和部署网关解析器使用的环境变量名称；此字段保存变量名；内置密钥密文使用 `encryptedApiKey` |
+| `encryptedApiKey` | 内置托管模型的 AES-256-GCM 密文，格式为 `iv.tag.ciphertext`（各段使用 base64url）；仅 Backend 解密，普通供应商不允许配置此字段 |
+| `presentation` | 设置页展示用副标题及主题颜色 |
 
-派生发行版不要直接修改公共 Profile 或 Extension Manifest。将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
+`fixed`、`builtin`、`fixedModel`、`allowMultiple` 和 `authType` 在 JSON 中必须显式声明。普通供应商的 API Key 仍由用户填写并按现有方式保存。内置模型的加密 API Key 与全部预设网关集中在 `model.json`，内置托管凭据只由后端解密；不再使用代码中的密钥密文或加密网关常量。Renderer 构建注入、开发服务的 JSON 模块与 Backend 供应商元数据均剔除密文字段。行内供应商继续使用用户填写的 Key 与动态模型列表。显式环境变量优先，JSON 中填写的网关优先于旧部署文件；旧部署文件仅在对应 JSON 网关为空时兼容读取。内置模型缺少密文且未设置环境变量时不可用，不回退到代码中的旧密钥。
+
+开发启动和生产构建读取同一份 JSON。修改后需重启 Backend 与 Vite 开发服务；已打包应用需要重新构建，不支持安装后直接修改 JSON 热更新。构建校验会拒绝非法字段、重复 ID、无效默认供应商及包含凭据的网关地址；现有供应商运行时使用当前 JSON 网关，避免旧保存地址覆盖新配置。新增供应商 ID 仍需配套后端配置存储支持，不能仅添加 JSON 条目。
+
+`adapters` 只控制打包范围，开发模式下所有 Adapter 都可用。派生发行版将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
 
 ```powershell
-$env:WEWORKER_BUILD_PROFILE = 'internal'
-$env:WEWORKER_BUILD_OVERLAY = '..\internal\config\build-overlay.json'
+$env:WEWORKER_BUILD_PROFILE = 'variant'
+$env:WEWORKER_BUILD_OVERLAY = '..\variant\config\build-overlay.json'
 node scripts/prepare-build.cjs
 ```
 
-Overlay 支持 `adapters.add/remove`、`providers.upsert/remove`、`defaultProvider`，以及 Extension 的 `permissions` 和访问范围增删。生成的 `build/extension-dist/` 既是打包输入，也可作为派生版扩展的手工加载目录。
+Overlay 支持 `adapters.add/remove`、`providers.upsert/remove`、`defaultProvider`，以及 Extension 的权限和访问范围增删。`providers.upsert` 替换整个供应商条目，须携带完整协议与上述行为字段。构建阶段在最新 JSON 上重新应用已准备的 overlay，排除的供应商不会被开发默认值补回；旧的非公共构建缓存需要用原 overlay 重新执行 prepare-build。生成的 `build/extension-dist/` 是打包输入，也可作为派生版扩展的手工加载目录。
 
 ### 构建流程说明
 

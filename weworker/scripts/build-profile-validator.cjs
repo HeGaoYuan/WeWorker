@@ -47,6 +47,28 @@ function validateBuildProfile(obj) {
       if (typeof p.id !== 'string') {
         errors.push(`"providers[${i}].id" must be a string`);
       }
+      for (const field of ['fixed', 'builtin', 'fixedModel', 'allowMultiple']) {
+        if (p[field] !== undefined && typeof p[field] !== 'boolean') errors.push(`"providers[${i}].${field}" must be a boolean`);
+      }
+      if (p.authType !== undefined && !['auth_token', 'api_key'].includes(p.authType)) errors.push(`"providers[${i}].authType" is invalid`);
+      if (p.fixedModel && !p.defaultModel) errors.push(`"providers[${i}].fixedModel" requires a defaultModel`);
+      for (const field of ['apiKeyEnv', 'baseUrlEnv']) {
+        if (p[field] !== undefined && (typeof p[field] !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(p[field]))) errors.push(`"providers[${i}].${field}" must be an environment variable name`);
+      }
+      if (p.encryptedApiKey !== undefined) {
+        const parts = typeof p.encryptedApiKey === 'string' ? p.encryptedApiKey.split('.') : [];
+        if (!p.builtin || parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))
+          || Buffer.from(parts[0] || '', 'base64url').length !== 12 || Buffer.from(parts[1] || '', 'base64url').length !== 16) {
+          errors.push(`"providers[${i}].encryptedApiKey" requires a managed provider and AES-256-GCM iv.tag.ciphertext`);
+        }
+      }
+      for (const gateway of [p.weworker, p.webwright]) {
+        if (!gateway || typeof gateway.baseUrl !== 'string' || !gateway.baseUrl) continue;
+        try {
+          const url = new URL(gateway.baseUrl);
+          if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
+        } catch { errors.push(`"providers[${i}]" has an invalid gateway baseUrl`); }
+      }
       if (typeof p.name !== 'string') {
         errors.push(`"providers[${i}].name" must be a string`);
       }
@@ -70,6 +92,11 @@ function validateBuildProfile(obj) {
     errors.push('Missing required field: "defaultProvider"');
   } else if (typeof obj.defaultProvider !== 'string') {
     errors.push('"defaultProvider" must be a string');
+  }
+
+  if (Array.isArray(obj.providers)) {
+    const ids = obj.providers.map(p => p?.id);
+    if (new Set(ids).size !== ids.length) errors.push('Duplicate provider IDs');
   }
 
   if (errors.length > 0) {

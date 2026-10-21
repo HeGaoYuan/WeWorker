@@ -17,10 +17,11 @@ afterEach(() => {
 })
 
 describe('managed built-in models', () => {
-  it('registers public metadata without deployment-only endpoints or credentials', () => {
+  it('registers JSON gateways without exposing encrypted credentials', () => {
     expect(getProvider('builtin')).toEqual(BUILTIN_PROVIDER)
     expect(getProvider('builtin_dev')).toEqual(BUILTIN_DEV_PROVIDER)
-    expect(getProvider('builtin_dev')?.weworker.baseUrl).toBe('')
+    expect(getProvider('builtin_dev')?.weworker.baseUrl).toBeTruthy()
+    expect(PROVIDERS.some(p => 'encryptedApiKey' in p)).toBe(false)
     expect(JSON.stringify(PROVIDERS)).not.toContain(env.WEWORKER_BUILTIN_API_KEY)
     expect(JSON.stringify(PROVIDERS)).not.toContain(env.WEWORKER_BUILTIN_DEV_BASE_URL)
   })

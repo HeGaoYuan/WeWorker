@@ -1,3 +1,4 @@
+import { BUILD_PROVIDERS, BUILD_DEFAULT_PROVIDER } from '../utils/provider-config.js'
 import { create } from 'zustand'
 import { appBotQrState } from '../utils/app-bot-qr-save.js'
 import {
@@ -8,15 +9,6 @@ import { backendFetch } from '../api/http.js'
 import { isFixedProvider } from '../utils/model-selection.js'
 
 const API = 'http://127.0.0.1:8765'
-
-// Provider UI styling (keyed by id)
-const PROVIDER_STYLES = {
-  anthropic: { subtitle: 'Claude 系列', color: '#D97706', bg: 'rgba(217,119,6,0.12)' },
-  bank_coding: { subtitle: 'GLM Coding Plan', color: '#339CFF', bg: 'rgba(51,156,255,0.12)' },
-  glm: { subtitle: '智谱 AI', color: '#339CFF', bg: 'rgba(51,156,255,0.12)' },
-  deepseek: { subtitle: '深度求索', color: '#06B6D4', bg: 'rgba(6,182,212,0.12)' },
-  custom: { subtitle: 'LiteLLM / 代理', color: '#8B5CF6', bg: 'rgba(139,92,246,0.12)' },
-}
 
 const DEFAULT_STYLE = { subtitle: '', color: '#8B5CF6', bg: 'rgba(139,92,246,0.12)' }
 const DEFAULT_WELCOME_FEATURED_SITE_LIMIT = 50
@@ -66,64 +58,15 @@ function settingsPatch(data, fallback = {}) {
   }
 }
 
-const BANK_CODING_PROVIDER = { id: 'bank_coding', name: '行内 coding plan', models: [], defaultModel: '' }
-
-const DEVELOPMENT_BUILTIN_PROVIDERS = [
-  { id: 'builtin', name: '内置模型', models: ['ark-code-latest'], defaultModel: 'ark-code-latest' },
-  { id: 'builtin_dev', name: '内置模型（开发VDI）', models: ['deepseek-v4-flash'], defaultModel: 'deepseek-v4-flash' },
-]
-
-export function mergeDevelopmentBuiltinProviders(providers, isDevelopment) {
-  const configuredProviders = Array.isArray(providers) ? providers : []
-  if (!isDevelopment) return configuredProviders
-  const configuredIds = new Set(configuredProviders.map((provider) => provider?.id))
-  const merged = [
-    ...DEVELOPMENT_BUILTIN_PROVIDERS.filter((provider) => !configuredIds.has(provider.id)),
-    ...configuredProviders,
-  ]
-  if (!configuredIds.has(BANK_CODING_PROVIDER.id)) {
-    const glmIndex = merged.findIndex(provider => provider.id === 'glm')
-    merged.splice(glmIndex >= 0 ? glmIndex + 1 : merged.length, 0, BANK_CODING_PROVIDER)
-  }
-  return merged
-}
-
-// Production strictly follows its build profile. In development, preserve the
-// built-in choices when a stale ignored build definition is present.
-const INJECTED_BUILD_PROVIDERS = typeof __BUILD_PROVIDERS__ !== 'undefined'
-  ? __BUILD_PROVIDERS__
-  : [
-      ...DEVELOPMENT_BUILTIN_PROVIDERS,
-      { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], defaultModel: 'claude-sonnet-4-6' },
-      { id: 'glm', name: '智谱 coding plan', models: ['glm-5.2', 'glm-4.7'], defaultModel: 'glm-5.2' },
-      BANK_CODING_PROVIDER,
-      { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], defaultModel: 'deepseek-v4-flash' },
-      { id: 'custom', name: '自定义', models: [], defaultModel: '' },
-    ]
-
-const BUILD_PROVIDERS = mergeDevelopmentBuiltinProviders(
-  INJECTED_BUILD_PROVIDERS,
-  import.meta.env?.DEV === true,
-)
-
-const BUILD_DEFAULT_PROVIDER = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
-  ? __BUILD_DEFAULT_PROVIDER__
-  : 'anthropic'
-
-export const BUILTIN_PROVIDER_IDS = BUILD_PROVIDERS.filter(p => p.id === 'builtin' || p.id === 'builtin_dev').map(p => p.id)
-export const isBuiltinProvider = (id) => BUILTIN_PROVIDER_IDS.includes(id)
-export const hasFixedModel = (id) => isBuiltinProvider(id)
-
-export const PROVIDERS = BUILD_PROVIDERS.map(p => ({
-  ...p,
-  ...(PROVIDER_STYLES[p.id] || DEFAULT_STYLE),
-}))
+export { isBuiltinProvider, hasFixedModel } from '../utils/provider-config.js'
+export const BUILTIN_PROVIDER_IDS = BUILD_PROVIDERS.filter(p => p.builtin).map(p => p.id)
+export const PROVIDERS = BUILD_PROVIDERS.map(p => ({ ...p, ...(p.presentation || DEFAULT_STYLE) }))
 
 export const useSettingsStore = create((set, get) => ({
   activeProvider: BUILD_DEFAULT_PROVIDER,
   onboardingCompleted: false,
-  baseUrl: 'https://api.anthropic.com',
-  model: 'claude-sonnet-4-6',
+  baseUrl: BUILD_PROVIDERS.find(p => p.id === BUILD_DEFAULT_PROVIDER)?.weworker.baseUrl || '',
+  model: BUILD_PROVIDERS.find(p => p.id === BUILD_DEFAULT_PROVIDER)?.defaultModel || '',
   contextLimit: 1000000,
   hasApiKey: false,
   userDirectory: '',
@@ -141,15 +84,11 @@ export const useSettingsStore = create((set, get) => ({
   zcfDefaultRole: 'default',
   zcfEnabledRoles: ['default'],
   zcfCustomRoles: [],
-  providers: {
-    bank_coding: { has_key: false, model: '', context_limit: 1000000, added: true, visible: true },
-    builtin:   { has_key: false, model: 'ark-code-latest', context_limit: 1000000, readonly: true, added: true, visible: true },
-    builtin_dev: { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, readonly: true, added: true, visible: true },
-    anthropic: { has_key: false, model: 'claude-sonnet-4-6', context_limit: 1000000, added: false, visible: false },
-    glm:       { has_key: false, model: 'glm-5.2', context_limit: 1000000, added: false, visible: false },
-    deepseek:  { has_key: false, model: 'deepseek-v4-flash', context_limit: 1000000, added: false, visible: false },
-    custom:    { has_key: false, model: '', context_limit: 1000000, base_url: '', openai_base_url: '', auth_type: 'auth_token', added: false, visible: false },
-  },
+  providers: Object.fromEntries(BUILD_PROVIDERS.map(provider => [provider.id, {
+    has_key: false, model: provider.defaultModel, context_limit: 1000000,
+    readonly: provider.builtin === true, added: provider.fixed === true || provider.builtin === true,
+    visible: provider.fixed === true || provider.builtin === true,
+  }])),
   loaded: false,
   loadError: '',
   explorationModelRevision: 0,
