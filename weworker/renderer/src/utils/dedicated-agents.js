@@ -13,8 +13,24 @@ export const AGENT_CHANNELS = [
   { value: 'weixin', label: '微信', short: '微信' },
 ]
 
+export const AGENT_ACCESS_MODES = {
+  ownerOnly: 'owner_only',
+  wecomAuthorized: 'wecom_authorized',
+}
+
 export function agentChannelOf(agent) {
   return agent?.channel === 'weixin' ? 'weixin' : 'wecom'
+}
+
+/** Shared mode delegates member access to the WeCom bot's own authorization. */
+export function agentAccessMode(agent) {
+  return agentChannelOf(agent) === 'wecom' && agent?.access_mode === AGENT_ACCESS_MODES.wecomAuthorized
+    ? AGENT_ACCESS_MODES.wecomAuthorized
+    : AGENT_ACCESS_MODES.ownerOnly
+}
+
+export function agentAccessModeLabel(agent) {
+  return agentAccessMode(agent) === AGENT_ACCESS_MODES.wecomAuthorized ? '允许企业微信授权用户' : '仅主人可用'
 }
 
 export function channelLabel(channel, { short = false } = {}) {

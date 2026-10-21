@@ -23,6 +23,7 @@ import {
 import SkillComposer from './SkillComposer.jsx'
 import WecomQrBind, { BotChannelPicker } from './WecomQrBind.jsx'
 import { showConfirm } from '../../store/dialog.js'
+import AppSwitch from '../common/AppSwitch.jsx'
 import { codeBadgeStyle, fieldStyle, hintStyle, labelStyle, sectionStyle, titleStyle } from './styles.js'
 
 const PAIR_POLL_MS = 2500
@@ -41,6 +42,8 @@ const INITIAL_DRAFT = {
   savedSkillName: '',
   /** New skills stay with dedicated agents unless the user shares them with the main chat. */
   skillScope: 'private',
+  /** Keep the safer private setting unless the creator opts into WeCom sharing. */
+  accessMode: 'owner_only',
 }
 
 function SitePicker({ sites, selectedId, onSelect }) {
@@ -141,12 +144,34 @@ function PairingStep({ agent, onDone }) {
             ? '机器人一般出现在扫码那个微信号的聊天列表中，也可以在微信里搜索它。'
             : '机器人一般出现在企业微信的消息列表或「工作台 → 智能机器人」中，也可以直接搜索它的名字。'}
         </li>
-        <li>发送绑定码的人会成为这个 Agent 的主人，之后它只为你服务。</li>
+        <li>{channel === 'wecom' && current?.access_mode === 'wecom_authorized'
+          ? '发送绑定码的人会成为这个 Agent 的主人。企业微信后台已获授权的其他成员也可以使用它。'
+          : '发送绑定码的人会成为这个 Agent 的主人，之后仅主人可以使用。'}</li>
       </ul>
       <div style={{ ...hintStyle, marginTop: 12 }}>
         <LoadingOutlined /> 等待配对…
         {connection === 'error' && <span style={{ color: 'var(--error, #ef4444)', marginLeft: 8 }}>机器人连接异常：{current?.connection?.error || '请检查网络'}</span>}
         {connection === 'connected' && <span style={{ color: 'var(--success, #22c55e)', marginLeft: 8 }}>机器人已连接</span>}
+      </div>
+    </div>
+  )
+}
+
+function AccessModePicker({ channel, value, onChange }) {
+  if (channel !== 'wecom') {
+    return <div style={{ ...hintStyle, marginTop: 14 }}>微信机器人当前仅支持主人使用。</div>
+  }
+  const ownerOnly = value !== 'wecom_authorized'
+  return (
+    <div style={{ ...fieldStyle, marginTop: 14 }}>
+      <label style={{ ...labelStyle, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <AppSwitch checked={ownerOnly} onChange={(event) => onChange(event.target.checked ? 'owner_only' : 'wecom_authorized')} aria-label="仅主人可用" />
+        仅主人可用
+      </label>
+      <div style={{ ...hintStyle, marginTop: 5 }}>
+        {ownerOnly
+          ? '开启后，即使企业微信已向其他成员授权该机器人，也只有发送绑定码的主人可以使用。'
+          : '关闭后，企业微信后台已获授权使用该机器人的成员都可以和它对话。成员权限仍由企业微信后台管理。'}
       </div>
     </div>
   )
@@ -239,6 +264,7 @@ export default function AgentCreateWizard() {
         site_id: draft.siteId,
         skill_name: skillName,
         examples: parseExamples(draft.examplesText),
+        access_mode: bot.channel === 'wecom' ? draft.accessMode : 'owner_only',
         ...boundBotPayload(bot),
       }
       const result = await createAgent(body)
@@ -306,8 +332,14 @@ export default function AgentCreateWizard() {
             <BotChannelPicker
               value={botChannel}
               disabled={saving}
-              onChange={(next) => { setError(''); setBotChannel(next); updateDraftAgent({ channel: next }); setBindKey((value) => value + 1) }}
+              onChange={(next) => {
+                setError('')
+                setBotChannel(next)
+                update({ channel: next, ...(next === 'weixin' ? { accessMode: 'owner_only' } : {}) })
+                setBindKey((value) => value + 1)
+              }}
             />
+            <AccessModePicker channel={botChannel} value={draft.accessMode} onChange={(accessMode) => update({ accessMode })} />
             <WecomQrBind key={`${botChannel}-${bindKey}`} channel={botChannel} onBound={handleBound} busy={saving} />
             {error && (
               <Alert

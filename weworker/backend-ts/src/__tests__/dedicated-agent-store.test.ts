@@ -56,6 +56,7 @@ describe('dedicated agent store', () => {
     const agent = create()
     expect(agent.pairing_code).toMatch(/^\d{6}$/)
     expect(agent.examples).toEqual(['Check today\'s orders'])
+    expect(agent.access_mode).toBe('owner_only')
     expect(agent.wecom.secret_enc).not.toContain(BOT_SECRET)
     expect(getAgentBotSecret(agent)).toBe(BOT_SECRET)
 
@@ -115,6 +116,21 @@ describe('dedicated agent store', () => {
 
     const reset = resetPairing(agent.id)
     expect(reset.pairing_code).toMatch(/^\d{6}$/)
+  })
+
+  it('uses private access by default and persists the selected WeCom access mode', () => {
+    const agent = create()
+    expect(agent.access_mode).toBe('owner_only')
+    expect(toAgentView(agent).access_mode).toBe('owner_only')
+
+    const shared = updateAgent(agent.id, { access_mode: 'wecom_authorized' })
+    expect(shared.access_mode).toBe('wecom_authorized')
+    expect(toAgentView(shared).access_mode).toBe('wecom_authorized')
+
+    const data = JSON.parse(fs.readFileSync(process.env.WEWORKER_DEDICATED_AGENTS_FILE!, 'utf8'))
+    delete data.agents[0].access_mode
+    fs.writeFileSync(process.env.WEWORKER_DEDICATED_AGENTS_FILE!, JSON.stringify(data))
+    expect(getAgent(agent.id)?.access_mode).toBe('owner_only')
   })
 
   it('tracks conversations owned by agents', () => {

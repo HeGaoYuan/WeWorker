@@ -132,7 +132,7 @@ export function syncAgentSkills(
 }
 
 export function buildAgentSystemPrompt(input: {
-  agent: Pick<DedicatedAgentRecord, 'name' | 'description' | 'site_id' | 'skill_name'>
+  agent: Pick<DedicatedAgentRecord, 'name' | 'description' | 'site_id' | 'skill_name' | 'channel' | 'access_mode'>
   siteName: string
   privateSkillAvailable: boolean
 }): string {
@@ -140,7 +140,7 @@ export function buildAgentSystemPrompt(input: {
   const lines = [
     '## 专属 Agent',
     '',
-    `你是「${agent.name}」，一个只为主人服务、专注于「${siteName}」（${agent.site_id}）的专属 Agent。${agent.description ? `职责：${agent.description}` : ''}`,
+    `你是「${agent.name}」，一个${agent.access_mode === 'wecom_authorized' && agent.channel !== 'weixin' ? '为企业微信已授权用户服务' : '只为主人服务'}、专注于「${siteName}」（${agent.site_id}）的专属 Agent。${agent.description ? `职责：${agent.description}` : ''}`,
     '',
     '- 只处理与该网站及你的专属知识相关的请求；超出范围时简短说明你能做什么，不要尝试其他网站或本地操作。',
   ]
@@ -152,7 +152,7 @@ export function buildAgentSystemPrompt(input: {
   lines.push(
     `- 网站操作只能用原生命令工具执行单条 \`webcli call ${agent.site_id}.<工具名> --参数名=参数值\`（也可用 \`webcli call open_browser --url=...\` 打开该网站）。`,
     '- 一次只执行一条 webcli 命令；引号外不能出现管道、重定向、变量、`;`、`#` 或多条命令（不要写 `Start-Sleep; webcli ...`），也不要使用 `webcli trace`。需要传给网站的复杂文本放进单引号参数里。',
-    '- 未登录、扩展需要重载、没有匹配的页面或命令被拒绝时，等待和重试不会恢复：不要 Start-Sleep 或重复调用，直接告诉主人需要做什么；参数或命令格式错误时先修正再调用。',
+    '- 未登录、扩展需要重载、没有匹配的页面或命令被拒绝时，等待和重试不会恢复：不要 Start-Sleep 或重复调用，直接告诉当前用户需要做什么；参数或命令格式错误时先修正再调用。',
     '- 你的回复会发到企业微信或微信聊天里：先给结论，再给关键依据；只贴必要的原始输出，避免大段刷屏。',
     '- 不读取、修改或发送本机文件，不创建定时任务。',
   )

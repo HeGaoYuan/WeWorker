@@ -2,6 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SKILL_MODES,
+  agentAccessMode,
+  agentAccessModeLabel,
+  AGENT_ACCESS_MODES,
   agentBotId,
   agentChannelOf,
   boundBotPayload,
@@ -124,6 +127,14 @@ test('agents can be served by WeCom or WeChat bots', () => {
   assert.deepEqual(boundBotPayload({ channel: 'weixin', qr_session_id: 's1', bot_id: 'x' }), { channel: 'weixin', qr_session_id: 's1' })
   assert.deepEqual(boundBotPayload({ channel: 'wecom', qr_session_id: 's2' }), { channel: 'wecom', qr_session_id: 's2' })
   assert.deepEqual(boundBotPayload({ channel: 'wecom', bot_id: 'placeholder-bot', secret: 'placeholder-secret' }), { channel: 'wecom', bot_id: 'placeholder-bot', secret: 'placeholder-secret' })
+})
+
+test('WeCom sharing access is opt-in and unavailable to WeChat agents', () => {
+  assert.equal(agentAccessMode({}), AGENT_ACCESS_MODES.ownerOnly)
+  assert.equal(agentAccessModeLabel({}), '仅主人可用')
+  assert.equal(agentAccessMode({ channel: 'wecom', access_mode: 'wecom_authorized' }), AGENT_ACCESS_MODES.wecomAuthorized)
+  assert.equal(agentAccessModeLabel({ channel: 'wecom', access_mode: 'wecom_authorized' }), '允许企业微信授权用户')
+  assert.equal(agentAccessMode({ channel: 'weixin', access_mode: 'wecom_authorized' }), AGENT_ACCESS_MODES.ownerOnly)
 })
 
 test('inline agent rename trims the new name and reports whether it changed', () => {

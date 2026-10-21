@@ -15,6 +15,7 @@ import {
   updateAgent,
 } from '../../api/dedicated-agents-api.js'
 import {
+  agentAccessMode,
   agentBotId,
   agentChannelOf,
   agentStatusPresentation,
@@ -191,6 +192,47 @@ function BotCard({ agent, onChanged }) {
         <WecomQrBind key={`${rebindChannel}-${rebindKey}`} channel={rebindChannel} onBound={rebind} busy={busy} />
         {error && <Alert type="error" showIcon style={{ marginTop: 12 }} message={error} />}
       </Modal>
+    </div>
+  )
+}
+
+function AccessCard({ agent, onChanged }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const channel = agentChannelOf(agent)
+  const ownerOnly = agentAccessMode(agent) === 'owner_only'
+
+  const change = async (nextOwnerOnly) => {
+    setSaving(true)
+    setError('')
+    try {
+      const result = await updateAgent(agent.id, { access_mode: nextOwnerOnly ? 'owner_only' : 'wecom_authorized' })
+      onChanged(result.agent)
+    } catch (err) {
+      setError(err.message || '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <h3 style={sectionTitleStyle}>访问范围</h3>
+      {channel === 'wecom' ? (
+        <>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-primary)' }}>
+            <AppSwitch checked={ownerOnly} disabled={saving} onChange={(event) => change(event.target.checked)} aria-label="仅主人可用" />
+            {saving && <LoadingOutlined />}
+            仅主人可用
+          </label>
+          <div style={{ ...hintStyle, marginTop: 5 }}>
+            {ownerOnly
+              ? '开启后，即使企业微信已向其他成员授权该机器人，也只有主人可以使用。'
+              : '已允许企业微信后台授权使用该机器人的成员与它对话。成员权限仍由企业微信后台管理。'}
+          </div>
+        </>
+      ) : <div style={hintStyle}>微信机器人当前仅支持主人使用。</div>}
+      {error && <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />}
     </div>
   )
 }
@@ -406,6 +448,7 @@ export default function AgentDetail({ agentId }) {
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 24px 24px', borderTop: '1px solid var(--border)' }}>
           <div style={{ maxWidth: 860 }}>
             <BotCard agent={agent} onChanged={applyAgent} />
+            <AccessCard agent={agent} onChanged={applyAgent} />
             <SkillCard agent={agent} onChanged={applyAgent} />
             <BasicInfoCard agent={agent} onSaved={applyAgent} />
           </div>

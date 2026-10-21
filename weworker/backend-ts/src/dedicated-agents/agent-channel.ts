@@ -1,9 +1,9 @@
 /**
  * IM bot connection per dedicated agent (企业微信 or 微信).
  *
- * Each agent owns one bot. The bot serves only its owner, who pairs once by
- * sending the code shown in WeWorker. Every turn runs the agent with its own
- * isolated skills, memory scope and focused tool limits.
+ * Each agent owns one bot. Its pairing owner always has access; a WeCom agent
+ * can optionally also serve members authorized for that bot in WeCom. Every
+ * turn runs with isolated skills, memory scope and focused tool limits.
  */
 import { channelManager, type ChannelStatus } from '../channels/channel-manager.js'
 import type { ChannelAccessDecision, ChannelProfile } from '../channels/channel-profile.js'
@@ -123,8 +123,10 @@ export function decideAgentAccess(input: {
       text: `「${agent.name}」还没有完成绑定。请打开 WeWorker 桌面端「专属 Agent」页面，把显示的绑定码发给我，例如：绑定 123456`,
     }
   }
-  if (userId !== agent.owner_user_id) {
-    return { kind: 'reply', text: `这是「${agent.name}」的专属 Agent，目前只为它的主人服务。` }
+  const hasAccess = userId === agent.owner_user_id
+    || (agentChannel(agent) === 'wecom' && agent.access_mode === 'wecom_authorized')
+  if (!hasAccess) {
+    return { kind: 'reply', text: `这是「${agent.name}」的专属 Agent，目前仅允许它的主人使用。` }
   }
   if (!site.exists || !site.enabled) {
     return { kind: 'reply', text: `「${site.name}」的网站能力当前未启用，请在 WeWorker 桌面端启用后再试。` }
