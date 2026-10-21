@@ -6,10 +6,23 @@ import { buildAnthropicAuthHeaders } from '../anthropic-auth.js'
 import { probeMainConnection, probeProviderProtocol } from '../provider-model-services.js'
 import { resolveWebwrightModelConfig } from '../webwright-model-config.js'
 
+// Optional managed-provider support uses a public fixture, not deployment JSON.
+vi.mock('../provider-config.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../provider-config.js')>()
+  const builtin = actual.configuredProvider('builtin')!
+  const providers = [...actual.CONFIGURED_PROVIDERS.filter(p => p.id !== 'builtin_dev'), { ...builtin, id: 'builtin_dev', name: 'Fixture managed provider',
+    apiKeyEnv: 'WEWORKER_BUILTIN_DEV_API_KEY', baseUrlEnv: 'WEWORKER_BUILTIN_DEV_BASE_URL',
+    weworker: { ...builtin.weworker, baseUrl: 'https://example.com/managed' },
+    webwright: { ...builtin.webwright, baseUrl: 'https://example.org/managed' } }]
+  return { ...actual, CONFIGURED_PROVIDERS: providers,
+    configuredProvider: (id: string | undefined) => providers.find(p => p.id === id),
+    configuredEncryptedApiKey: (id: string) => actual.configuredEncryptedApiKey(id === 'builtin_dev' ? 'builtin' : id) }
+})
+
 const env = {
   WEWORKER_BUILTIN_API_KEY: 'fixture-builtin-key',
   WEWORKER_BUILTIN_DEV_API_KEY: 'fixture-dev-key',
-  WEWORKER_BUILTIN_DEV_BASE_URL: 'https://example.com/managed',
+  WEWORKER_BUILTIN_DEV_BASE_URL: 'https://example.org/runtime',
 }
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -62,8 +75,8 @@ describe('managed built-in models', () => {
 
   it('isolates deployment model keys and keeps profile exclusions closed', () => {
     const saved = { active_provider: 'builtin_dev', api_key: 'fixture-stale-key', base_url: 'https://example.org/stale' } as Settings
-    expect(resolveBuiltinSettings(saved, [BUILTIN_DEV_PROVIDER], env)).toMatchObject({ api_key: 'fixture-dev-key', base_url: 'https://example.com/managed' })
-    expect(resolveBuiltinSettings(saved, PROVIDERS, env)).toMatchObject({ api_key: 'fixture-dev-key', base_url: 'https://example.com/managed' })
+    expect(resolveBuiltinSettings(saved, [BUILTIN_DEV_PROVIDER], env)).toMatchObject({ api_key: 'fixture-dev-key', base_url: 'https://example.org/runtime' })
+    expect(resolveBuiltinSettings(saved, PROVIDERS, env)).toMatchObject({ api_key: 'fixture-dev-key', base_url: 'https://example.org/runtime' })
     expect(resolveBuiltinSettings(saved, [BUILTIN_PROVIDER], env)).toMatchObject({ api_key: '', base_url: '', model: '' })
     expect(resolveBuiltinSettings({ ...saved, active_provider: 'builtin' }, PROVIDERS, {}).api_key).not.toBe('')
   })
@@ -97,6 +110,7 @@ describe('managed built-in models', () => {
   })
 
   it('does not reinsert built-ins excluded by a build profile', async () => {
+    vi.doUnmock('../provider-config.js')
     vi.stubGlobal('__BUILD_PROVIDERS__', [])
     vi.resetModules()
     const registry = await import('../provider-registry.js')

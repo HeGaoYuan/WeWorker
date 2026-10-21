@@ -47,6 +47,65 @@ test('JSON changes replace stale public definitions in development and productio
   assert.deepEqual(loadBuildDefines({ ...workspace, development: true }).providers, config.providers);
 });
 
+test('whole-file JSON replacement restores optional providers without source changes', t => {
+  const workspace = fixture(t, { profile: 'public', providers: [], defaultProvider: 'obsolete' });
+  const reduced = structuredClone(source);
+  reduced.providers = reduced.providers.filter(p => !['builtin_dev', 'bank_coding'].includes(p.id));
+  reduced.defaultProvider = 'anthropic';
+  const { encryptedApiKey, ...managedTemplate } = reduced.providers.find(p => p.id === 'builtin');
+  const managed = { ...managedTemplate, id: 'builtin_dev', name: 'Fixture managed provider',
+    baseUrlEnv: 'WEWORKER_FIXTURE_MANAGED_BASE_URL', apiKeyEnv: 'WEWORKER_FIXTURE_MANAGED_API_KEY',
+    models: ['fixture-locked'], defaultModel: 'fixture-locked',
+    weworker: { ...managedTemplate.weworker, baseUrl: 'https://example.com/managed' },
+    webwright: { ...managedTemplate.webwright, baseUrl: 'https://example.org/managed' } };
+  const template = reduced.providers.find(p => p.id === 'anthropic');
+  const coding = { ...template, id: 'bank_coding', name: 'Fixture coding provider',
+    fixed: true, builtin: false, fixedModel: false, allowMultiple: false, authType: 'auth_token',
+    baseUrlEnv: 'WEWORKER_FIXTURE_CODING_BASE_URL', models: [], defaultModel: '',
+    weworker: { ...template.weworker, baseUrl: 'https://example.com/coding' },
+    webwright: { ...template.webwright, baseUrl: 'https://example.org/coding' } };
+  const full = { ...reduced, defaultProvider: 'bank_coding', providers: [...reduced.providers, managed, coding] };
+
+  for (const config of [reduced, full, reduced]) {
+    workspace.save(config);
+    for (const development of [true, false]) {
+      const profile = loadBuildDefines({ ...workspace, development });
+      assert.deepEqual(profile.providers, config.providers);
+      const registry = compiled('backend-ts/src/provider-registry.ts', profile);
+      const metadata = compiled('renderer/src/utils/provider-config.js', profile);
+      const selection = compiled('renderer/src/utils/model-selection.js', profile);
+      assert.deepEqual([...registry.ALLOWED_PROVIDER_IDS], config.providers.map(p => p.id));
+      assert.equal(metadata.BUILD_DEFAULT_PROVIDER, config.defaultProvider);
+      for (const provider of [managed, coding]) {
+        const included = config === full;
+        assert.deepEqual(registry.getProvider(provider.id), included ? provider : undefined);
+        assert.deepEqual(metadata.configuredProvider(provider.id), included ? provider : undefined);
+        assert.equal(selection.buildSettingsProviderLists(metadata.BUILD_PROVIDERS, {}).visible.some(p => p.id === provider.id), included);
+        assert.equal(selection.buildChatProviderOptions(metadata.BUILD_PROVIDERS, {}, config.defaultProvider).some(p => p.value === provider.id), included);
+      }
+      if (config !== full) continue;
+      assert.equal(metadata.hasFixedModel(managed.id), true);
+      assert.equal(metadata.hasFixedModel(coding.id), false);
+      const { addable } = selection.buildSettingsProviderLists(metadata.BUILD_PROVIDERS, {});
+      assert.equal(addable.some(p => [managed.id, coding.id].includes(p.id)), false);
+      const backend = compiled('backend-ts/src/builtin-provider.ts', profile);
+      const access = backend.builtinProviderAccess(backend.BUILTIN_DEV_PROVIDER, {
+        WEWORKER_FIXTURE_MANAGED_API_KEY: 'fixture-managed-key',
+      });
+      assert.equal(access.apiKey, 'fixture-managed-key');
+      assert.equal(access.model, 'fixture-locked');
+      assert.equal(access.anthropicBaseUrl, managed.weworker.baseUrl);
+      assert.equal(access.openaiBaseUrl, managed.webwright.baseUrl);
+      const effective = backend.resolveBankCodingSettings({ active_provider: coding.id,
+        api_key_bank_coding: 'fixture-user-key', model_bank_coding: 'fixture-selected-model' }, profile.providers, {});
+      assert.equal(effective.api_key, 'fixture-user-key');
+      assert.equal(effective.base_url, coding.weworker.baseUrl);
+      assert.equal(effective.active_auth_type, 'auth_token');
+      assert.equal(effective.model, 'fixture-selected-model');
+    }
+  }
+});
+
 test('overlay exclusions survive JSON refresh without provider reinsertion', t => {
   const provider = { ...source.providers.find(p => p.id === 'glm'), name: 'Fixture provider', fixed: false };
   const workspace = fixture(t, { profile: 'fixture', providerOverlay: {
@@ -172,27 +231,27 @@ test('encrypted JSON credentials stay Backend-only and follow overlay changes an
   };
   const profile = loadBuildProfile();
   const encrypted = encrypt('fixture-json-managed-key');
-  profile.providers = profile.providers.map(p => p.id === 'builtin_dev' ? { ...p, encryptedApiKey: encrypted,
+  profile.providers = profile.providers.map(p => p.id === 'builtin' ? { ...p, encryptedApiKey: encrypted,
     weworker: { ...p.weworker, baseUrl: 'https://example.com/managed' },
     webwright: { ...p.webwright, baseUrl: 'https://example.org/managed' } } : p);
   const backend = compiled('backend-ts/src/builtin-provider.ts', profile);
-  assert.equal(backend.getBuiltinApiKey('builtin_dev', {}), 'fixture-json-managed-key');
-  assert.equal(backend.getBuiltinApiKey('builtin_dev', { WEWORKER_BUILTIN_DEV_API_KEY: 'fixture-env-key' }), 'fixture-env-key');
-  const access = backend.builtinProviderAccess(backend.BUILTIN_DEV_PROVIDER, {});
+  assert.equal(backend.getBuiltinApiKey('builtin', {}), 'fixture-json-managed-key');
+  assert.equal(backend.getBuiltinApiKey('builtin', { WEWORKER_BUILTIN_API_KEY: 'fixture-env-key' }), 'fixture-env-key');
+  const access = backend.builtinProviderAccess(backend.BUILTIN_PROVIDER, {});
   assert.equal(access.anthropicBaseUrl, 'https://example.com/managed');
   assert.equal(access.openaiBaseUrl, 'https://example.org/managed');
   assert.equal('encryptedApiKey' in access.provider, false);
   const renderer = compiled('renderer/src/utils/provider-config.js', profile);
   assert.equal(renderer.BUILD_PROVIDERS.some(p => 'encryptedApiKey' in p), false);
-  assert.equal(JSON.stringify(backend.publicBuiltinProviders([backend.BUILTIN_DEV_PROVIDER], {})).includes(encrypted), false);
-  profile.providers = profile.providers.map(p => p.id === 'builtin_dev' ? { ...p, encryptedApiKey: undefined } : p);
-  assert.equal(compiled('backend-ts/src/builtin-provider.ts', profile).getBuiltinApiKey('builtin_dev', {}), '');
-  profile.providers = profile.providers.filter(p => p.id !== 'builtin_dev');
+  assert.equal(JSON.stringify(backend.publicBuiltinProviders([backend.BUILTIN_PROVIDER], {})).includes(encrypted), false);
+  profile.providers = profile.providers.map(p => p.id === 'builtin' ? { ...p, encryptedApiKey: undefined } : p);
+  assert.equal(compiled('backend-ts/src/builtin-provider.ts', profile).getBuiltinApiKey('builtin', {}), '');
+  profile.providers = profile.providers.filter(p => p.id !== 'builtin');
   const excluded = buildSync({ entryPoints: [path.join(root, 'backend-ts/src/builtin-provider.ts')],
     bundle: true, platform: 'node', format: 'cjs', write: false, define: createEsbuildDefines(profile) }).outputFiles[0].text;
   assert.equal(excluded.includes(encrypted), false);
-  assert.equal(excluded.includes(source.providers.find(p => p.id === 'builtin_dev').encryptedApiKey), false);
-  assert.equal(compiled('backend-ts/src/builtin-provider.ts', profile).getBuiltinApiKey('builtin_dev', {}), '');
+  assert.equal(excluded.includes(source.providers.find(p => p.id === 'builtin').encryptedApiKey), false);
+  assert.equal(compiled('backend-ts/src/builtin-provider.ts', profile).getBuiltinApiKey('builtin', {}), '');
 });
 
 test('encrypted credentials reject plaintext and user-managed suppliers', t => {
@@ -202,7 +261,7 @@ test('encrypted credentials reject plaintext and user-managed suppliers', t => {
   workspace.save(config);
   assert.throws(() => loadBuildDefines(workspace), /encryptedApiKey/);
   config.providers[0].encryptedApiKey = source.providers[0].encryptedApiKey;
-  config.providers.find(p => p.id === 'bank_coding').encryptedApiKey = source.providers[0].encryptedApiKey;
+  config.providers.find(p => p.id === 'anthropic').encryptedApiKey = source.providers[0].encryptedApiKey;
   workspace.save(config);
   assert.throws(() => loadBuildDefines(workspace), /encryptedApiKey/);
 });
@@ -228,7 +287,7 @@ test('running Vite refreshes fixed-provider flags when the referenced JSON chang
   const { pathToFileURL } = require('node:url');
   const vm = require('node:vm');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-vite-model-'));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const renderer = path.join(directory, 'renderer');
   fs.mkdirSync(renderer);
   fs.mkdirSync(path.join(directory, 'scripts'));

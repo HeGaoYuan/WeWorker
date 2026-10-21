@@ -10,6 +10,19 @@ import { buildConfiguredModelEnv } from '../agent.js'
 import { listProviderModels, probeMainConnection } from '../provider-model-services.js'
 import { resolveWebwrightModelConfig } from '../webwright-model-config.js'
 
+// Exercise optional provider support without shipping a private preset.
+vi.mock('../provider-config.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../provider-config.js')>()
+  const template = actual.configuredProvider('anthropic')!
+  const providers = [...actual.CONFIGURED_PROVIDERS.filter(p => p.id !== 'bank_coding'), { ...template, id: 'bank_coding', name: 'Fixture coding provider',
+    authType: 'auth_token' as const, allowMultiple: false, baseUrlEnv: 'WEWORKER_BANK_CODING_BASE_URL',
+    weworker: { ...template.weworker, baseUrl: 'https://example.com/public' },
+    webwright: { ...template.webwright, protocol: 'anthropic_messages' as const,
+      modelClass: 'anthropic' as const, baseUrl: 'https://example.com/public' } }]
+  return { ...actual, CONFIGURED_PROVIDERS: providers,
+    configuredProvider: (id: string | undefined) => providers.find(p => p.id === id) }
+})
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-provider-fixture-'))
 const env = {
   WEWORKER_BANK_CODING_API_KEY: 'fixture-reference-token',
