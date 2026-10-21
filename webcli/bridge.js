@@ -1729,9 +1729,7 @@ export class WebSocketBridge extends EventEmitter {
         || (key === 'default' && host.mode === 'dedicated');
       entry.coordinator = new SiteLoginCoordinator({
         log: (line) => process.stderr.write(`[${ts()}] [Bridge] ${line}\n`),
-        broadcast: (event) => entry.client
-          ? this._reply(entry.client, event)
-          : this._broadcastToClients({ ...event, ...(key !== 'default' ? { contextId: key } : {}) }),
+        broadcast: (event) => this._publishSiteLoginEvent(event, key, entry.client),
         extension: (type, payload, timeoutMs) => inRoute(() => this._request({ type, ...payload }, timeoutMs)),
         manifestFor: (site) => this._siteManifest(site),
         runCheckCommand: async (site, commandId) => inRoute(async () => {
@@ -1767,14 +1765,21 @@ export class WebSocketBridge extends EventEmitter {
   }
 
   /** Events for desktop and CLI clients; extensions never receive them. */
-  _broadcastToClients(event) {
+  _broadcastToClients(event, { exclude = null } = {}) {
     if (!this._wss) return;
     const extensions = this._extensionConnectionMap();
     const payload = JSON.stringify(event);
     for (const client of this._wss.clients) {
-      if (client.readyState !== 1 || extensions.has(client)) continue;
+      if (client === exclude || client.readyState !== 1 || extensions.has(client)) continue;
       try { client.send(payload); } catch {}
     }
+  }
+
+  /** Deliver login progress to its caller and to persistent desktop clients, never extensions. */
+  _publishSiteLoginEvent(event, contextId, initiator) {
+    const scoped = contextId && contextId !== 'default' ? { ...event, contextId } : event;
+    if (initiator?.readyState === 1) this._reply(initiator, scoped);
+    this._broadcastToClients(scoped, { exclude: initiator });
   }
 
   /** Fixed login actions; credentials are only ever written, never returned. */

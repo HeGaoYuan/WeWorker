@@ -89,6 +89,25 @@ describe('Bridge login wiring', () => {
     expect(sentTo(extension).some((message) => message.type === 'auth_event')).toBe(false)
   })
 
+  it('publishes profile login events to the caller and desktop, never extensions', () => {
+    const bridge = createBridge()
+    const caller = connect(bridge)
+    const desktop = connect(bridge)
+    const extension = connect(bridge)
+    bridge._extensionConnectionMap().set(extension, { instance: 'dedicated' })
+
+    bridge._publishSiteLoginEvent(
+      { type: 'auth_event', site: 'fixture.example.com', status: 'waiting_user' },
+      'profile-fixture',
+      caller,
+    )
+
+    const expected = { type: 'auth_event', site: 'fixture.example.com', status: 'waiting_user', contextId: 'profile-fixture' }
+    expect(sentTo(caller)).toContainEqual(expected)
+    expect(sentTo(desktop)).toContainEqual(expected)
+    expect(sentTo(extension).some((message) => message.type === 'auth_event')).toBe(false)
+  })
+
   it('answers auth_control with results and never echoes credentials', async () => {
     const bridge = createBridge()
     const vault = { save: vi.fn(async () => ({ enabled: true, username: 'fi****' })), hasCredential: () => true, updateSite: vi.fn(() => ({ enabled: false })), remove: vi.fn(() => true) }

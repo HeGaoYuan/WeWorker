@@ -25,3 +25,57 @@ test('failed refresh releases its queue and does not block another tab', async (
   reject(new Error('Example refresh failure'));
   await assert.rejects(blocked, /Example refresh failure/); assert.equal(await next, 'resumed');
 });
+
+test('write terminal navigation runs the submitted handler once and returns its result', async () => {
+  const navigations = [];
+  const runtime = createHostAdapterRuntime({
+    bundle: async () => [], prepare: async () => {}, clear: async () => {}, inject: async () => {},
+    navigate: async (_tabId, url) => { navigations.push(url); return url; },
+  });
+  const manifest = {
+    name: 'ssh.example.com', match: ['ssh.example.com'],
+    _hostSnapshot: { digest: 'fixture-digest' },
+    commands: [{ id: 'connect', safety: 'write' }],
+  };
+  let calls = 0;
+  const result = await runtime.execute(7, manifest, 'https://ssh.example.com/controller', async () => {
+    calls += 1;
+    return {
+      __webcli_navigation: {
+        version: 1,
+        url: 'https://ssh.example.com/terminal',
+        resume: false,
+        result: { submitted: true, status: 'submitted_terminal_navigation_completed' },
+      },
+    };
+  }, { id: 'connect', safety: 'write' });
+
+  assert.deepEqual(result, { submitted: true, status: 'submitted_terminal_navigation_completed' });
+  assert.deepEqual(navigations, ['https://ssh.example.com/terminal']);
+  assert.equal(calls, 1);
+});
+
+test('a failed terminal navigation never replays the submitted write', async () => {
+  const runtime = createHostAdapterRuntime({
+    bundle: async () => [], prepare: async () => {}, clear: async () => {}, inject: async () => {},
+    navigate: async () => { throw new Error('terminal navigation failed'); },
+  });
+  const manifest = {
+    name: 'ssh.example.com', match: ['ssh.example.com'],
+    _hostSnapshot: { digest: 'fixture-digest' },
+    commands: [{ id: 'connect', safety: 'write' }],
+  };
+  let calls = 0;
+  await assert.rejects(() => runtime.execute(7, manifest, 'https://ssh.example.com/controller', async () => {
+    calls += 1;
+    return {
+      __webcli_navigation: {
+        version: 1,
+        url: 'https://ssh.example.com/terminal',
+        resume: false,
+        result: { submitted: true },
+      },
+    };
+  }, { id: 'connect', safety: 'write' }), /terminal navigation failed/);
+  assert.equal(calls, 1);
+});

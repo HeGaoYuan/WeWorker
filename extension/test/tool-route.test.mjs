@@ -1165,6 +1165,13 @@ test("auth_open_login reuses a redirected login tab, opens only declared login p
   const redirected = loadServiceWorker({ tabs: [{ id: 30, url: 'https://passport.example.com/login?x=1', status: 'complete', active: false }], managedCatalog: loginCatalog });
   const reused = await redirected.sendNative({ type: 'auth_open_login', id: 'o2', site: loginManifest.name });
   assert.equal(reused.result.tabId, 30);
+
+  const redirecting = loadServiceWorker({ tabs: [{ id: 31, url: 'https://www.example.com/', pendingUrl: 'https://passport.example.com/login?next=%2F', status: 'loading', active: false }], managedCatalog: loginCatalog });
+  const reusedPending = await redirecting.sendNative({ type: 'auth_open_login', id: 'o3', site: loginManifest.name });
+  assert.equal(reusedPending.result.tabId, 31);
+  assert.equal(reusedPending.result.url, 'https://passport.example.com/login?next=%2F');
+  assert.equal(redirecting.tabs.length, 1);
+
   const unknown = await redirected.sendNative({ type: 'auth_check', id: 'c3', site: '../etc' });
   assert.equal(unknown.type, 'call_tool_error');
 });
