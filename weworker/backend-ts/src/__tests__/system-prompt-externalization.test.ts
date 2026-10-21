@@ -119,7 +119,7 @@ describe('System Prompt - complete output contract before externalization', () =
       如果上下文已提供当前版本的完整说明，而其中没有某项能力或字段，应按未提供处理；不要为寻找同一缺失信息重复读取同一版本的说明。
       所有网站工具通过Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`调用。
       以命令的 runtime/execution 与当前 Adapter Skill 为准：\`type=api, runtime=background\` 或标为 background API 的命令直接调用，无需先打开业务页或检测页面登录；不要求同时具有 \`mode=direct\` 标记。旧 Skill 仅有 \`mode=direct\` 时仍兼容。缺登录或缓存时按具体错误完成显式准备，不能把后台命令改成页面调用。
-      对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先使用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=<url>\`打开该网站。
+      Host-managed Extension Adapter（包括页面/DOM 命令）必须直接调用业务工具；宿主会自动选择、复用或创建匹配标签页，并处理 \`AUTH_REQUIRED\` 登录流程。调用前不要使用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=<url>\`，也不要做登录预检。只有用户明确要求打开页面、通用浏览器／探索流程，或当前 Adapter Skill 明确要求手工页面准备时，才使用 \`open_browser\`。Toolkit 命令按其 Skill 的运行时说明执行。
 
       ## 使用 webcli call 的规则
 
@@ -154,9 +154,9 @@ describe('System Prompt - complete output contract before externalization', () =
 
       ## 使用 open_browser 的规则
 
-      只有页面/DOM 工具需要先打开网站。后台 API 不要预先打开网站或检测登录（登录由 WeWorker 自动处理）；如果这类工具返回需要页面上下文，再打开 Skill 文档中的 Homepage URL。HTTP 与 Toolkit 按各自运行时执行。
+      不要在 Host-managed Extension Adapter（包括页面/DOM 命令）之前调用 open_browser 或登录检查；宿主会自动处理匹配标签页与登录。open_browser 只用于用户明确要求显示网站、通用浏览器／探索流程，或当前 Adapter Skill 明确要求手工准备页面。后台 API 不要预先打开网站；HTTP 与 Toolkit 按各自运行时执行。
 
-      用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=...\` 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。
+      用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=...\` 仅在确实需要手工页面准备时使用；使用后必须等待至少 5 秒再执行依赖该页面的后续页面/DOM 操作。
       原因：网站 adapter 需要时间注入并注册工具，过早调用会导致工具不存在而报错。
 
       URL 必须使用 Skill 文档中的 Homepage URL，不要自行猜测协议。

@@ -1089,6 +1089,22 @@ test("managed page calls do not select helper subdomain tabs as the execution pa
   assert.equal((await worker.context.chrome.tabs.get(999)).url, 'https://gitee.com/');
 });
 
+test("managed page calls hand an existing SSO tab to login instead of opening a second business tab", async () => {
+  const worker = loadServiceWorker({
+    tabs: [{ id: 40, url: 'https://passport.example.com/login?return=%2Forders', status: 'complete' }],
+    managedCatalog: loginCatalog,
+  });
+  const result = await worker.callNativeTool('fixture.example.com.list');
+  assert.equal(result.type, 'call_tool_error');
+  assert.equal(result.code, 'AUTH_REQUIRED', JSON.stringify(result));
+  assert.deepEqual(plain(result.auth), {
+    site: loginManifest.name,
+    phase: 'navigation',
+    pageUrl: 'https://passport.example.com/login',
+  });
+  assert.equal(worker.tabs.length, 1);
+});
+
 // ─── Website login: structured AUTH_REQUIRED and the Bridge's login messages ───
 
 const loginManifest = {

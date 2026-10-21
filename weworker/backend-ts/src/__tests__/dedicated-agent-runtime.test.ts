@@ -118,6 +118,8 @@ describe('dedicated agent runtime and skill library', () => {
     expect(prompt).toContain('example.com')
     expect(prompt).toContain('inventory-helper')
     expect(prompt).toContain('webcli call example.com.<工具名>')
+    expect(prompt).toContain('调用前不要执行 `open_browser` 或登录状态检查')
+    expect(prompt).toContain('Host-managed Extension Adapter')
     // The private Skill is loaded once per conversation, not on every turn.
     expect(prompt).toContain('本对话中第一次处理请求前')
     expect(prompt).toContain('不要重复加载')
