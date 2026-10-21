@@ -485,6 +485,7 @@ export default function App() {
           <InitialSetup onComplete={handleCompleteOnboarding} />
         ) : <>
         <AppRail
+          extensionOpen={showExtensionGuide}
           activeSection={showSettings ? 'settings' : activeSidebarSection}
           settingsOpen={showSettings}
           onOpenConversation={handleOpenConversation}

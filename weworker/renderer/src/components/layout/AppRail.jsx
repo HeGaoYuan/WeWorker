@@ -8,7 +8,7 @@ import { useDedicatedAgentsStore } from '../../store/dedicated-agents.js'
 import { useStatusStore } from '../../store/status.js'
 import { getPortConflictHelp } from '../../utils/port-conflict-help.js'
 
-export default function AppRail({ activeSection, settingsOpen = false, onOpenConversation, onOpenTasks, onOpenSkills, onOpenExploration, onOpenWebsiteExploration, onOpenDedicatedAgents, onOpenExtension, onOpenSettings }) {
+export default function AppRail({ activeSection, settingsOpen = false, extensionOpen = false, onOpenConversation, onOpenTasks, onOpenSkills, onOpenExploration, onOpenWebsiteExploration, onOpenDedicatedAgents, onOpenExtension, onOpenSettings }) {
   const [moreOpen, setMoreOpen] = useState(false)
   const [issuesOpen, setIssuesOpen] = useState(false)
   const [bridgeStatus, setBridgeStatus] = useState('unknown')
@@ -45,10 +45,21 @@ export default function AppRail({ activeSection, settingsOpen = false, onOpenCon
   ].filter(Boolean)
   const extensionIssue = extension !== 'connected'
   const issueCount = (extensionIssue ? 1 : 0) + (portConflicts.length ? 1 : 0)
+  const issuesVisible = issueCount > 0 && issuesOpen && !extensionOpen
+  const browserPanelOpen = extensionOpen || issuesVisible
+
+  useEffect(() => {
+    if (!issueCount || extensionOpen) setIssuesOpen(false)
+  }, [issueCount, extensionOpen])
+
+  const openExtension = () => {
+    setIssuesOpen(false)
+    onOpenExtension?.()
+  }
 
   const handleIssuesClick = () => {
     if (!issueCount) {
-      onOpenExtension?.()
+      openExtension()
       return
     }
     setIssuesOpen((open) => !open)
@@ -105,21 +116,21 @@ export default function AppRail({ activeSection, settingsOpen = false, onOpenCon
           <Tooltip text={issueCount > 0 ? `有 ${issueCount} 个问题` : '浏览器与扩展'} placement="right">
             <button
               type="button"
-              className={`app-rail__button${issueCount > 0 ? ' app-rail__issues-button' : ''}${issuesOpen ? ' is-active' : ''}`}
+              className={`app-rail__button${issueCount > 0 ? ' app-rail__issues-button' : ''}${browserPanelOpen ? ' is-active' : ''}`}
               aria-label={issueCount > 0 ? `有 ${issueCount} 个问题` : '浏览器与扩展'}
-              aria-expanded={issueCount > 0 ? issuesOpen : undefined}
+              aria-expanded={browserPanelOpen}
               onClick={handleIssuesClick}
             >
-              <ExtensionIcon />
+              <ExtensionIcon warning={issueCount > 0} />
               {issueCount > 0 && <span className="app-rail__issue-badge" aria-hidden="true">{issueCount}</span>}
             </button>
           </Tooltip>
-          {issueCount > 0 && issuesOpen && (
+          {issuesVisible && (
             <IssuePanel
               extensionIssue={extensionIssue}
               portConflicts={portConflicts}
               isWindows={isWindows}
-              onOpenExtension={onOpenExtension}
+              onOpenExtension={openExtension}
             />
           )}
         </div>
@@ -217,8 +228,9 @@ function GlobeIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M3.8 9h16.4M3.8 15h16.4M12 3.5c2.1 2.3 3.2 5.1 3.2 8.5s-1.1 6.2-3.2 8.5c-2.1-2.3-3.2-5.1-3.2-8.5S9.9 5.8 12 3.5Z" /></svg>
 }
 
-function ExtensionIcon() {
-  return <WarningOutlined aria-hidden="true" style={{ color: 'var(--warning)' }} />
+function ExtensionIcon({ warning = false }) {
+  if (warning) return <WarningOutlined aria-hidden="true" style={{ color: 'var(--warning)' }} />
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /></svg>
 }
 
 function DrawerHandleIcon({ open = false }) {

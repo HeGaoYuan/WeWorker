@@ -150,8 +150,8 @@ export default function InputBar({
       isDirectory: candidate.isDirectory,
       candidate,
     }))
-    // 路由别名与站点工具同列展示：别名是配置里写的（`router-config/aliases.json`），
-    // 用户看不到就会以为 `!xxx` 只能走 shell。别名排在目录候选之后，不与文件/命令抢焦点。
+    // 路由别名属于命令，只在命令首词补全；文件页和参数位置不追加快捷指令。
+    if (bangCompletionSource === 'files' || /\s/.test(command.trimStart())) return items
     const seen = new Set(items.map((item) => item.command.trim().replace(/\s+/g, '').toLowerCase()))
     const queryKey = command.trim().replace(/\s+/g, '').toLowerCase()
     for (const alias of routerAliases) {
@@ -686,7 +686,7 @@ export default function InputBar({
         background: 'none',
         border: 'none',
         outline: 'none',
-        color: isCommandMode ? 'var(--accent)' : 'var(--text-primary)',
+        color: 'var(--text-primary)',
         fontSize: 14,
         resize: 'none',
         maxHeight: maxTaHeight,

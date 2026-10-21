@@ -3,11 +3,8 @@ import { EXTENSION_PATH, useExtensionSteps, StepList } from './ExtensionSteps.js
 import { useStatusStore } from '../store/status.js'
 import { describeDedicatedBrowserStatus } from '../utils/dedicated-browser.js'
 
-const actionButtonStyle = {
-  flexShrink: 0, background: 'var(--accent-soft)',
-  border: '1px solid color-mix(in srgb, var(--accent) 35%, var(--border))', borderRadius: 6,
-  padding: '5px 12px', fontSize: 11, fontWeight: 600,
-  cursor: 'pointer', color: 'var(--accent)', fontFamily: 'inherit', whiteSpace: 'nowrap',
+function BrowserIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /></svg>
 }
 
 /** Polls WeWorker 浏览器 status while the panel is open; null outside the desktop app. */
@@ -37,37 +34,37 @@ function DedicatedBrowserCard({ status, onStatus }) {
       setBusy(false)
     }
   }
-  const tones = {
-    ok: ['rgba(34,197,94,0.1)', 'rgba(34,197,94,0.3)'],
-    error: ['rgba(248,113,113,0.1)', 'rgba(248,113,113,0.35)'],
-    warn: ['rgba(245,158,11,0.1)', 'rgba(245,158,11,0.3)'],
-    pending: ['var(--bg-secondary)', 'var(--border)'],
-  }
-  const [background, border] = tones[view.tone] || tones.pending
   return (
-    <div style={{ background, border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px', marginBottom: 16 }}>
-      <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>{view.text}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 4 }}>
-        网站操作在 WeWorker 浏览器中进行，它的窗口在屏幕外，不会打扰你；登录状态与你自己的 Chrome 分开保存。需要登录网站时，点击「显示 WeWorker 浏览器」完成登录，完成后点击「隐藏」即可。
+    <section className={`extension-guide-card extension-guide-card--${view.tone}`}>
+      <div className="extension-guide-card-heading">
+        <h3>WeWorker 浏览器</h3>
+        <span className={`extension-guide-status extension-guide-status--${view.tone}`}>
+          <span aria-hidden="true" />
+          {view.tone === 'ok' ? '运行中' : view.tone === 'error' ? '启动失败' : view.tone === 'warn' ? '需要处理' : '未就绪'}
+        </span>
       </div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+      <p className="extension-guide-status-text">{view.text}</p>
+      <p className="extension-guide-description">
+        网站操作在独立浏览器中后台进行，登录状态与你自己的 Chrome 分开保存。需要登录时显示浏览器，完成后隐藏即可。
+      </p>
+      <div className="extension-guide-actions">
         {view.canShow && (
-          <button type="button" disabled={busy} style={actionButtonStyle} onClick={() => run(() => window.electronAPI.showDedicatedBrowser())}>
+          <button type="button" disabled={busy} className="extension-guide-button extension-guide-button--primary" onClick={() => run(() => window.electronAPI.showDedicatedBrowser())}>
             显示 WeWorker 浏览器
           </button>
         )}
         {view.canShow && (
-          <button type="button" disabled={busy} style={actionButtonStyle} onClick={() => run(() => window.electronAPI.hideDedicatedBrowser())}>
+          <button type="button" disabled={busy} className="extension-guide-button" onClick={() => run(() => window.electronAPI.hideDedicatedBrowser())}>
             隐藏
           </button>
         )}
         {view.canRestart && (
-          <button type="button" disabled={busy} style={actionButtonStyle} onClick={() => run(() => window.electronAPI.restartDedicatedBrowser())}>
+          <button type="button" disabled={busy} className="extension-guide-button" onClick={() => run(() => window.electronAPI.restartDedicatedBrowser())}>
             重新启动
           </button>
         )}
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -113,54 +110,62 @@ export default function ExtensionGuide({ onClose }) {
     <div
       className={`extension-guide-overlay ${closing ? 'extension-guide-overlay--closing' : ''}`}
       onClick={requestClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
     >
       <div
         className={`extension-guide-panel ${closing ? 'extension-guide-panel--closing' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="extension-guide-title"
         onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 12, padding: 28, width: 500, maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 16 }}>浏览器扩展</div>
-          <button onClick={requestClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: '4px 8px', borderRadius: 4 }}>×</button>
-        </div>
+        <header className="extension-guide-header">
+          <span className="extension-guide-header-icon"><BrowserIcon /></span>
+          <div className="extension-guide-heading">
+            <h2 id="extension-guide-title">浏览器与扩展</h2>
+            <p>管理网站操作使用的浏览器与连接状态</p>
+          </div>
+          <button type="button" className="extension-guide-close" aria-label="关闭浏览器与扩展" onClick={requestClose}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
 
-        {dedicatedMode && <DedicatedBrowserCard status={browserStatus} onStatus={setBrowserStatus} />}
+        <div className="extension-guide-body">
+          {dedicatedMode && <DedicatedBrowserCard status={browserStatus} onStatus={setBrowserStatus} />}
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          background: connected ? 'rgba(34,197,94,0.1)' : 'var(--bg-secondary)',
-          border: `1px solid ${connected ? 'rgba(34,197,94,0.3)' : 'var(--border)'}`,
-          borderRadius: 8, padding: '10px 12px', marginBottom: 16,
-        }}>
-          <div style={{ flex: 1 }}>
-            <span style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+          <section className="extension-guide-card">
+            <div className="extension-guide-card-heading">
+              <h3>浏览器扩展</h3>
+              <span className={`extension-guide-status extension-guide-status--${connected ? 'ok' : 'warn'}`}>
+                <span aria-hidden="true" />{connected ? '已连接' : '未连接'}
+              </span>
+            </div>
+            <p className="extension-guide-description">
               {connected
                 ? connectedText
                 : dedicatedMode
                   ? 'WeWorker 浏览器启动后，扩展会自动安装并连接，无需手动操作。'
-                  : '未检测到扩展。安装完成后打开 Chrome，左侧拼图图标会显示已连接。'}
-            </span>
-          </div>
-          {!connected && !dedicatedMode && <button
-            onClick={() => window.electronAPI?.openChrome()}
-            style={actionButtonStyle}
-          >
-            打开 Chrome
-          </button>}
+                  : '未检测到扩展。安装完成后打开 Chrome，可在此查看连接状态。'}
+            </p>
+            {!connected && !dedicatedMode && <div className="extension-guide-actions"><button
+              type="button"
+              onClick={() => window.electronAPI?.openChrome()}
+              className="extension-guide-button"
+            >
+              打开 Chrome
+            </button></div>}
+          </section>
+
+          {showInstallSteps && <div className="extension-guide-install">
+            <p className="extension-guide-description">
+              {dedicatedMode ? '也可以把扩展安装到你自己的 Chrome（需在设置中改用“我自己的 Chrome”）：' : '按以下步骤安装扩展：'}
+            </p>
+            <StepList steps={steps} onCopy={handleCopy} copied={copied} />
+          </div>}
         </div>
 
-        {showInstallSteps && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          {dedicatedMode ? '也可以把扩展安装到你自己的 Chrome（需在设置中改用“我自己的 Chrome”）：' : '按以下步骤安装扩展：'}
-        </div>}
-
-        {showInstallSteps && <StepList steps={steps} onCopy={handleCopy} copied={copied} />}
-
-        <div style={{ marginTop: 20, textAlign: 'center' }}>
-          <button onClick={requestClose} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-            知道了
-          </button>
-        </div>
+        <footer className="extension-guide-footer">
+          <button type="button" className="extension-guide-button extension-guide-button--primary" onClick={requestClose}>知道了</button>
+        </footer>
       </div>
     </div>
   )

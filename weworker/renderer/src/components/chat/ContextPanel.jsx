@@ -79,7 +79,11 @@ export default function ContextPanel({ snapshot, contextLimit }) {
             <div>
               <div className="context-panel__title">上下文</div>
             </div>
-            <button type="button" className="context-panel__close" onClick={() => setOpen(false)} aria-label="关闭上下文面板" title="关闭">×</button>
+            <button type="button" className="context-panel__close" onClick={() => setOpen(false)} aria-label="关闭上下文面板" title="关闭">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" focusable="false">
+                <path d="m6 6 12 12M18 6 6 18" />
+              </svg>
+            </button>
           </div>
           <div className="context-panel__summary">
             <span>{Math.round(percent)}% 已使用</span>
