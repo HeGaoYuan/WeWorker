@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-22：将官网、下载和 GitHub 更新地址统一收敛到 `weworker/deployment.json`，公共默认官网使用 `https://111.230.33.112`，下载地址使用实测可用的 `http://111.230.33.112/downloads/`，GitHub 更新地址两边共用。Electron 更新模块、设置页和 electron-builder 均读取同一份配置；构建时生成 profile-specific 发布配置，闭源构建只需覆盖该 JSON 即可切换官网和自更新地址。增加 URL 协议及格式校验，并把配置文件随安装包打包。验证：构建入口 18 项、JavaScript 语法检查、Renderer 生产构建和 Windows x64 Electron 完整构建通过；检查 `app.asar` 确认包含 `deployment.json` 和校验模块，生成的发布配置使用 `http://111.230.33.112/downloads/`。
+
 - 2026-10-22：统一桌面打包入口为 `weworker/package.json` 中的 `npm run build:win` / `npm run build:mac`，移除开源初始提交遗留的独立 BAT/SH 打包脚本及 Python 后端 `build:backend` 命令，同步桌面 README 和本地构建指南。新增命令链路回归，在已有旧后端的隔离夹具中验证先重建再打包、后端失败则停止。验证：入口链路、后端 bundle 与 Adapter 打包范围共 11 项测试通过，JS 语法及差异检查通过；本轮清理前已完成同一 npm 流程的 Windows x64 完整构建并核对安装包内的新提示词。未验证：macOS 完整安装包（命令链路使用构建阶段替身验证），清理后未重复完整 Windows 构建；用户提供的发布包缺失提示词的实际构建来源仍待确认。
 
 - 2026-10-21：修复托管网站 Adapter 在页面型命令前被通用 Agent 提示强制 `open_browser`、导致 SSO 跳转时出现重复业务标签的问题。常规与专属 Agent 现在直接调用 Adapter 业务工具，宿主负责匹配/创建页面及登录；仅用户明确要求、通用浏览器/探索流程或 Skill 明确要求时才手工开页。扩展在无业务标签但发现同站点 SSO 登录标签时返回结构化 `AUTH_REQUIRED`，交由既有登录流程复用，避免新建第二个业务标签。专属 Skill 生成同步移除认证站点默认登录预检。验证：扩展路由 44 项、Backend 提示词/专属 Agent 聚焦 11 项、Backend 类型检查和 `npm run build:webcli` 通过；打包过程存在既有列映射缺失警告，未影响构建完成。未验证：真实 SSH/SSO 会话与完整安装包。
