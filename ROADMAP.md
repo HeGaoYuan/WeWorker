@@ -1,6 +1,6 @@
 # WeWorker Roadmap
 
-- 2026-10-22：将官网、下载和 GitHub 更新地址统一收敛到 `weworker/deployment.json`，公共默认配置使用 `https://111.230.33.112`，Electron 更新模块、设置页和 electron-builder 均读取同一份配置；构建时生成 profile-specific 发布配置，闭源构建只需覆盖该 JSON 即可切换官网和自更新地址。增加 URL 协议及格式校验，并把配置文件随安装包打包。验证：构建入口 18 项、JavaScript 语法检查、Renderer 生产构建和 Windows x64 Electron 完整构建通过；检查 `app.asar` 确认包含 `deployment.json` 和校验模块，生成的发布配置使用 `https://111.230.33.112/downloads/`。
+- 2026-10-22：将官网、下载和 GitHub 更新地址统一收敛到 `weworker/deployment.json`，公共默认官网使用 `https://111.230.33.112`，下载地址使用实测可用的 `http://111.230.33.112/downloads/`，GitHub 更新地址两边共用。Electron 更新模块、设置页和 electron-builder 均读取同一份配置；构建时生成 profile-specific 发布配置，闭源构建只需覆盖该 JSON 即可切换官网和自更新地址。增加 URL 协议及格式校验，并把配置文件随安装包打包。验证：构建入口 18 项、JavaScript 语法检查、Renderer 生产构建和 Windows x64 Electron 完整构建通过；检查 `app.asar` 确认包含 `deployment.json` 和校验模块，生成的发布配置使用 `http://111.230.33.112/downloads/`。
 
 - 2026-10-22：统一桌面打包入口为 `weworker/package.json` 中的 `npm run build:win` / `npm run build:mac`，移除开源初始提交遗留的独立 BAT/SH 打包脚本及 Python 后端 `build:backend` 命令，同步桌面 README 和本地构建指南。新增命令链路回归，在已有旧后端的隔离夹具中验证先重建再打包、后端失败则停止。验证：入口链路、后端 bundle 与 Adapter 打包范围共 11 项测试通过，JS 语法及差异检查通过；本轮清理前已完成同一 npm 流程的 Windows x64 完整构建并核对安装包内的新提示词。未验证：macOS 完整安装包（命令链路使用构建阶段替身验证），清理后未重复完整 Windows 构建；用户提供的发布包缺失提示词的实际构建来源仍待确认。
 
